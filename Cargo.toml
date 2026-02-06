@@ -13,6 +13,7 @@ members = [".", "fuzz"]
 sqlparser = { workspace = true, optional = true }
 thiserror = "2"
 hashbrown = "0.16.1"
+indexmap = { version = "2", default-features = false }
 rusqlite = { version = "0.37", features = [
 	"bundled",
 	"session",
@@ -29,8 +30,8 @@ sqlparser = { version = "0.60", git = "https://github.com/LucaCappelletti94/sqlp
 
 [features]
 default = ["sqlparser"]
-rusqlite = ["dep:rusqlite"]
 sqlparser = ["dep:sqlparser"]
+testing = ["dep:rusqlite", "dep:sqlparser"]
 
 [lints.rust]
 missing_docs = "forbid"

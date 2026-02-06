@@ -195,6 +195,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "indexmap"
+version = "2.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
+dependencies = [
+ "equivalent",
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -462,6 +472,7 @@ name = "sqlite-diff-rs"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.16.1",
+ "indexmap",
  "rand",
  "rusqlite",
  "sqlparser",

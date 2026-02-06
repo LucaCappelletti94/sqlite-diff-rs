@@ -7,8 +7,14 @@
 
 use sqlite_diff_rs::ParsedDiffSet;
 use std::fs;
+use std::time::{Duration, Instant};
 
-/// Helper to test roundtrip: parse -> serialize -> parse -> compare
+/// Maximum time allowed for a single crash input before we flag it as a
+/// timeout-class bug. Honggfuzz uses 1 s by default; we use 2 s to account
+/// for debug-mode overhead while still catching algorithmic slowness.
+const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
+
+/// Helper to test roundtrip: parse -> serialize -> parse -> compare.
 fn test_roundtrip(input: &[u8]) {
     let Ok(parsed) = ParsedDiffSet::try_from(input) else {
         return; // Invalid input is fine, we just shouldn't crash
@@ -17,7 +23,6 @@ fn test_roundtrip(input: &[u8]) {
     let serialized: Vec<u8> = parsed.clone().into();
     let reparsed = ParsedDiffSet::try_from(serialized.as_slice())
         .expect("Re-parsing our own output should never fail");
-
     assert_eq!(parsed, reparsed, "Roundtrip mismatch");
 }
 
@@ -108,6 +113,9 @@ fn fuzz_regression_crash_6() {
 /// Automatically test all roundtrip crash files in the crash_inputs/roundtrip directory.
 ///
 /// This test also copies any new crash files from the fuzz workspace.
+///
+/// Each input is timed against [`PER_INPUT_TIME_LIMIT`] to catch timeout-class
+/// bugs that honggfuzz would kill but `cargo test` would silently pass.
 #[test]
 fn fuzz_regression_roundtrip_crash_inputs_dir() {
     let crash_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/crash_inputs/roundtrip");
@@ -142,6 +150,8 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
 
     let mut tested = 0;
     let mut failures = Vec::new();
+    let mut slow_inputs = Vec::new();
+    let overall_start = Instant::now();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -157,10 +167,25 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
             }
         };
 
+        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+        let start = Instant::now();
+
         test_roundtrip(&data);
+
+        let elapsed = start.elapsed();
+        if elapsed > PER_INPUT_TIME_LIMIT {
+            slow_inputs.push(format!(
+                "{filename}: {:.3}s (limit: {:.1}s) [{} bytes]",
+                elapsed.as_secs_f64(),
+                PER_INPUT_TIME_LIMIT.as_secs_f64(),
+                data.len(),
+            ));
+        }
 
         tested += 1;
     }
+
+    let overall_elapsed = overall_start.elapsed();
 
     assert!(
         failures.is_empty(),
@@ -170,7 +195,19 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
         failures.join("\n")
     );
 
-    eprintln!("Tested {tested} roundtrip crash input files");
+    assert!(
+        slow_inputs.is_empty(),
+        "Timeout-class bugs: {} of {} inputs exceeded {:.1}s time limit:\n{}",
+        slow_inputs.len(),
+        tested,
+        PER_INPUT_TIME_LIMIT.as_secs_f64(),
+        slow_inputs.join("\n")
+    );
+
+    eprintln!(
+        "Tested {tested} roundtrip crash input files in {:.3}s",
+        overall_elapsed.as_secs_f64()
+    );
 }
 
 // ============================================================================
@@ -182,7 +219,7 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
 /// This test also copies any new crash files from the fuzz workspace.
 /// Requires the `fuzzing` feature (enables rusqlite + sqlparser).
 #[test]
-#[cfg(all(feature = "sqlparser", feature = "rusqlite"))]
+#[cfg(feature = "testing")]
 fn fuzz_regression_differential_crash_inputs_dir() {
     use sqlite_diff_rs::differential_testing::run_differential_test;
 

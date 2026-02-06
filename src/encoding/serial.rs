@@ -67,7 +67,18 @@ impl Eq for Value {}
 
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        core::mem::discriminant(self).hash(state);
+        // IMPORTANT: Hash must be consistent with PartialEq.
+        // Since Null == Undefined, they must hash identically.
+        // We use a single tag (5) for both, matching the Null discriminant
+        // choice, rather than core::mem::discriminant which would differ.
+        let tag: u8 = match self {
+            Value::Null | Value::Undefined => 0,
+            Value::Integer(_) => 1,
+            Value::Real(_) => 2,
+            Value::Text(_) => 3,
+            Value::Blob(_) => 4,
+        };
+        tag.hash(state);
         match self {
             Value::Integer(v) => v.hash(state),
             Value::Real(v) => v.to_bits().hash(state),

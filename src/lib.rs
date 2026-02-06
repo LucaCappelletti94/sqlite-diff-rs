@@ -6,12 +6,14 @@
 extern crate alloc;
 
 pub mod builders;
-#[cfg(all(feature = "sqlparser", feature = "rusqlite"))]
+#[cfg(feature = "testing")]
 pub mod differential_testing;
 pub(crate) mod encoding;
 pub mod errors;
 pub mod parser;
 pub mod schema;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 // Re-export main types
 pub use builders::{

@@ -9,80 +9,15 @@
 //!    does the table appear in its original position or at the end?
 //!
 //! The answers guide how `DiffSetBuilder` should handle empty tables and table ordering.
+#![cfg(feature = "testing")]
 
 use rusqlite::Connection;
 use rusqlite::session::Session;
+use sqlite_diff_rs::testing::session_changeset_and_patchset;
 
 // =============================================================================
 // Helper functions
 // =============================================================================
-
-/// Create an in-memory connection, execute the given SQL statements, and return
-/// the raw changeset and patchset bytes produced by the session extension.
-///
-/// The session is attached to all tables (attach(None)).
-fn capture_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>) {
-    let conn = Connection::open_in_memory().expect("Failed to open in-memory DB");
-
-    // First pass: execute CREATE TABLE statements before starting the session,
-    // since DDL isn't tracked by sessions.
-    for &sql in statements {
-        let trimmed = sql.trim().to_uppercase();
-        if trimmed.starts_with("CREATE TABLE") {
-            conn.execute(sql, []).expect("Failed to execute DDL");
-        }
-    }
-
-    // Start session and attach all tables
-    let mut session = Session::new(&conn).expect("Failed to create session");
-    session
-        .attach::<&str>(None)
-        .expect("Failed to attach session");
-
-    // Second pass: execute DML statements
-    for &sql in statements {
-        let trimmed = sql.trim().to_uppercase();
-        if !trimmed.starts_with("CREATE TABLE") {
-            conn.execute(sql, [])
-                .unwrap_or_else(|e| panic!("Failed to execute DML: {e}\nSQL: {sql}"));
-        }
-    }
-
-    let mut changeset = Vec::new();
-    session
-        .changeset_strm(&mut changeset)
-        .expect("Failed to get changeset");
-
-    // Need a new session for patchset (session is consumed by changeset_strm)
-    // Actually, let's re-do the whole thing for patchset to be safe
-    let mut patchset = Vec::new();
-
-    // Re-create connection and session for patchset
-    let conn2 = Connection::open_in_memory().expect("Failed to open in-memory DB");
-    for &sql in statements {
-        let trimmed = sql.trim().to_uppercase();
-        if trimmed.starts_with("CREATE TABLE") {
-            conn2.execute(sql, []).expect("Failed to execute DDL");
-        }
-    }
-    let mut session2 = Session::new(&conn2).expect("Failed to create session");
-    session2
-        .attach::<&str>(None)
-        .expect("Failed to attach session");
-    for &sql in statements {
-        let trimmed = sql.trim().to_uppercase();
-        if !trimmed.starts_with("CREATE TABLE") {
-            conn2.execute(sql, []).unwrap_or_else(|e| {
-                panic!("Failed to execute DML: {e}\nSQL: {sql}")
-            });
-        }
-    }
-    session2
-        .patchset_strm(&mut patchset)
-        .expect("Failed to get patchset");
-
-    (changeset, patchset)
-}
 
 /// Extract table names in order from a raw changeset or patchset binary.
 ///
@@ -226,7 +161,7 @@ fn read_varint(data: &[u8]) -> (u64, usize) {
 /// SQLite should produce an empty changeset (no table header at all).
 #[test]
 fn test_sqlite_empty_table_after_insert_delete_changeset() {
-    let (changeset, _) = capture_changeset_and_patchset(&[
+    let (changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
         "DELETE FROM users WHERE id = 1",
@@ -253,7 +188,7 @@ fn test_sqlite_empty_table_after_insert_delete_changeset() {
 /// Same test for patchset format.
 #[test]
 fn test_sqlite_empty_table_after_insert_delete_patchset() {
-    let (_, patchset) = capture_changeset_and_patchset(&[
+    let (_, patchset) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
         "DELETE FROM users WHERE id = 1",
@@ -278,7 +213,7 @@ fn test_sqlite_empty_table_after_insert_delete_patchset() {
 /// should not appear in the output.
 #[test]
 fn test_sqlite_cancelled_table_not_in_changeset_multi_table() {
-    let (changeset, _) = capture_changeset_and_patchset(&[
+    let (changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)",
         // users: INSERT + DELETE = cancel
@@ -305,7 +240,7 @@ fn test_sqlite_cancelled_table_not_in_changeset_multi_table() {
 /// Same for patchset.
 #[test]
 fn test_sqlite_cancelled_table_not_in_patchset_multi_table() {
-    let (_, patchset) = capture_changeset_and_patchset(&[
+    let (_, patchset) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)",
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
@@ -342,7 +277,7 @@ fn test_sqlite_cancelled_table_not_in_patchset_multi_table() {
 /// Question: In the final changeset, is table_a before or after table_b?
 #[test]
 fn test_sqlite_table_order_after_cancel_and_readd_changeset() {
-    let (changeset, _) = capture_changeset_and_patchset(&[
+    let (changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)",
         // table_a is first touched
@@ -380,7 +315,7 @@ fn test_sqlite_table_order_after_cancel_and_readd_changeset() {
 /// Same test for patchset format.
 #[test]
 fn test_sqlite_table_order_after_cancel_and_readd_patchset() {
-    let (_, patchset) = capture_changeset_and_patchset(&[
+    let (_, patchset) = session_changeset_and_patchset(&[
         "CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)",
         "INSERT INTO table_a (id, val) VALUES (1, 'a1')",
@@ -417,7 +352,7 @@ fn test_sqlite_table_order_after_cancel_and_readd_patchset() {
 ///   Expected final order if re-appended: B, C, A
 #[test]
 fn test_sqlite_table_order_three_tables_cancel_first_changeset() {
-    let (changeset, _) = capture_changeset_and_patchset(&[
+    let (changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE alpha (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE beta  (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE gamma (id INTEGER PRIMARY KEY, val TEXT)",
@@ -449,7 +384,7 @@ fn test_sqlite_table_order_three_tables_cancel_first_changeset() {
 /// Same three-table test for patchset.
 #[test]
 fn test_sqlite_table_order_three_tables_cancel_first_patchset() {
-    let (_, patchset) = capture_changeset_and_patchset(&[
+    let (_, patchset) = session_changeset_and_patchset(&[
         "CREATE TABLE alpha (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE beta  (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE gamma (id INTEGER PRIMARY KEY, val TEXT)",
@@ -493,7 +428,7 @@ fn test_our_builder_empty_after_cancel() {
     let changeset_bytes: Vec<u8> = changeset_builder.into();
 
     // Should match SQLite: empty bytes
-    let (sqlite_changeset, _) = capture_changeset_and_patchset(&[
+    let (sqlite_changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
         "DELETE FROM users WHERE id = 1",
@@ -537,7 +472,7 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     let our_bytes: Vec<u8> = our_builder.into();
 
     // Get SQLite's version
-    let (sqlite_bytes, _) = capture_changeset_and_patchset(&[
+    let (sqlite_bytes, _) = session_changeset_and_patchset(&[
         "CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)",
         "CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)",
         "INSERT INTO table_a (id, val) VALUES (1, 'a1')",
@@ -582,7 +517,7 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
 /// with only some rows surviving?
 #[test]
 fn test_sqlite_partial_cancel_preserves_table() {
-    let (changeset, _) = capture_changeset_and_patchset(&[
+    let (changeset, _) = session_changeset_and_patchset(&[
         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
         "INSERT INTO users (id, name) VALUES (2, 'Bob')",

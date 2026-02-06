@@ -430,13 +430,16 @@ fn parse_patchset_operation(
             *builder = core::mem::take(builder).insert_with_schema(schema.clone(), &values);
         }
         op_codes::DELETE => {
-            // Patchset DELETE: only PK values
+            // Patchset DELETE: only PK values in column order
             let pk_count = schema.pk_flags.iter().filter(|&&b| b > 0).count();
             let (pk_values, len) = parse_values(&data[pos..], base_pos + pos, pk_count)?;
             pos += len;
-            // Expand PK values to full row with Undefined for non-PK columns
+            // Expand PK values to full row, then extract_pk to get ordinal-sorted PK.
+            // This is needed because the binary format stores PKs in column order,
+            // but the builder stores them sorted by pk_ordinal (matching the serializer).
             let full_values = expand_pk_values(&schema.pk_flags, pk_values, schema.column_count);
-            *builder = core::mem::take(builder).delete_with_schema(schema.clone(), &full_values);
+            let pk = schema.extract_pk(&full_values);
+            *builder = core::mem::take(builder).delete_with_schema(schema.clone(), &pk);
         }
         op_codes::UPDATE => {
             // Note: old_values are parsed but ignored for patchsets since PK is in new_values

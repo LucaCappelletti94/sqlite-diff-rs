@@ -27,7 +27,7 @@
 //! | DELETE | UPDATE | Ignore new |
 //! | DELETE | DELETE | Ignore new |
 
-use hashbrown::HashMap;
+use indexmap::IndexMap as IndexMapRaw;
 
 use crate::{
     SchemaWithPK,
@@ -37,15 +37,149 @@ use crate::{
     },
     encoding::{Value, encode_value},
 };
+use alloc::vec;
 use alloc::vec::Vec;
+
+/// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
+type IndexMap<K, V> = IndexMapRaw<K, V, hashbrown::DefaultHashBuilder>;
+
+// ============================================================================
+// SQLite session extension hash simulation
+// ============================================================================
+
+/// The core hash-combine step used throughout SQLite's session extension.
+///
+/// Matches the C macro: `#define HASH_APPEND(hash, add) ((hash) << 3) ^ (hash) ^ (unsigned int)(add)`
+const fn hash_append(h: u32, add: u32) -> u32 {
+    (h << 3) ^ h ^ add
+}
+
+/// Hash a 64-bit integer using SQLite's `sessionHashAppendI64`.
+///
+/// Hashes the lower 32 bits first, then the upper 32 bits.
+fn session_hash_append_i64(h: u32, i: i64) -> u32 {
+    let lo = (i as u64 & 0xFFFF_FFFF) as u32;
+    let hi = ((i as u64 >> 32) & 0xFFFF_FFFF) as u32;
+    let h = hash_append(h, lo);
+    hash_append(h, hi)
+}
+
+/// Hash a blob using SQLite's `sessionHashAppendBlob`.
+///
+/// Applies `HASH_APPEND` to each byte.
+fn session_hash_append_blob(mut h: u32, data: &[u8]) -> u32 {
+    for &byte in data {
+        h = hash_append(h, u32::from(byte));
+    }
+    h
+}
+
+/// Hash a primary key using SQLite's `sessionPreupdateHash` algorithm.
+///
+/// For each PK value: `h = HASH_APPEND(h, type_code)`, then hash the value.
+/// Type codes match SQLite: INTEGER=1, FLOAT=2, TEXT=3, BLOB=4.
+fn session_hash_pk(pk: &[Value]) -> u32 {
+    let mut h: u32 = 0;
+    for value in pk {
+        match value {
+            Value::Integer(i) => {
+                h = hash_append(h, 1); // SQLITE_INTEGER
+                h = session_hash_append_i64(h, *i);
+            }
+            Value::Real(f) => {
+                h = hash_append(h, 2); // SQLITE_FLOAT
+                // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
+                let i = i64::from_ne_bytes(f.to_ne_bytes());
+                h = session_hash_append_i64(h, i);
+            }
+            Value::Text(s) => {
+                h = hash_append(h, 3); // SQLITE_TEXT
+                h = session_hash_append_blob(h, s.as_bytes());
+            }
+            Value::Blob(b) => {
+                h = hash_append(h, 4); // SQLITE_BLOB
+                h = session_hash_append_blob(h, b);
+            }
+            Value::Null | Value::Undefined => {
+                // NULL/Undefined PKs: SQLite skips hashing for these.
+                // In practice, PKs should never be NULL.
+            }
+        }
+    }
+    h
+}
+
+/// Simulate SQLite's session extension hash table to determine row output order.
+///
+/// SQLite's session extension tracks changes in a hash table where:
+/// - New entries are prepended to their bucket (most recent at list head)
+/// - The table starts at 256 buckets and doubles when entries ≥ buckets/2
+/// - Changeset iteration walks buckets 0..n-1, following each linked list
+///
+/// This function returns indices into `rows` in the order that SQLite's
+/// changeset/patchset output would contain them.
+fn session_row_order<V>(rows: &IndexMap<Vec<Value>, V>) -> Vec<usize> {
+    let n = rows.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let pks: Vec<&Vec<Value>> = rows.keys().collect();
+
+    // Simulate the hash table. We store each bucket as a Vec of entry indices
+    // in the REVERSE of SQLite's linked-list order (we push; SQLite prepends).
+    // We reverse each bucket during final iteration to recover SQLite's order.
+    let mut n_change: usize = 0;
+    let mut buckets: Vec<Vec<usize>> = Vec::new();
+
+    for idx in 0..n {
+        // Growth check (before each insert), matching SQLite's sessionGrowHash.
+        // SQLite: grows when nChange==0 or nEntry >= nChange/2.
+        // Here idx == current nEntry (entries 0..idx-1 already inserted).
+        if n_change == 0 || idx >= n_change / 2 {
+            let new_size = if n_change == 0 { 256 } else { n_change * 2 };
+            let mut new_buckets: Vec<Vec<usize>> = vec![Vec::new(); new_size];
+
+            // Rehash existing entries. In SQLite, old buckets are walked
+            // 0..old_nChange-1, and within each bucket entries are walked
+            // from head to tail (reverse of our Vec order), prepending to
+            // new buckets. We simulate by walking our Vecs in reverse
+            // (= SQLite's head-to-tail) and pushing (= SQLite's prepend
+            // into our reversed representation).
+            for old_bucket in &buckets {
+                for &entry_idx in old_bucket.iter().rev() {
+                    let h = session_hash_pk(pks[entry_idx]) as usize % new_size;
+                    new_buckets[h].push(entry_idx);
+                }
+            }
+
+            buckets = new_buckets;
+            n_change = new_size;
+        }
+
+        // Insert entry (push = prepend in our reversed representation)
+        let h = session_hash_pk(pks[idx]) as usize % n_change;
+        buckets[h].push(idx);
+    }
+
+    // Walk buckets in order. Reverse each bucket to recover SQLite's
+    // linked-list iteration order (head to tail).
+    let mut order = Vec::with_capacity(n);
+    for bucket in &buckets {
+        for &idx in bucket.iter().rev() {
+            order.push(idx);
+        }
+    }
+
+    order
+}
 
 /// Builder for constructing changeset or patchset binary data.
 ///
 /// Generic over the format `F` (Changeset or Patchset) and table schema `T`.
 #[derive(Debug, Clone, Eq)]
 pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
-    tables: HashMap<T, HashMap<Vec<Value>, Operation<T, F>>>,
-    table_order: Vec<T>,
+    tables: IndexMap<T, IndexMap<Vec<Value>, Operation<T, F>>>,
 }
 
 /// Custom PartialEq that ignores tables with empty operations.
@@ -60,35 +194,12 @@ pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
 /// and in `build()`.
 impl<F: Format, T: SchemaWithPK> PartialEq for DiffSetBuilder<F, T> {
     fn eq(&self, other: &Self) -> bool {
-        // Filter out tables with empty operations for comparison
-        let self_tables: HashMap<_, _> = self
-            .tables
+        // Filter out tables with empty operations, then compare element by element.
+        // IndexMap preserves insertion order, so this also checks table ordering.
+        self.tables
             .iter()
             .filter(|(_, ops)| !ops.is_empty())
-            .collect();
-        let other_tables: HashMap<_, _> = other
-            .tables
-            .iter()
-            .filter(|(_, ops)| !ops.is_empty())
-            .collect();
-
-        if self_tables != other_tables {
-            return false;
-        }
-
-        // Compare table_order, filtering out tables with empty operations
-        let self_order: Vec<_> = self
-            .table_order
-            .iter()
-            .filter(|t| self.tables.get(*t).is_some_and(|ops| !ops.is_empty()))
-            .collect();
-        let other_order: Vec<_> = other
-            .table_order
-            .iter()
-            .filter(|t| other.tables.get(*t).is_some_and(|ops| !ops.is_empty()))
-            .collect();
-
-        self_order == other_order
+            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
     }
 }
 
@@ -122,30 +233,30 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            tables: HashMap::new(),
-            table_order: Vec::new(),
+            tables: IndexMap::default(),
         }
     }
 
     /// Ensure a table exists in the builder, returning its row map.
-    fn ensure_table(&mut self, table: &T) -> &mut HashMap<Vec<Value>, Operation<T, F>> {
-        if !self.tables.contains_key(table) {
-            self.table_order.push(table.clone());
-            self.tables.insert(table.clone(), HashMap::new());
-        }
-        self.tables.get_mut(table).unwrap()
+    ///
+    /// If the table doesn't exist yet, it's inserted at the end of the
+    /// `IndexMap`, preserving first-touch ordering.
+    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<T, F>> {
+        self.tables
+            .entry(table.clone())
+            .or_insert_with(IndexMap::default)
     }
 
     /// Returns true if the builder has no operations.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.tables.values().all(HashMap::is_empty)
+        self.tables.values().all(IndexMap::is_empty)
     }
 
     /// Returns the number of operations across all tables.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.tables.values().map(HashMap::len).sum()
+        self.tables.values().map(IndexMap::len).sum()
     }
 
     /// Write the table header to the output buffer.
@@ -187,22 +298,29 @@ where
         };
         let rows = self.ensure_table(&table);
 
-        match rows.remove(&pk) {
+        match rows.shift_remove_full(&pk) {
             None => {
                 rows.insert(pk, new_op);
             }
-            Some(existing) => {
+            Some((original_index, _removed_key, existing)) => {
                 // Special case: INSERT + UPDATE may change the PK
                 match (existing, new_op) {
                     (Operation::Insert(ins), Operation::Update(upd)) => {
                         let updated_insert = ins + upd;
                         let new_pk = updated_insert.as_ref().extract_pk(updated_insert.values());
-                        rows.insert(new_pk, Operation::Insert(updated_insert));
+                        // The new PK may collide with a different existing row
+                        // (e.g. when Value::Null ≡ Value::Undefined makes two
+                        // previously-distinct PKs equivalent). Remove any stale
+                        // entry first so shift_insert always sees a vacant slot.
+                        rows.shift_remove(&new_pk);
+                        let index = original_index.min(rows.len());
+                        rows.shift_insert(index, new_pk, Operation::Insert(updated_insert));
                     }
                     (existing, new_op) => {
                         // Standard consolidation
                         if let Some(combined) = existing + new_op {
-                            rows.insert(pk, combined);
+                            // Re-insert at original position to preserve row ordering
+                            rows.shift_insert(original_index, pk, combined);
                         }
                     }
                 }
@@ -258,17 +376,17 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     pub fn build(self) -> Vec<u8> {
         let mut out = Vec::new();
 
-        for table in &self.table_order {
-            let rows = match self.tables.get(table) {
-                Some(rows) if !rows.is_empty() => rows,
-                _ => continue, // Skip tables with no operations
-            };
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue; // Skip tables with no operations
+            }
 
             // Write table header
             Self::write_table_header(&mut out, table);
 
-            // Write operations
-            for (_pk, op) in rows {
+            // Write operations in SQLite's session hash table order
+            for idx in session_row_order(rows) {
+                let (_pk, op) = rows.get_index(idx).unwrap();
                 match op {
                     Operation::Insert(insert) => {
                         out.push(op_codes::INSERT);
@@ -425,11 +543,10 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     pub fn build(&self) -> Vec<u8> {
         let mut out = Vec::new();
 
-        for table in &self.table_order {
-            let rows = match self.tables.get(table) {
-                Some(rows) if !rows.is_empty() => rows,
-                _ => continue, // Skip tables with no operations
-            };
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue; // Skip tables with no operations
+            }
 
             // Write table header
             Self::write_table_header(&mut out, table);
@@ -458,8 +575,9 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                 }
             }
 
-            // Write operations
-            for (pk, op) in rows {
+            // Write operations in SQLite's session hash table order
+            for idx in session_row_order(rows) {
+                let (pk, op) = rows.get_index(idx).unwrap();
                 match op {
                     Operation::Insert(insert) => {
                         out.push(op_codes::INSERT);
@@ -558,20 +676,18 @@ impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
     fn reverse(self) -> Self::Output {
         let mut reversed: DiffSetBuilder<ChangesetFormat, T> = DiffSetBuilder::new();
 
-        // Process tables in order to preserve table ordering
-        for table in self.table_order {
-            if let Some(rows) = self.tables.get(&table) {
-                for (_pk, op) in rows {
-                    match op.clone().reverse() {
-                        Operation::Insert(insert) => {
-                            reversed = reversed.insert(insert);
-                        }
-                        Operation::Delete(delete) => {
-                            reversed = reversed.delete(delete);
-                        }
-                        Operation::Update(update) => {
-                            reversed = reversed.update(update);
-                        }
+        // Process tables in insertion order (preserved by IndexMap)
+        for (_table, rows) in self.tables {
+            for (_pk, op) in rows {
+                match op.reverse() {
+                    Operation::Insert(insert) => {
+                        reversed = reversed.insert(insert);
+                    }
+                    Operation::Delete(delete) => {
+                        reversed = reversed.delete(delete);
+                    }
+                    Operation::Update(update) => {
+                        reversed = reversed.update(update);
                     }
                 }
             }
@@ -1126,7 +1242,8 @@ mod sqlparser_impl {
                         let schema = schemas.get(table_name).ok_or_else(|| {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
-                        let update_op = Update::try_from_ast(update, schema)?;
+                        let update_op =
+                            Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)?;
                         // Convert to owned schema - extract old/new values
                         let values = update_op.values();
                         let old_values: Vec<_> =
@@ -1276,13 +1393,12 @@ mod sqlparser_impl {
                         let schema = schemas.get(table_name).ok_or_else(|| {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
-                        // For patchset, we use the changeset conversion and extract new values
                         let update_op =
-                            Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)?;
+                            Update::<&CreateTable, PatchsetFormat>::try_from_ast(update, schema)?;
                         let new_values: Vec<_> = update_op
                             .values()
                             .iter()
-                            .map(|(_, new)| new.clone())
+                            .map(|((), new)| new.clone())
                             .collect();
                         let owned_update = Update::from_new_values(schema.clone(), new_values);
                         builder = builder.update(owned_update);
@@ -1384,19 +1500,17 @@ mod sqlparser_impl {
             let mut statements = Vec::new();
 
             // First, emit CREATE TABLE statements for all tables in order
-            for table in &builder.table_order {
-                // Skip tables with no operations
-                if builder.tables.get(table).is_some_and(|ops| !ops.is_empty()) {
+            for (table, rows) in &builder.tables {
+                if !rows.is_empty() {
                     statements.push(Statement::CreateTable(table.clone()));
                 }
             }
 
             // Then, emit operations for each table
-            for table in &builder.table_order {
-                let rows = match builder.tables.get(table) {
-                    Some(rows) if !rows.is_empty() => rows,
-                    _ => continue,
-                };
+            for (table, rows) in &builder.tables {
+                if rows.is_empty() {
+                    continue;
+                }
 
                 for (_pk, op) in rows {
                     match op {

@@ -349,6 +349,7 @@ mod sqlparser_impl {
 
     use super::Update;
     use crate::builders::ChangesetFormat;
+    use crate::builders::PatchsetFormat;
     use crate::builders::ast_helpers::{
         extract_where_conditions, make_object_name, make_table_factor,
     };
@@ -445,6 +446,96 @@ mod sqlparser_impl {
             }
 
             Ok(Self::from_values(schema, old_values, new_values))
+        }
+    }
+
+    impl<'a> Update<&'a CreateTable, PatchsetFormat> {
+        /// Try to create a patchset Update from a sqlparser UPDATE statement and a table schema.
+        ///
+        /// In patchset format only new values are stored:
+        /// - PK columns get their values from the WHERE clause.
+        /// - SET columns get their new values from the assignments.
+        /// - All other columns remain Undefined.
+        ///
+        /// # Errors
+        ///
+        /// Returns `UpdateConversionError` if the UPDATE statement cannot be converted.
+        pub fn try_from_ast(
+            update: &ast::Update,
+            schema: &'a CreateTable,
+        ) -> Result<Self, UpdateConversionError> {
+            // Validate table name
+            let update_table_name = match &update.table.relation {
+                TableFactor::Table { name, .. } => name.0.last().map_or("", |part| match part {
+                    ast::ObjectNamePart::Identifier(ident) => ident.value.as_str(),
+                    ast::ObjectNamePart::Function(func) => func.name.value.as_str(),
+                }),
+                _ => "",
+            };
+
+            let schema_name = schema.name();
+            if update_table_name != schema_name {
+                return Err(UpdateConversionError::TableNameMismatch {
+                    expected: schema_name.into(),
+                    got: update_table_name.into(),
+                });
+            }
+
+            // Extract PK values from WHERE clause
+            let where_clause = update
+                .selection
+                .as_ref()
+                .ok_or(UpdateConversionError::NoWhereClause)?;
+            let where_conditions =
+                extract_where_conditions(where_clause, UpdateConversionError::CannotExtractPK)?;
+
+            // Get schema info
+            let pk_indices = get_pk_indices(schema);
+            let num_cols = schema.number_of_columns();
+
+            // Initialize new values as Undefined
+            let mut new_values = vec![Value::Undefined; num_cols];
+
+            // Set PK columns from WHERE clause
+            for &pk_idx in &pk_indices {
+                let col_name = &schema.columns[pk_idx].name.value;
+                let pk_value = where_conditions
+                    .iter()
+                    .find(|(name, _)| name == col_name)
+                    .map(|(_, v)| v.clone())
+                    .ok_or_else(|| UpdateConversionError::MissingPKColumn {
+                        column: col_name.clone(),
+                    })?;
+                new_values[pk_idx] = pk_value;
+            }
+
+            // Apply SET assignments
+            for assignment in &update.assignments {
+                let col_name = match &assignment.target {
+                    AssignmentTarget::ColumnName(name) => name
+                        .0
+                        .last()
+                        .map(|part| match part {
+                            ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
+                            ast::ObjectNamePart::Function(func) => func.name.value.clone(),
+                        })
+                        .unwrap_or_default(),
+                    AssignmentTarget::Tuple(_) => continue,
+                };
+
+                let col_idx = schema
+                    .columns
+                    .iter()
+                    .position(|c| c.name.value == col_name)
+                    .ok_or_else(|| UpdateConversionError::ColumnMismatch {
+                        column: col_name.clone(),
+                    })?;
+
+                let new_value = Value::try_from(&assignment.value)?;
+                new_values[col_idx] = new_value;
+            }
+
+            Ok(Self::from_new_values(schema, new_values))
         }
     }
 

@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 honggfuzz = "0.5"
-sqlite-diff-rs = { path = "../", features = ["sqlparser", "rusqlite"] }
+sqlite-diff-rs = { path = "../", features = ["testing"] }
 rusqlite = { version = "0.37", features = [
 	"bundled",
 	"session",
@@ -19,12 +19,6 @@ sqlparser = { workspace = true }
 [[bin]]
 name = "roundtrip"
 path = "fuzz_targets/roundtrip.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "differential"
-path = "fuzz_targets/differential.rs"
 test = false
 doc = false
 
