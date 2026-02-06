@@ -54,8 +54,10 @@ pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
 /// roundtrip they won't exist. This makes empty tables semantically equivalent
 /// to non-existent tables for comparison purposes.
 ///
-/// TODO: Verify this matches SQLite's session extension behavior. If SQLite
-/// preserves empty table entries in changesets/patchsets, this may need revision.
+/// Verified: SQLite's session extension does NOT include empty table entries in
+/// changesets/patchsets when all operations cancel out. Our builder keeps them
+/// in memory to preserve table ordering, but they are correctly excluded here
+/// and in `build()`.
 impl<F: Format, T: SchemaWithPK> PartialEq for DiffSetBuilder<F, T> {
     fn eq(&self, other: &Self) -> bool {
         // Filter out tables with empty operations for comparison
@@ -134,23 +136,6 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
         self.tables.get_mut(table).unwrap()
     }
 
-    /// Remove a table if it has no operations.
-    ///
-    /// TODO: This removal behavior may diverge from SQLite's session extension.
-    /// When comparing with rusqlite's changeset/patchset output, we need to verify
-    /// whether SQLite keeps empty table entries or removes them. If SQLite keeps them,
-    /// we should either preserve them here or handle the difference in PartialEq.
-    fn cleanup_empty_table(&mut self, table: &T) {
-        if self
-            .tables
-            .get(table)
-            .is_some_and(hashbrown::HashMap::is_empty)
-        {
-            self.tables.remove(table);
-            self.table_order.retain(|t| t != table);
-        }
-    }
-
     /// Returns true if the builder has no operations.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -218,9 +203,6 @@ where
                         // Standard consolidation
                         if let Some(combined) = existing + new_op {
                             rows.insert(pk, combined);
-                        } else {
-                            // Operations cancelled out
-                            self.cleanup_empty_table(&table);
                         }
                     }
                 }
