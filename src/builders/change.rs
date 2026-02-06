@@ -1185,10 +1185,7 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let insert_op = Insert::try_from_ast(insert, schema)?;
-                        // Convert to owned schema
-                        let owned_insert =
-                            Insert::from_values(schema.clone(), insert_op.into_values());
-                        builder = builder.insert(owned_insert);
+                        builder = builder.insert_raw(schema, insert_op.into_values());
                     }
                     Statement::Update(update) => {
                         let table_name = match &update.table.relation {
@@ -1206,15 +1203,12 @@ mod sqlparser_impl {
                         })?;
                         let update_op =
                             Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)?;
-                        // Convert to owned schema - extract old/new values
                         let values = update_op.values();
                         let old_values: Vec<_> =
                             values.iter().map(|(old, _)| old.clone()).collect();
                         let new_values: Vec<_> =
                             values.iter().map(|(_, new)| new.clone()).collect();
-                        let owned_update =
-                            Update::from_values(schema.clone(), old_values, new_values);
-                        builder = builder.update(owned_update);
+                        builder = builder.update_raw(schema, old_values, new_values);
                     }
                     Statement::Delete(delete) => {
                         let table_name = match &delete.from {
@@ -1233,10 +1227,7 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
-                        // Convert to owned schema
-                        let owned_delete =
-                            ChangeDelete::from_values(schema.clone(), delete_op.values().to_vec());
-                        builder = builder.delete(owned_delete);
+                        builder = builder.delete_raw(schema, delete_op.into_values());
                     }
                     other => {
                         return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
@@ -1314,13 +1305,13 @@ mod sqlparser_impl {
         /// - An unsupported statement type is encountered
         pub fn try_from_statements(statements: &[Statement]) -> Result<Self, DiffSetParseError> {
             let mut builder = Self::new();
-            let mut schemas: HashMap<String, CreateTable> = HashMap::new();
+            let mut schemas: HashMap<String, &CreateTable> = HashMap::new();
 
             for stmt in statements {
                 match stmt {
                     Statement::CreateTable(create) => {
                         let table_name = create.name().to_string();
-                        schemas.insert(table_name, create.clone());
+                        schemas.insert(table_name, create);
                     }
                     Statement::Insert(insert) => {
                         let table_name =
@@ -1336,10 +1327,7 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let insert_op = Insert::try_from_ast(insert, schema)?;
-                        // Convert to owned schema
-                        let owned_insert =
-                            Insert::from_values(schema.clone(), insert_op.into_values());
-                        builder = builder.insert(owned_insert);
+                        builder = builder.insert_raw(*schema, insert_op.into_values());
                     }
                     Statement::Update(update) => {
                         let table_name = match &update.table.relation {
@@ -1362,8 +1350,7 @@ mod sqlparser_impl {
                             .iter()
                             .map(|((), new)| new.clone())
                             .collect();
-                        let owned_update = Update::from_new_values(schema.clone(), new_values);
-                        builder = builder.update(owned_update);
+                        builder = builder.update_raw(*schema, new_values);
                     }
                     Statement::Delete(delete) => {
                         let table_name = match &delete.from {

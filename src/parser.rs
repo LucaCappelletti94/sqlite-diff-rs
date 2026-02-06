@@ -101,7 +101,7 @@ pub struct ParsedTableSchema {
 impl ParsedTableSchema {
     /// Create a new parsed table schema.
     #[must_use]
-    pub fn new(name: String, column_count: usize, pk_flags: Vec<u8>) -> Self {
+    pub(crate) fn new(name: String, column_count: usize, pk_flags: Vec<u8>) -> Self {
         debug_assert_eq!(pk_flags.len(), column_count);
         Self {
             name,
@@ -112,7 +112,7 @@ impl ParsedTableSchema {
 
     /// Get the indices of primary key columns, in PK order.
     #[must_use]
-    pub fn pk_indices(&self) -> Vec<usize> {
+    pub(crate) fn pk_indices(&self) -> Vec<usize> {
         // Collect (col_idx, pk_ordinal) pairs for non-zero entries
         let mut pk_cols: Vec<(usize, u8)> = self
             .pk_flags

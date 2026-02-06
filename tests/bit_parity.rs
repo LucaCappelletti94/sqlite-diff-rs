@@ -198,16 +198,23 @@ fn bit_parity_composite_pk() {
 #[test]
 fn bit_parity_builder_single_insert() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    let insert = Insert::from(schema.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Alice")
-        .unwrap();
 
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new().insert(insert.clone());
+    let changeset: ChangeSet<&CreateTable> = ChangeSet::new().insert(
+        Insert::from(&schema)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "Alice")
+            .unwrap(),
+    );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<CreateTable> = PatchSet::new().insert(insert);
+    let patchset: PatchSet<&CreateTable> = PatchSet::new().insert(
+        Insert::from(&schema)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "Alice")
+            .unwrap(),
+    );
     let our_patchset: Vec<u8> = patchset.into();
 
     assert_bit_parity(
@@ -223,23 +230,39 @@ fn bit_parity_builder_single_insert() {
 #[test]
 fn bit_parity_builder_two_inserts() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    let insert1 = Insert::from(schema.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Alice")
-        .unwrap();
-    let insert2 = Insert::from(schema.clone())
-        .set(0, 2i64)
-        .unwrap()
-        .set(1, "Bob")
-        .unwrap();
 
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert1.clone())
-        .insert(insert2.clone());
+    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+        .insert(
+            Insert::from(&schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema)
+                .set(0, 2i64)
+                .unwrap()
+                .set(1, "Bob")
+                .unwrap(),
+        );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<CreateTable> = PatchSet::new().insert(insert1).insert(insert2);
+    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+        .insert(
+            Insert::from(&schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema)
+                .set(0, 2i64)
+                .unwrap()
+                .set(1, "Bob")
+                .unwrap(),
+        );
     let our_patchset: Vec<u8> = patchset.into();
 
     assert_bit_parity(
@@ -256,26 +279,39 @@ fn bit_parity_builder_two_inserts() {
 #[test]
 fn bit_parity_builder_insert_then_update() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    let insert = Insert::from(schema.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Alice")
-        .unwrap();
-    let update = Update::<_, ChangesetFormat>::from(schema.clone())
-        .set(0, 1i64, 1i64)
-        .unwrap()
-        .set(1, "Alice", "Alicia")
-        .unwrap();
-    let update_patch = Update::<_, PatchsetFormat>::from(schema.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Alicia")
-        .unwrap();
 
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new().insert(insert.clone()).update(update);
+    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+        .insert(
+            Insert::from(&schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .update(
+            Update::<_, ChangesetFormat>::from(&schema)
+                .set(0, 1i64, 1i64)
+                .unwrap()
+                .set(1, "Alice", "Alicia")
+                .unwrap(),
+        );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<CreateTable> = PatchSet::new().insert(insert).update(update_patch);
+    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+        .insert(
+            Insert::from(&schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .update(
+            Update::<_, PatchsetFormat>::from(&schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alicia")
+                .unwrap(),
+        );
     let our_patchset: Vec<u8> = patchset.into();
 
     assert_bit_parity(
@@ -294,23 +330,38 @@ fn bit_parity_builder_two_tables() {
     let schema_u = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
     let schema_p = parse_schema("CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)");
 
-    let insert_u = Insert::from(schema_u.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Alice")
-        .unwrap();
-    let insert_p = Insert::from(schema_p.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "Hello")
-        .unwrap();
-
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert_u.clone())
-        .insert(insert_p.clone());
+    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+        .insert(
+            Insert::from(&schema_u)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema_p)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Hello")
+                .unwrap(),
+        );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<CreateTable> = PatchSet::new().insert(insert_u).insert(insert_p);
+    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+        .insert(
+            Insert::from(&schema_u)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Alice")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema_p)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "Hello")
+                .unwrap(),
+        );
     let our_patchset: Vec<u8> = patchset.into();
 
     assert_bit_parity(
@@ -330,41 +381,62 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let schema_a = parse_schema("CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)");
     let schema_b = parse_schema("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
 
-    let insert_a = Insert::from(schema_a.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "a1")
-        .unwrap();
-    let insert_b = Insert::from(schema_b.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "b1")
-        .unwrap();
-    let delete_a1 = ChangeDelete::from(schema_a.clone())
-        .set(0, 1i64)
-        .unwrap()
-        .set(1, "a1")
-        .unwrap();
-    let insert_a2 = Insert::from(schema_a.clone())
-        .set(0, 2i64)
-        .unwrap()
-        .set(1, "a2")
-        .unwrap();
-
     // Changeset
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert_a.clone())
-        .insert(insert_b.clone())
-        .delete(delete_a1)
-        .insert(insert_a2.clone());
+    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+        .insert(
+            Insert::from(&schema_a)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "a1")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema_b)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "b1")
+                .unwrap(),
+        )
+        .delete(
+            ChangeDelete::from(&schema_a)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "a1")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema_a)
+                .set(0, 2i64)
+                .unwrap()
+                .set(1, "a2")
+                .unwrap(),
+        );
     let our_changeset: Vec<u8> = changeset.into();
 
     // Patchset (delete uses PK only)
-    let patchset: PatchSet<CreateTable> = PatchSet::new()
-        .insert(insert_a)
-        .insert(insert_b)
-        .delete(&schema_a, &[sqlite_diff_rs::Value::Integer(1)])
-        .insert(insert_a2);
+    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+        .insert(
+            Insert::from(&schema_a)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "a1")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(&schema_b)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, "b1")
+                .unwrap(),
+        )
+        .delete(&&schema_a, &[sqlite_diff_rs::Value::Integer(1)])
+        .insert(
+            Insert::from(&schema_a)
+                .set(0, 2i64)
+                .unwrap()
+                .set(1, "a2")
+                .unwrap(),
+        );
     let our_patchset: Vec<u8> = patchset.into();
 
     assert_bit_parity(

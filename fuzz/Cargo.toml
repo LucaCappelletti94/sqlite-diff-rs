@@ -33,3 +33,9 @@ name = "apply_roundtrip"
 path = "fuzz_targets/apply_roundtrip.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "reverse_idempotent"
+path = "fuzz_targets/reverse_idempotent.rs"
+test = false
+doc = false

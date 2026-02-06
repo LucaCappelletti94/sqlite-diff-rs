@@ -45,7 +45,7 @@ impl Value {
 
     /// Check if the value is Null.
     #[must_use]
-    pub fn is_null(&self) -> bool {
+    pub(crate) fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
 }

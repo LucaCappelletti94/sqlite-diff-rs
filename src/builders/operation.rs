@@ -30,6 +30,11 @@ pub(crate) enum Operation<F: Format> {
 }
 
 /// Trait for reversing operations.
+///
+/// This trait allows reversing database operations, which is useful for:
+/// - Creating inverse changesets (undo operations)
+/// - Conflict resolution in distributed systems
+/// - Testing bidirectional synchronization
 pub trait Reverse {
     /// The reverse of this operation.
     type Output;

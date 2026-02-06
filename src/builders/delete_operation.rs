@@ -33,7 +33,7 @@ impl<T: DynTable> From<T> for ChangeDelete<T> {
 
 impl<T: DynTable> ChangeDelete<T> {
     /// Create a delete operation with the given values.
-    pub fn from_values(table: T, values: Vec<Value>) -> Self {
+    pub(crate) fn from_values(table: T, values: Vec<Value>) -> Self {
         Self { table, values }
     }
 
@@ -97,12 +97,12 @@ impl<T: DynTable> ChangeDelete<T> {
     }
 
     /// Returns a reference to the values.
-    pub fn values(&self) -> &[Value] {
+    pub(crate) fn values(&self) -> &[Value] {
         &self.values
     }
 
     /// Consumes self and returns the values.
-    pub fn into_values(self) -> Vec<Value> {
+    pub(crate) fn into_values(self) -> Vec<Value> {
         self.values
     }
 }
@@ -138,7 +138,7 @@ mod sqlparser_impl {
         /// # Errors
         ///
         /// Returns `DeleteConversionError` if the DELETE statement cannot be converted.
-        pub fn try_from_ast(
+        pub(crate) fn try_from_ast(
             delete: &ast::Delete,
             schema: &'a CreateTable,
         ) -> Result<Self, DeleteConversionError> {

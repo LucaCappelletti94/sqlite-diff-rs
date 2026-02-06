@@ -32,17 +32,17 @@ impl<T: DynTable> AsRef<T> for Insert<T> {
 
 impl<T: DynTable> Insert<T> {
     /// Create an insert operation with the given values.
-    pub fn from_values(table: T, values: Vec<Value>) -> Self {
+    pub(crate) fn from_values(table: T, values: Vec<Value>) -> Self {
         Self { table, values }
     }
 
     /// Returns a reference to the values.
-    pub fn values(&self) -> &[Value] {
+    pub(crate) fn values(&self) -> &[Value] {
         &self.values
     }
 
     /// Consumes self and returns the values.
-    pub fn into_values(self) -> Vec<Value> {
+    pub(crate) fn into_values(self) -> Vec<Value> {
         self.values
     }
 
@@ -142,7 +142,7 @@ mod sqlparser_impl {
         /// # Errors
         ///
         /// Returns `InsertConversionError` if the INSERT statement cannot be converted.
-        pub fn try_from_ast(
+        pub(crate) fn try_from_ast(
             insert: &ast::Insert,
             schema: &'a CreateTable,
         ) -> Result<Self, InsertConversionError> {

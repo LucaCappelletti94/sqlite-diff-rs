@@ -49,7 +49,7 @@ impl<T: DynTable, F: Format> From<T> for Update<T, F> {
 
 impl<T: DynTable> Update<T, ChangesetFormat> {
     /// Create an update operation with the given old and new values.
-    pub fn from_values(table: T, old_values: Vec<Value>, new_values: Vec<Value>) -> Self {
+    pub(crate) fn from_values(table: T, old_values: Vec<Value>, new_values: Vec<Value>) -> Self {
         let values = old_values.into_iter().zip(new_values).collect();
         Self { table, values }
     }
@@ -189,7 +189,7 @@ impl<T: DynTable> Update<T, PatchsetFormat> {
     ///
     /// This is useful for extracting the primary key values for patchset operations,
     /// where the PK values are stored in the new values.
-    pub fn new_values(&self) -> Vec<Value> {
+    pub(crate) fn new_values(&self) -> Vec<Value> {
         self.values.iter().map(|((), new)| new.clone()).collect()
     }
 
@@ -299,7 +299,7 @@ mod sqlparser_impl {
         /// # Errors
         ///
         /// Returns `UpdateConversionError` if the UPDATE statement cannot be converted.
-        pub fn try_from_ast(
+        pub(crate) fn try_from_ast(
             update: &ast::Update,
             schema: &'a CreateTable,
         ) -> Result<Self, UpdateConversionError> {
@@ -391,7 +391,7 @@ mod sqlparser_impl {
         /// # Errors
         ///
         /// Returns `UpdateConversionError` if the UPDATE statement cannot be converted.
-        pub fn try_from_ast(
+        pub(crate) fn try_from_ast(
             update: &ast::Update,
             schema: &'a CreateTable,
         ) -> Result<Self, UpdateConversionError> {
