@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use crate::{
     builders::{ChangesetFormat, PatchsetFormat, format::Format},
-    encoding::Value,
+    encoding::{MaybeValue, Value},
 };
 
 /// A schema-less database operation, parameterized only by the format `F`.
@@ -24,9 +24,9 @@ pub(crate) enum Operation<F: Format> {
     /// - Patchset: `()` (PK is stored as the IndexMap key)
     Delete(F::DeleteData),
     /// A row was updated. Stores `(old, new)` pairs per column.
-    /// - Changeset: `(Value, Value)` per column
-    /// - Patchset: `((), Value)` per column
-    Update(Vec<(F::Old, Value)>),
+    /// - Changeset: `(MaybeValue, MaybeValue)` per column (None = undefined)
+    /// - Patchset: `((), MaybeValue)` per column
+    Update(Vec<(F::Old, MaybeValue)>),
 }
 
 /// Trait for reversing operations.
@@ -75,8 +75,8 @@ impl core::ops::Add for Operation<ChangesetFormat> {
             // INSERT + UPDATE: apply update to insert values
             (Operation::Insert(mut values), Operation::Update(updates)) => {
                 for (idx, (_old, new)) in updates.into_iter().enumerate() {
-                    if !matches!(new, Value::Undefined) {
-                        values[idx] = new;
+                    if let Some(new_val) = new {
+                        values[idx] = new_val;
                     }
                 }
                 Some(Operation::Insert(values))
@@ -100,7 +100,11 @@ impl core::ops::Add for Operation<ChangesetFormat> {
 
             // UPDATE + DELETE: delete with original old values
             (Operation::Update(upd), Operation::Delete(_del)) => {
-                let old_values = upd.into_iter().map(|(old, _new)| old).collect();
+                // Collect old values, converting MaybeValue to Value (None becomes Null)
+                let old_values = upd
+                    .into_iter()
+                    .map(|(old, _new)| old.unwrap_or(Value::Null))
+                    .collect();
                 Some(Operation::Delete(old_values))
             }
 
@@ -110,7 +114,11 @@ impl core::ops::Add for Operation<ChangesetFormat> {
                     None // Same values — cancel out
                 } else {
                     // Different — becomes UPDATE from old to new
-                    let update_values = del_values.into_iter().zip(ins_values).collect();
+                    let update_values = del_values
+                        .into_iter()
+                        .zip(ins_values)
+                        .map(|(old, new)| (Some(old), Some(new)))
+                        .collect();
                     Some(Operation::Update(update_values))
                 }
             }
@@ -139,8 +147,8 @@ impl core::ops::Add for Operation<PatchsetFormat> {
             // INSERT + UPDATE: apply update to insert values
             (Operation::Insert(mut values), Operation::Update(updates)) => {
                 for (idx, ((), new)) in updates.into_iter().enumerate() {
-                    if !matches!(new, Value::Undefined) {
-                        values[idx] = new;
+                    if let Some(new_val) = new {
+                        values[idx] = new_val;
                     }
                 }
                 Some(Operation::Insert(values))
@@ -167,7 +175,7 @@ impl core::ops::Add for Operation<PatchsetFormat> {
 
             // DELETE + INSERT: always becomes update (patchset can't compare old values)
             (Operation::Delete(()), Operation::Insert(ins_values)) => {
-                let update_values = ins_values.into_iter().map(|new| ((), new)).collect();
+                let update_values = ins_values.into_iter().map(|new| ((), Some(new))).collect();
                 Some(Operation::Update(update_values))
             }
 

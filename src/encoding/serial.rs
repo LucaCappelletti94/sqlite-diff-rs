@@ -20,7 +20,7 @@ use core::hash::{Hash, Hasher};
 use super::varint::encode_varint_simple;
 
 /// A value that can be encoded in SQLite changeset format.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub enum Value {
     /// SQL NULL
     Null,
@@ -32,24 +32,13 @@ pub enum Value {
     Text(String),
     /// Binary blob
     Blob(Vec<u8>),
-    #[default]
-    /// Undefined (used in changesets for unchanged columns)
-    Undefined,
 }
 
-impl Value {
-    /// Check if the value is Undefined.
-    pub(crate) fn is_undefined(&self) -> bool {
-        matches!(self, Value::Undefined)
-    }
+/// Internal type for representing values in changesets, where `None` means "undefined"
+/// (unchanged column in UPDATE operations).
+pub(crate) type MaybeValue = Option<Value>;
 
-    /// Check if the value is Null.
-    #[must_use]
-    pub(crate) fn is_null(&self) -> bool {
-        matches!(self, Value::Null)
-    }
-}
-
+// Custom PartialEq to handle f64 bit-equality
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -57,7 +46,7 @@ impl PartialEq for Value {
             (Value::Real(a), Value::Real(b)) => a.to_bits() == b.to_bits(),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Blob(a), Value::Blob(b)) => a == b,
-            (Value::Null | Value::Undefined, Value::Null | Value::Undefined) => true,
+            (Value::Null, Value::Null) => true,
             _ => false,
         }
     }
@@ -67,54 +56,48 @@ impl Eq for Value {}
 
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // IMPORTANT: Hash must be consistent with PartialEq.
-        // Since Null == Undefined, they must hash identically.
-        // We use a single tag (5) for both, matching the Null discriminant
-        // choice, rather than core::mem::discriminant which would differ.
-        let tag: u8 = match self {
-            Value::Null | Value::Undefined => 0,
-            Value::Integer(_) => 1,
-            Value::Real(_) => 2,
-            Value::Text(_) => 3,
-            Value::Blob(_) => 4,
-        };
-        tag.hash(state);
+        core::mem::discriminant(self).hash(state);
         match self {
             Value::Integer(v) => v.hash(state),
             Value::Real(v) => v.to_bits().hash(state),
             Value::Text(v) => v.hash(state),
             Value::Blob(v) => v.hash(state),
-            Value::Null | Value::Undefined => {}
+            Value::Null => {}
         }
     }
 }
 
 // From implementations for common types
 impl From<i64> for Value {
+    #[inline]
     fn from(v: i64) -> Self {
         Value::Integer(v)
     }
 }
 
 impl From<i32> for Value {
+    #[inline]
     fn from(v: i32) -> Self {
         Value::Integer(i64::from(v))
     }
 }
 
 impl From<String> for Value {
+    #[inline]
     fn from(v: String) -> Self {
         Value::Text(v)
     }
 }
 
 impl From<&str> for Value {
+    #[inline]
     fn from(v: &str) -> Self {
         Value::Text(v.to_string())
     }
 }
 
 impl From<f64> for Value {
+    #[inline]
     fn from(v: f64) -> Self {
         Value::Real(v)
     }
@@ -151,22 +134,22 @@ pub mod sqlparser;
 /// - Type 5: NULL (no data follows)
 ///
 /// This is NOT the same as SQLite serial types used in database records!
-pub(crate) fn encode_value(out: &mut Vec<u8>, value: &Value) {
+pub(crate) fn encode_value(out: &mut Vec<u8>, value: &MaybeValue) {
     match value {
-        Value::Undefined => {
+        None => {
             // Undefined marker in changeset format (type 0)
             out.push(0x00);
         }
-        Value::Null => {
+        Some(Value::Null) => {
             // NULL is type 5 in changeset format
             out.push(0x05);
         }
-        Value::Integer(v) => {
+        Some(Value::Integer(v)) => {
             // INTEGER is type 1, always 8 bytes big-endian
             out.push(0x01);
             out.extend(v.to_be_bytes());
         }
-        Value::Real(v) => {
+        Some(Value::Real(v)) => {
             // SQLite converts NaN to NULL, but preserves Infinity
             if v.is_nan() {
                 out.push(0x05); // NULL
@@ -178,13 +161,13 @@ pub(crate) fn encode_value(out: &mut Vec<u8>, value: &Value) {
                 out.extend(normalized.to_be_bytes());
             }
         }
-        Value::Text(s) => {
+        Some(Value::Text(s)) => {
             // TEXT is type 3, varint length + UTF-8 bytes
             out.push(0x03);
             out.extend(encode_varint_simple(s.len() as u64));
             out.extend(s.as_bytes());
         }
-        Value::Blob(b) => {
+        Some(Value::Blob(b)) => {
             // BLOB is type 4, varint length + raw bytes
             out.push(0x04);
             out.extend(encode_varint_simple(b.len() as u64));
@@ -203,9 +186,9 @@ pub(crate) fn encode_value(out: &mut Vec<u8>, value: &Value) {
 /// - 4: BLOB (varint length + raw bytes)
 /// - 5: NULL
 ///
-/// Returns the value and number of bytes consumed.
+/// Returns the value (None for Undefined) and number of bytes consumed.
 #[must_use]
-pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
+pub(crate) fn decode_value(data: &[u8]) -> Option<(MaybeValue, usize)> {
     use super::varint::decode_varint;
 
     if data.is_empty() {
@@ -218,7 +201,7 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
     match type_code {
         0 => {
             // Undefined marker
-            Some((Value::Undefined, 1))
+            Some((None, 1))
         }
         1 => {
             // INTEGER: 8 bytes big-endian
@@ -228,7 +211,7 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
             let v = i64::from_be_bytes([
                 data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ]);
-            Some((Value::Integer(v), 9))
+            Some((Some(Value::Integer(v)), 9))
         }
         2 => {
             // FLOAT: 8 bytes big-endian IEEE 754
@@ -241,11 +224,11 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
             // SQLite normalizes NaN to NULL and -0.0 to 0.0, so we do the same
             // during decoding to ensure roundtrip consistency
             if v.is_nan() {
-                Some((Value::Null, 9))
+                Some((Some(Value::Null), 9))
             } else {
                 // Normalize -0.0 to 0.0
                 let normalized = if v == 0.0 { 0.0 } else { v };
-                Some((Value::Real(normalized), 9))
+                Some((Some(Value::Real(normalized)), 9))
             }
         }
         3 => {
@@ -257,7 +240,7 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
                 return None;
             }
             let text = String::from_utf8(data[..len].to_vec()).ok()?;
-            Some((Value::Text(text), 1 + len_bytes + len))
+            Some((Some(Value::Text(text)), 1 + len_bytes + len))
         }
         4 => {
             // BLOB: varint length + raw bytes
@@ -267,11 +250,11 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
             if data.len() < len {
                 return None;
             }
-            Some((Value::Blob(data[..len].to_vec()), 1 + len_bytes + len))
+            Some((Some(Value::Blob(data[..len].to_vec())), 1 + len_bytes + len))
         }
         5 => {
             // NULL
-            Some((Value::Null, 1))
+            Some((Some(Value::Null), 1))
         }
         _ => None,
     }
@@ -285,9 +268,9 @@ mod tests {
     #[test]
     fn test_encode_decode_null() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Null);
+        encode_value(&mut buf, &Some(Value::Null));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Value::Null);
+        assert_eq!(decoded, Some(Value::Null));
         assert_eq!(len, buf.len());
     }
 
@@ -305,9 +288,9 @@ mod tests {
             i64::MAX,
         ] {
             let mut buf = Vec::new();
-            encode_value(&mut buf, &Value::Integer(v));
+            encode_value(&mut buf, &Some(Value::Integer(v)));
             let (decoded, len) = decode_value(&buf).unwrap();
-            assert_eq!(decoded, Value::Integer(v), "Failed for {v}");
+            assert_eq!(decoded, Some(Value::Integer(v)), "Failed for {v}");
             assert_eq!(len, buf.len());
             // All integers should be encoded as type 1 + 8 bytes = 9 bytes total
             assert_eq!(buf.len(), 9, "Integer {v} should be 9 bytes");
@@ -317,9 +300,9 @@ mod tests {
     #[test]
     fn test_encode_decode_real() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Real(6.14159));
+        encode_value(&mut buf, &Some(Value::Real(6.14159)));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Value::Real(6.14159));
+        assert_eq!(decoded, Some(Value::Real(6.14159)));
         assert_eq!(len, buf.len());
         // Float is type 2 + 8 bytes = 9 bytes total
         assert_eq!(buf.len(), 9);
@@ -328,9 +311,9 @@ mod tests {
     #[test]
     fn test_encode_decode_text() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Text("hello".to_string()));
+        encode_value(&mut buf, &Some(Value::Text("hello".to_string())));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Value::Text("hello".to_string()));
+        assert_eq!(decoded, Some(Value::Text("hello".to_string())));
         assert_eq!(len, buf.len());
         // Text is type 3 + varint(5) + "hello" = 1 + 1 + 5 = 7 bytes
         assert_eq!(buf.len(), 7);
@@ -339,9 +322,9 @@ mod tests {
     #[test]
     fn test_encode_decode_blob() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Blob(vec![1, 2, 3, 4, 5]));
+        encode_value(&mut buf, &Some(Value::Blob(vec![1, 2, 3, 4, 5])));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Value::Blob(vec![1, 2, 3, 4, 5]));
+        assert_eq!(decoded, Some(Value::Blob(vec![1, 2, 3, 4, 5])));
         assert_eq!(len, buf.len());
         // Blob is type 4 + varint(5) + data = 1 + 1 + 5 = 7 bytes
         assert_eq!(buf.len(), 7);
@@ -350,9 +333,9 @@ mod tests {
     #[test]
     fn test_encode_decode_undefined() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Undefined);
+        encode_value(&mut buf, &None);
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Value::Undefined);
+        assert_eq!(decoded, None);
         assert_eq!(len, buf.len());
         // Undefined is type 0, just 1 byte
         assert_eq!(buf.len(), 1);
@@ -364,7 +347,7 @@ mod tests {
 
         // Integer 1 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Integer(1));
+        encode_value(&mut buf, &Some(Value::Integer(1)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
@@ -372,7 +355,7 @@ mod tests {
 
         // Integer 100 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Integer(100));
+        encode_value(&mut buf, &Some(Value::Integer(100)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64]
@@ -380,12 +363,12 @@ mod tests {
 
         // Text "alice" should be: type 3 + varint(5) + "alice"
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Text("alice".to_string()));
+        encode_value(&mut buf, &Some(Value::Text("alice".to_string())));
         assert_eq!(buf, vec![0x03, 0x05, b'a', b'l', b'i', b'c', b'e']);
 
         // NULL should be type 5
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Value::Null);
+        encode_value(&mut buf, &Some(Value::Null));
         assert_eq!(buf, vec![0x05]);
     }
 }

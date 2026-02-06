@@ -4,6 +4,8 @@
 //! DiffSetBuilder<ChangesetFormat, CreateTable> and
 //! DiffSetBuilder<PatchsetFormat, CreateTable>.
 
+#![cfg(feature = "sqlparser")]
+
 use sqlite_diff_rs::{ChangeSet, DiffSetParseError, PatchSet};
 use sqlparser::ast::CreateTable;
 

@@ -34,7 +34,7 @@ use crate::{
     builders::{
         ChangeDelete, ChangesetFormat, Insert, Operation, PatchsetFormat, Update, format::Format,
     },
-    encoding::{Value, encode_value},
+    encoding::{MaybeValue, Value, encode_value},
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -100,8 +100,8 @@ fn session_hash_pk(pk: &[Value]) -> u32 {
                 h = hash_append(h, 4); // SQLITE_BLOB
                 h = session_hash_append_blob(h, b);
             }
-            Value::Null | Value::Undefined => {
-                // NULL/Undefined PKs: SQLite skips hashing for these.
+            Value::Null => {
+                // NULL PKs: SQLite skips hashing for these.
                 // In practice, PKs should never be NULL.
             }
         }
@@ -215,24 +215,28 @@ impl<F: Format, T: SchemaWithPK> Default for DiffSetBuilder<F, T> {
 }
 
 impl<T: SchemaWithPK> From<&DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+    #[inline]
     fn from(builder: &DiffSetBuilder<ChangesetFormat, T>) -> Self {
         builder.build()
     }
 }
 
 impl<T: SchemaWithPK> From<DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+    #[inline]
     fn from(builder: DiffSetBuilder<ChangesetFormat, T>) -> Self {
         builder.build()
     }
 }
 
 impl<T: SchemaWithPK> From<&DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+    #[inline]
     fn from(builder: &DiffSetBuilder<PatchsetFormat, T>) -> Self {
         builder.build()
     }
 }
 
 impl<T: SchemaWithPK> From<DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+    #[inline]
     fn from(builder: DiffSetBuilder<PatchsetFormat, T>) -> Self {
         builder.build()
     }
@@ -242,6 +246,7 @@ use crate::encoding::op_codes;
 
 impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     /// Create a new builder.
+    #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -253,17 +258,20 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     ///
     /// If the table doesn't exist yet, it's inserted at the end of the
     /// `IndexMap`, preserving first-touch ordering.
+    #[inline]
     fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<F>> {
         self.tables.entry(table.clone()).or_default()
     }
 
     /// Returns true if the builder has no operations.
+    #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tables.values().all(IndexMap::is_empty)
     }
 
     /// Returns the number of operations across all tables.
+    #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
         self.tables.values().map(IndexMap::len).sum()
@@ -350,8 +358,15 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     }
 
     /// Add an INSERT operation from raw values (internal use).
+    ///
+    /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<Value>) -> Self {
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
+        // Convert MaybeValue to Value, using Null for undefined
+        let values: Vec<Value> = values
+            .into_iter()
+            .map(|v| v.unwrap_or(Value::Null))
+            .collect();
         let pk = table.extract_pk(&values);
         self.add_operation(table, pk, Operation::Insert(values))
     }
@@ -365,8 +380,15 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     }
 
     /// Add a DELETE operation from raw values (internal use).
+    ///
+    /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn delete_raw(self, table: &T, values: Vec<Value>) -> Self {
+    pub(crate) fn delete_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
+        // Convert MaybeValue to Value, using Null for undefined
+        let values: Vec<Value> = values
+            .into_iter()
+            .map(|v| v.unwrap_or(Value::Null))
+            .collect();
         let pk = table.extract_pk(&values);
         self.add_operation(table, pk, Operation::Delete(values))
     }
@@ -374,15 +396,15 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     /// Add an UPDATE operation.
     #[must_use]
     pub fn update(self, update: Update<T, ChangesetFormat>) -> Self {
-        // Extract PK from old values
+        // Extract PK from old values (convert None to Null for PK extraction)
         let old_values: Vec<_> = update
             .values()
             .iter()
-            .map(|(old, _): &(_, _)| old.clone())
+            .map(|(old, _): &(_, _)| old.clone().unwrap_or(Value::Null))
             .collect();
         let pk = update.as_ref().extract_pk(&old_values);
         let table = update.as_ref().clone();
-        let values: Vec<(Value, Value)> = update.into();
+        let values: Vec<(MaybeValue, MaybeValue)> = update.into();
         self.add_operation(&table, pk, Operation::Update(values))
     }
 
@@ -391,11 +413,17 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     pub(crate) fn update_raw(
         self,
         table: &T,
-        old_values: Vec<Value>,
-        new_values: Vec<Value>,
+        old_values: Vec<MaybeValue>,
+        new_values: Vec<MaybeValue>,
     ) -> Self {
-        let pk = table.extract_pk(&old_values);
-        let values: Vec<(Value, Value)> = old_values.into_iter().zip(new_values).collect();
+        // Extract PK using concrete values (convert None to Null)
+        let pk_values: Vec<Value> = old_values
+            .iter()
+            .map(|v| v.clone().unwrap_or(Value::Null))
+            .collect();
+        let pk = table.extract_pk(&pk_values);
+        let values: Vec<(MaybeValue, MaybeValue)> =
+            old_values.into_iter().zip(new_values).collect();
         self.add_operation(table, pk, Operation::Update(values))
     }
 }
@@ -414,8 +442,15 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     }
 
     /// Add an INSERT operation from raw values (internal use).
+    ///
+    /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<Value>) -> Self {
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
+        // Convert MaybeValue to Value, using Null for undefined
+        let values: Vec<Value> = values
+            .into_iter()
+            .map(|v| v.unwrap_or(Value::Null))
+            .collect();
         let pk = table.extract_pk(&values);
         self.add_operation(table, pk, Operation::Insert(values))
     }
@@ -429,18 +464,10 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// # Example
     ///
     /// ```
-    /// use sqlite_diff_rs::{PatchSet, SchemaWithPK};
-    /// use sqlparser::ast::CreateTable;
-    /// use sqlparser::dialect::SQLiteDialect;
-    /// use sqlparser::parser::Parser;
+    /// use sqlite_diff_rs::{PatchSet, SchemaWithPK, TableSchema};
     ///
-    /// let dialect = SQLiteDialect {};
-    /// let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
-    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
-    /// let schema = match &statements[0] {
-    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
-    ///     _ => panic!(),
-    /// };
+    /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
+    /// let schema = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // Delete row where id = 1
     /// let patchset = PatchSet::new().delete(&schema, &[1i64.into()]);
@@ -458,18 +485,10 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// # Example
     ///
     /// ```
-    /// use sqlite_diff_rs::{PatchSet, PatchsetFormat, Update};
-    /// use sqlparser::ast::CreateTable;
-    /// use sqlparser::dialect::SQLiteDialect;
-    /// use sqlparser::parser::Parser;
+    /// use sqlite_diff_rs::{PatchSet, PatchsetFormat, Update, TableSchema};
     ///
-    /// let dialect = SQLiteDialect {};
-    /// let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
-    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
-    /// let schema = match &statements[0] {
-    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
-    ///     _ => panic!(),
-    /// };
+    /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
+    /// let schema = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // UPDATE users SET name = 'Bob' WHERE id = 1
     /// let update = Update::<_, PatchsetFormat>::from(schema)
@@ -480,17 +499,28 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// ```
     #[must_use]
     pub fn update(self, update: Update<T, PatchsetFormat>) -> Self {
-        let pk = update.as_ref().extract_pk(&update.new_values());
+        // Extract PK from new values (convert None to Null for PK extraction)
+        let new_values: Vec<Value> = update
+            .new_values()
+            .into_iter()
+            .map(|v| v.unwrap_or(Value::Null))
+            .collect();
+        let pk = update.as_ref().extract_pk(&new_values);
         let table = update.as_ref().clone();
-        let values: Vec<((), Value)> = update.into();
+        let values: Vec<((), MaybeValue)> = update.into();
         self.add_operation(&table, pk, Operation::Update(values))
     }
 
     /// Add an UPDATE operation from raw new values (internal use).
     #[must_use]
-    pub(crate) fn update_raw(self, table: &T, new_values: Vec<Value>) -> Self {
-        let pk = table.extract_pk(&new_values);
-        let values: Vec<((), Value)> = new_values.into_iter().map(|v| ((), v)).collect();
+    pub(crate) fn update_raw(self, table: &T, new_values: Vec<MaybeValue>) -> Self {
+        // Extract PK using concrete values (convert None to Null)
+        let pk_values: Vec<Value> = new_values
+            .iter()
+            .map(|v| v.clone().unwrap_or(Value::Null))
+            .collect();
+        let pk = table.extract_pk(&pk_values);
+        let values: Vec<((), MaybeValue)> = new_values.into_iter().map(|v| ((), v)).collect();
         self.add_operation(table, pk, Operation::Update(values))
     }
 }
@@ -521,14 +551,14 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, value);
+                            encode_value(&mut out, &Some(value.clone()));
                         }
                     }
                     Operation::Delete(values) => {
                         out.push(op_codes::DELETE);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, value);
+                            encode_value(&mut out, &Some(value.clone()));
                         }
                     }
                     Operation::Update(values) => {
@@ -591,7 +621,7 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, value);
+                            encode_value(&mut out, &Some(value.clone()));
                         }
                     }
                     Operation::Delete(()) => {
@@ -601,9 +631,9 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                         for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
                             if pk_flag > 0 {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &pk[pk_pos]);
+                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
                                 } else {
-                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                    encode_value(&mut out, &None);
                                 }
                             }
                         }
@@ -616,12 +646,12 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                         for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
                             if pk_flag > 0 {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &pk[pk_pos]);
+                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
                                 } else {
-                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                    encode_value(&mut out, &None);
                                 }
                             } else {
-                                encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                encode_value(&mut out, &None);
                             }
                         }
                         // Write new values
@@ -658,7 +688,11 @@ impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
                         table.extract_pk(values)
                     }
                     Operation::Update(pairs) => {
-                        let old_vals: Vec<_> = pairs.iter().map(|(old, _)| old.clone()).collect();
+                        // Convert MaybeValue to Value, using Null for undefined
+                        let old_vals: Vec<_> = pairs
+                            .iter()
+                            .map(|(old, _)| old.clone().unwrap_or(Value::Null))
+                            .collect();
                         table.extract_pk(&old_vals)
                     }
                 };
@@ -894,15 +928,24 @@ mod tests {
     #[test]
     fn test_reverse_operation_update_swaps_old_new() {
         let op: Operation<ChangesetFormat> = Operation::Update(vec![
-            (Value::Integer(1), Value::Integer(1)),
-            (Value::Text("alice".into()), Value::Text("bob".into())),
+            (Some(Value::Integer(1)), Some(Value::Integer(1))),
+            (
+                Some(Value::Text("alice".into())),
+                Some(Value::Text("bob".into())),
+            ),
         ]);
         let reversed = op.reverse();
         if let Operation::Update(values) = reversed {
-            assert_eq!(values[0], (Value::Integer(1), Value::Integer(1)));
+            assert_eq!(
+                values[0],
+                (Some(Value::Integer(1)), Some(Value::Integer(1)))
+            );
             assert_eq!(
                 values[1],
-                (Value::Text("bob".into()), Value::Text("alice".into()))
+                (
+                    Some(Value::Text("bob".into())),
+                    Some(Value::Text("alice".into()))
+                )
             );
         } else {
             panic!("Expected Update operation");
@@ -969,7 +1012,10 @@ mod tests {
         if let Operation::Update(values) = rows.values().next().unwrap() {
             assert_eq!(
                 values[1],
-                (Value::Text("bob".into()), Value::Text("alice".into()))
+                (
+                    Some(Value::Text("bob".into())),
+                    Some(Value::Text("alice".into()))
+                )
             );
         } else {
             panic!("Expected Update operation");
@@ -1146,6 +1192,7 @@ mod sqlparser_impl {
 
     use super::{DiffSetBuilder, Operation};
     use crate::builders::{ChangeDelete, ChangesetFormat, Insert, PatchsetFormat, Update};
+    use crate::encoding::MaybeValue;
     use crate::errors::DiffSetParseError;
     use crate::schema::{DynTable, SchemaWithPK};
 
@@ -1185,7 +1232,9 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let insert_op = Insert::try_from_ast(insert, schema)?;
-                        builder = builder.insert_raw(schema, insert_op.into_values());
+                        let values: Vec<MaybeValue> =
+                            insert_op.into_values().into_iter().map(Some).collect();
+                        builder = builder.insert_raw(schema, values);
                     }
                     Statement::Update(update) => {
                         let table_name = match &update.table.relation {
@@ -1227,7 +1276,9 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
-                        builder = builder.delete_raw(schema, delete_op.into_values());
+                        let values: Vec<MaybeValue> =
+                            delete_op.into_values().into_iter().map(Some).collect();
+                        builder = builder.delete_raw(schema, values);
                     }
                     other => {
                         return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
@@ -1327,7 +1378,9 @@ mod sqlparser_impl {
                             DiffSetParseError::TableNotFound(table_name.to_string())
                         })?;
                         let insert_op = Insert::try_from_ast(insert, schema)?;
-                        builder = builder.insert_raw(*schema, insert_op.into_values());
+                        let values: Vec<MaybeValue> =
+                            insert_op.into_values().into_iter().map(Some).collect();
+                        builder = builder.insert_raw(*schema, values);
                     }
                     Statement::Update(update) => {
                         let table_name = match &update.table.relation {
@@ -1464,23 +1517,28 @@ mod sqlparser_impl {
                 for (_pk, op) in rows {
                     match op {
                         Operation::Insert(values) => {
-                            let owned_insert = Insert::from_values(table.clone(), values.clone());
+                            let mut owned_insert = Insert::from(table.clone());
+                            for (i, val) in values.iter().enumerate() {
+                                owned_insert = owned_insert.set(i, val.clone()).unwrap();
+                            }
                             let ast_insert: ast::Insert = (&owned_insert).into();
                             statements.push(Statement::Insert(ast_insert));
                         }
                         Operation::Delete(values) => {
-                            let owned_delete =
-                                ChangeDelete::from_values(table.clone(), values.clone());
+                            let mut owned_delete = ChangeDelete::from(table.clone());
+                            for (i, val) in values.iter().enumerate() {
+                                owned_delete = owned_delete.set(i, val.clone()).unwrap();
+                            }
                             let ast_delete: ast::Delete = (&owned_delete).into();
                             statements.push(Statement::Delete(ast_delete));
                         }
                         Operation::Update(pairs) => {
-                            let old_values: Vec<_> =
-                                pairs.iter().map(|(old, _)| old.clone()).collect();
-                            let new_values: Vec<_> =
-                                pairs.iter().map(|(_, new)| new.clone()).collect();
-                            let owned_update =
-                                Update::from_values(table.clone(), old_values, new_values);
+                            let mut owned_update =
+                                Update::<_, ChangesetFormat>::from(table.clone());
+                            for (i, (old, new)) in pairs.iter().enumerate() {
+                                owned_update =
+                                    owned_update.set(i, old.clone(), new.clone()).unwrap();
+                            }
                             let ast_update: ast::Update = (&owned_update).into();
                             statements.push(Statement::Update(ast_update));
                         }

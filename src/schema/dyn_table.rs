@@ -31,14 +31,17 @@ pub trait DynTable: Debug + Eq + Clone + PartialEq {
 }
 
 impl<T: DynTable> DynTable for &T {
+    #[inline]
     fn name(&self) -> &str {
         T::name(self)
     }
 
+    #[inline]
     fn number_of_columns(&self) -> usize {
         T::number_of_columns(self)
     }
 
+    #[inline]
     fn write_pk_flags(&self, buf: &mut [u8]) {
         T::write_pk_flags(self, buf);
     }

@@ -15,33 +15,32 @@ pub struct Insert<T: DynTable> {
 }
 
 impl<T: DynTable> From<T> for Insert<T> {
+    #[inline]
     fn from(table: T) -> Self {
         let num_cols = table.number_of_columns();
         Self {
             table,
-            values: vec![Value::default(); num_cols],
+            values: vec![Value::Null; num_cols],
         }
     }
 }
 
 impl<T: DynTable> AsRef<T> for Insert<T> {
+    #[inline]
     fn as_ref(&self) -> &T {
         &self.table
     }
 }
 
 impl<T: DynTable> Insert<T> {
-    /// Create an insert operation with the given values.
-    pub(crate) fn from_values(table: T, values: Vec<Value>) -> Self {
-        Self { table, values }
-    }
-
     /// Returns a reference to the values.
+    #[inline]
     pub(crate) fn values(&self) -> &[Value] {
         &self.values
     }
 
     /// Consumes self and returns the values.
+    #[inline]
     pub(crate) fn into_values(self) -> Vec<Value> {
         self.values
     }
@@ -69,12 +68,7 @@ impl<T: DynTable> Insert<T> {
             ));
         }
 
-        let value = value.into();
-        if value.is_undefined() {
-            return Err(crate::errors::Error::UndefinedValueProvided);
-        }
-
-        self.values[col_idx] = value;
+        self.values[col_idx] = value.into();
         Ok(self)
     }
 
@@ -89,18 +83,10 @@ impl<T: DynTable> Insert<T> {
     /// # Example
     ///
     /// ```
-    /// use sqlite_diff_rs::Insert;
-    /// use sqlparser::ast::CreateTable;
-    /// use sqlparser::dialect::SQLiteDialect;
-    /// use sqlparser::parser::Parser;
+    /// use sqlite_diff_rs::{Insert, TableSchema};
     ///
-    /// let dialect = SQLiteDialect {};
-    /// let sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)";
-    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
-    /// let schema = match &statements[0] {
-    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
-    ///     _ => panic!(),
-    /// };
+    /// // CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)
+    /// let schema = TableSchema::new("items".into(), 3, vec![1, 0, 0]);
     ///
     /// // INSERT INTO items (id, description, price) VALUES (1, NULL, 9.99)
     /// let insert = Insert::from(schema)

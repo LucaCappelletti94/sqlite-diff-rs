@@ -106,11 +106,22 @@ impl From<&Value> for Expr {
                 }
                 ast::Value::HexStringLiteral(hex)
             }
-            Value::Null | Value::Undefined => ast::Value::Null,
+            Value::Null => ast::Value::Null,
         };
         Expr::Value(ast::ValueWithSpan {
             value: sql_value,
             span: Span::empty(),
         })
+    }
+}
+
+/// Convert a MaybeValue to an Expr (None becomes NULL).
+pub(crate) fn maybe_value_to_expr(value: &super::MaybeValue) -> Expr {
+    match value {
+        Some(v) => v.into(),
+        None => Expr::Value(ast::ValueWithSpan {
+            value: ast::Value::Null,
+            span: Span::empty(),
+        }),
     }
 }

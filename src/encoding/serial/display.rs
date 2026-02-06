@@ -39,7 +39,7 @@ impl core::fmt::Display for Value {
                 }
                 write!(f, "'")
             }
-            Value::Null | Value::Undefined => write!(f, "NULL"),
+            Value::Null => write!(f, "NULL"),
         }
     }
 }

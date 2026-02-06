@@ -8,4 +8,4 @@ pub(crate) mod varint;
 
 pub(crate) use constants::{markers, op_codes};
 pub use serial::Value;
-pub(crate) use serial::{decode_value, encode_value};
+pub(crate) use serial::{MaybeValue, decode_value, encode_value};

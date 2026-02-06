@@ -1,7 +1,5 @@
 //! Submodule defining the errors used across the crate.
 
-use alloc::string::String;
-
 /// Errors that can occur during diffing and patching operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -11,9 +9,6 @@ pub enum Error {
     /// The primary key values are missing or invalid for the specified table.
     #[error("Missing or invalid primary key values for table")]
     MissingPrimaryKey,
-    /// An undefined value was provided.
-    #[error("Undefined value provided.")]
-    UndefinedValueProvided,
     /// The column is not part of the primary key.
     #[error("Column index {0} is not part of the primary key")]
     ColumnIsNotPrimaryKey(usize),
@@ -29,13 +24,13 @@ pub enum Error {
 pub enum ValueConversionError {
     /// The expression type is not supported for conversion.
     #[error("Unsupported expression: {0}")]
-    UnsupportedExpression(String),
+    UnsupportedExpression(alloc::string::String),
     /// Invalid number format.
     #[error("Invalid number: {0}")]
-    InvalidNumber(String),
+    InvalidNumber(alloc::string::String),
     /// Invalid hex string format.
     #[error("Invalid hex string: {0}")]
-    InvalidHexString(String),
+    InvalidHexString(alloc::string::String),
 }
 
 /// Errors that can occur when converting a sqlparser INSERT to our Insert builder.
@@ -46,9 +41,9 @@ pub enum InsertConversionError {
     #[error("Table name mismatch: expected '{expected}', got '{got}'")]
     TableNameMismatch {
         /// The expected table name.
-        expected: String,
+        expected: alloc::string::String,
         /// The actual table name found.
-        got: String,
+        got: alloc::string::String,
     },
     /// INSERT has no source (VALUES clause).
     #[error("INSERT has no source")]
@@ -71,7 +66,7 @@ pub enum InsertConversionError {
     #[error("Column mismatch: {column}")]
     ColumnMismatch {
         /// The column name that doesn't match.
-        column: String,
+        column: alloc::string::String,
     },
     /// Error converting a value expression.
     #[error("Value conversion error: {0}")]
@@ -86,21 +81,21 @@ pub enum UpdateConversionError {
     #[error("Table name mismatch: expected '{expected}', got '{got}'")]
     TableNameMismatch {
         /// The expected table name.
-        expected: String,
+        expected: alloc::string::String,
         /// The actual table name found.
-        got: String,
+        got: alloc::string::String,
     },
     /// UPDATE has no WHERE clause to identify the row.
     #[error("UPDATE has no WHERE clause")]
     NoWhereClause,
     /// Cannot extract PK values from WHERE clause.
     #[error("Cannot extract PK from WHERE: {0}")]
-    CannotExtractPK(String),
+    CannotExtractPK(alloc::string::String),
     /// Column name in UPDATE doesn't match schema.
     #[error("Column mismatch: {column}")]
     ColumnMismatch {
         /// The column name that doesn't match.
-        column: String,
+        column: alloc::string::String,
     },
     /// Error converting a value expression.
     #[error("Value conversion error: {0}")]
@@ -109,7 +104,7 @@ pub enum UpdateConversionError {
     #[error("Missing PK column in WHERE: {column}")]
     MissingPKColumn {
         /// The missing primary key column.
-        column: String,
+        column: alloc::string::String,
     },
 }
 
@@ -121,9 +116,9 @@ pub enum DeleteConversionError {
     #[error("Table name mismatch: expected '{expected}', got '{got}'")]
     TableNameMismatch {
         /// The expected table name.
-        expected: String,
+        expected: alloc::string::String,
         /// The actual table name found.
-        got: String,
+        got: alloc::string::String,
     },
     /// DELETE has no FROM clause.
     #[error("DELETE has no FROM clause")]
@@ -133,12 +128,12 @@ pub enum DeleteConversionError {
     NoWhereClause,
     /// Cannot extract PK values from WHERE clause.
     #[error("Cannot extract PK from WHERE: {0}")]
-    CannotExtractPK(String),
+    CannotExtractPK(alloc::string::String),
     /// Column name in DELETE doesn't match schema.
     #[error("Column mismatch: {column}")]
     ColumnMismatch {
         /// The column name that doesn't match.
-        column: String,
+        column: alloc::string::String,
     },
     /// Error converting a value expression.
     #[error("Value conversion error: {0}")]
@@ -147,7 +142,7 @@ pub enum DeleteConversionError {
     #[error("Missing PK column in WHERE: {column}")]
     MissingPKColumn {
         /// The missing primary key column.
-        column: String,
+        column: alloc::string::String,
     },
 }
 
@@ -169,8 +164,8 @@ pub enum DiffSetParseError {
     Delete(#[from] DeleteConversionError),
     /// Referenced table not found (CREATE TABLE must come before DML statements).
     #[error("Table not found: '{0}' (CREATE TABLE must appear before operations referencing it)")]
-    TableNotFound(String),
+    TableNotFound(alloc::string::String),
     /// Unsupported SQL statement type.
     #[error("Unsupported statement: {0}")]
-    UnsupportedStatement(String),
+    UnsupportedStatement(alloc::string::String),
 }

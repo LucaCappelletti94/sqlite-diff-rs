@@ -21,7 +21,7 @@ pub use builders::{
     Reverse, Update,
 };
 pub use encoding::Value;
-pub use parser::{FormatMarker, ParseError, ParsedDiffSet, ParsedTableSchema};
+pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub use schema::{DynTable, SchemaWithPK};
 
 // Type aliases for common use cases

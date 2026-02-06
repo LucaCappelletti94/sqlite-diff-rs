@@ -1,6 +1,6 @@
 //! Format trait defining changeset vs patchset behavior.
 
-use crate::encoding::Value;
+use crate::encoding::{MaybeValue, Value};
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
@@ -12,7 +12,7 @@ use core::fmt::Debug;
 pub(crate) trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
     /// The type representing old values in this format.
     ///
-    /// - Changeset: `Value` (full old column value)
+    /// - Changeset: `MaybeValue` (Option<Value>, None = undefined/unchanged)
     /// - Patchset: `()` (old values not stored)
     type Old: Clone + Debug + Default + PartialEq + Eq;
 
@@ -35,7 +35,7 @@ pub struct ChangesetFormat;
 impl Format for ChangesetFormat {
     const TABLE_MARKER: u8 = b'T';
 
-    type Old = Value;
+    type Old = MaybeValue;
     type DeleteData = Vec<Value>;
 }
 

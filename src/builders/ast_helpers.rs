@@ -15,6 +15,7 @@ use crate::errors::ValueConversionError;
 /// Create an [`ObjectName`] from a table name string.
 ///
 /// This creates a simple unqualified table name suitable for SQL statements.
+#[inline]
 #[must_use]
 pub fn make_object_name(name: &str) -> ObjectName {
     ObjectName(vec![ast::ObjectNamePart::Identifier(Ident::new(name))])

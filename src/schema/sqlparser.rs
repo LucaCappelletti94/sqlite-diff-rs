@@ -38,6 +38,7 @@ use crate::encoding::Value;
 // =============================================================================
 
 impl DynTable for CreateTable {
+    #[inline]
     fn name(&self) -> &str {
         self.name.0.last().map_or("", |part| match part {
             ObjectNamePart::Identifier(ident) => ident.value.as_str(),
@@ -45,6 +46,7 @@ impl DynTable for CreateTable {
         })
     }
 
+    #[inline]
     fn number_of_columns(&self) -> usize {
         self.columns.len()
     }

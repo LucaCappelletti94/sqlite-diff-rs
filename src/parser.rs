@@ -28,7 +28,7 @@ use alloc::vec::Vec;
 use core::hash::Hash;
 
 use crate::builders::{ChangesetFormat, DiffSetBuilder, PatchsetFormat};
-use crate::encoding::{Value, decode_value, markers, op_codes};
+use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
 /// Errors that can occur during parsing.
@@ -84,30 +84,38 @@ pub enum FormatMarker {
 /// This type implements [`DynTable`] and [`SchemaWithPK`], allowing it
 /// to be used with [`DiffSetBuilder`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ParsedTableSchema {
+pub struct TableSchema {
     /// The table name.
-    pub name: String,
+    name: String,
     /// Number of columns.
-    pub column_count: usize,
+    column_count: usize,
     /// Primary key flags - raw bytes from the changeset/patchset.
     ///
     /// Each byte represents the 1-based ordinal position in the composite PK,
     /// or 0 if the column is not part of the primary key.
     /// For example, `[1, 0, 2]` means column 0 is the first PK column,
     /// column 1 is not a PK column, and column 2 is the second PK column.
-    pub pk_flags: Vec<u8>,
+    pk_flags: Vec<u8>,
 }
 
-impl ParsedTableSchema {
+impl TableSchema {
     /// Create a new parsed table schema.
+    #[inline]
     #[must_use]
-    pub(crate) fn new(name: String, column_count: usize, pk_flags: Vec<u8>) -> Self {
+    pub fn new(name: String, column_count: usize, pk_flags: Vec<u8>) -> Self {
         debug_assert_eq!(pk_flags.len(), column_count);
         Self {
             name,
             column_count,
             pk_flags,
         }
+    }
+
+    /// Returns the name of the table.
+    #[inline]
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Get the indices of primary key columns, in PK order.
@@ -132,22 +140,25 @@ impl ParsedTableSchema {
     }
 }
 
-impl DynTable for ParsedTableSchema {
+impl DynTable for TableSchema {
+    #[inline]
     fn name(&self) -> &str {
         &self.name
     }
 
+    #[inline]
     fn number_of_columns(&self) -> usize {
         self.column_count
     }
 
+    #[inline]
     fn write_pk_flags(&self, buf: &mut [u8]) {
         assert_eq!(buf.len(), self.column_count);
         buf.copy_from_slice(&self.pk_flags);
     }
 }
 
-impl SchemaWithPK for ParsedTableSchema {
+impl SchemaWithPK for TableSchema {
     fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value> {
         self.pk_indices()
             .into_iter()
@@ -160,9 +171,9 @@ impl SchemaWithPK for ParsedTableSchema {
 #[derive(Debug, Clone, Eq)]
 pub enum ParsedDiffSet {
     /// A changeset builder.
-    Changeset(DiffSetBuilder<ChangesetFormat, ParsedTableSchema>),
+    Changeset(DiffSetBuilder<ChangesetFormat, TableSchema>),
     /// A patchset builder.
-    Patchset(DiffSetBuilder<PatchsetFormat, ParsedTableSchema>),
+    Patchset(DiffSetBuilder<PatchsetFormat, TableSchema>),
 }
 
 impl PartialEq for ParsedDiffSet {
@@ -256,7 +267,7 @@ impl ParsedDiffSet {
 /// Returns a `ParseError` if the data is malformed or not a valid changeset.
 fn parse_as_changeset(
     data: &[u8],
-) -> Result<DiffSetBuilder<ChangesetFormat, ParsedTableSchema>, ParseError> {
+) -> Result<DiffSetBuilder<ChangesetFormat, TableSchema>, ParseError> {
     let mut builder = DiffSetBuilder::new();
     let mut pos = 0;
 
@@ -291,7 +302,7 @@ fn parse_as_changeset(
 /// Returns a `ParseError` if the data is malformed or not a valid patchset.
 fn parse_as_patchset(
     data: &[u8],
-) -> Result<DiffSetBuilder<PatchsetFormat, ParsedTableSchema>, ParseError> {
+) -> Result<DiffSetBuilder<PatchsetFormat, TableSchema>, ParseError> {
     let mut builder = DiffSetBuilder::new();
     let mut pos = 0;
 
@@ -323,7 +334,7 @@ fn parse_as_patchset(
 fn parse_table_header(
     data: &[u8],
     base_pos: usize,
-) -> Result<(ParsedTableSchema, FormatMarker, usize), ParseError> {
+) -> Result<(TableSchema, FormatMarker, usize), ParseError> {
     let mut pos = 0;
 
     if data.is_empty() {
@@ -359,11 +370,7 @@ fn parse_table_header(
         .map_err(|_| ParseError::InvalidTableName(base_pos + name_start))?;
     pos += 1;
 
-    Ok((
-        ParsedTableSchema::new(name, column_count, pk_flags),
-        format,
-        pos,
-    ))
+    Ok((TableSchema::new(name, column_count, pk_flags), format, pos))
 }
 
 /// Parse operation header (op_code + indirect flag).
@@ -378,8 +385,8 @@ fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, usize), P
 fn parse_changeset_operation(
     data: &[u8],
     base_pos: usize,
-    schema: &ParsedTableSchema,
-    builder: &mut DiffSetBuilder<ChangesetFormat, ParsedTableSchema>,
+    schema: &TableSchema,
+    builder: &mut DiffSetBuilder<ChangesetFormat, TableSchema>,
 ) -> Result<usize, ParseError> {
     let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
 
@@ -413,8 +420,8 @@ fn parse_changeset_operation(
 fn parse_patchset_operation(
     data: &[u8],
     base_pos: usize,
-    schema: &ParsedTableSchema,
-    builder: &mut DiffSetBuilder<PatchsetFormat, ParsedTableSchema>,
+    schema: &TableSchema,
+    builder: &mut DiffSetBuilder<PatchsetFormat, TableSchema>,
 ) -> Result<usize, ParseError> {
     let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
 
@@ -433,7 +440,12 @@ fn parse_patchset_operation(
             // This is needed because the binary format stores PKs in column order,
             // but the builder stores them sorted by pk_ordinal (matching the serializer).
             let full_values = expand_pk_values(&schema.pk_flags, pk_values, schema.column_count);
-            let pk = schema.extract_pk(&full_values);
+            // Convert MaybeValue to Value for extract_pk (PK values should always be defined)
+            let full_values_concrete: Vec<Value> = full_values
+                .into_iter()
+                .map(|v| v.unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&full_values_concrete);
             *builder = core::mem::take(builder).delete(schema, &pk);
         }
         op_codes::UPDATE => {
@@ -452,12 +464,16 @@ fn parse_patchset_operation(
     Ok(pos)
 }
 
-/// Expand PK-only values to full row with Undefined for non-PK columns.
+/// Expand PK-only values to full row with None (undefined) for non-PK columns.
 ///
 /// The pk_flags are raw bytes where non-zero means the column is part of the PK.
 /// PK values are expected in the order they appear in pk_flags (not sorted by ordinal).
-fn expand_pk_values(pk_flags: &[u8], pk_values: Vec<Value>, column_count: usize) -> Vec<Value> {
-    let mut full = vec![Value::Undefined; column_count];
+fn expand_pk_values(
+    pk_flags: &[u8],
+    pk_values: Vec<MaybeValue>,
+    column_count: usize,
+) -> Vec<MaybeValue> {
+    let mut full: Vec<MaybeValue> = vec![None; column_count];
     let mut pk_iter = pk_values.into_iter();
     for (i, &pk_ordinal) in pk_flags.iter().enumerate() {
         if pk_ordinal > 0
@@ -474,7 +490,7 @@ fn parse_values(
     data: &[u8],
     base_pos: usize,
     count: usize,
-) -> Result<(Vec<Value>, usize), ParseError> {
+) -> Result<(Vec<MaybeValue>, usize), ParseError> {
     let mut values = Vec::with_capacity(count);
     let mut pos = 0;
 
@@ -603,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_parsed_table_schema_dyn_table() {
-        let schema = ParsedTableSchema::new("users".into(), 3, vec![1, 0, 0]);
+        let schema = TableSchema::new("users".into(), 3, vec![1, 0, 0]);
         assert_eq!(schema.name(), "users");
         assert_eq!(schema.number_of_columns(), 3);
 
@@ -614,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_parsed_table_schema_extract_pk() {
-        let schema = ParsedTableSchema::new("users".into(), 3, vec![1, 0, 2]);
+        let schema = TableSchema::new("users".into(), 3, vec![1, 0, 2]);
         let values = vec![
             Value::Integer(1),
             Value::Text("alice".into()),
