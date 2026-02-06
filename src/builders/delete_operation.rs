@@ -33,7 +33,7 @@ impl<T: DynTable> From<T> for ChangeDelete<T> {
 
 impl<T: DynTable> ChangeDelete<T> {
     /// Create a delete operation with the given values.
-    pub(super) fn from_values(table: T, values: Vec<Value>) -> Self {
+    pub fn from_values(table: T, values: Vec<Value>) -> Self {
         Self { table, values }
     }
 

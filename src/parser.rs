@@ -27,8 +27,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::Hash;
 
-use crate::builders::DiffSetBuilder;
-use crate::builders::{ChangesetFormat, PatchsetFormat, Update};
+use crate::builders::{ChangesetFormat, DiffSetBuilder, PatchsetFormat};
 use crate::encoding::{Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
@@ -388,12 +387,12 @@ fn parse_changeset_operation(
         op_codes::INSERT => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).insert_with_schema(schema.clone(), &values);
+            *builder = core::mem::take(builder).insert_raw(schema, values);
         }
         op_codes::DELETE => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).delete_with_schema(schema.clone(), &values);
+            *builder = core::mem::take(builder).delete_raw(schema, values);
         }
         op_codes::UPDATE => {
             let (old_values, old_len) =
@@ -402,11 +401,7 @@ fn parse_changeset_operation(
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            *builder = core::mem::take(builder).update_with_schema(
-                schema.clone(),
-                &old_values,
-                &new_values,
-            );
+            *builder = core::mem::take(builder).update_raw(schema, old_values, new_values);
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }
@@ -427,7 +422,7 @@ fn parse_patchset_operation(
         op_codes::INSERT => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).insert_with_schema(schema.clone(), &values);
+            *builder = core::mem::take(builder).insert_raw(schema, values);
         }
         op_codes::DELETE => {
             // Patchset DELETE: only PK values in column order
@@ -439,7 +434,7 @@ fn parse_patchset_operation(
             // but the builder stores them sorted by pk_ordinal (matching the serializer).
             let full_values = expand_pk_values(&schema.pk_flags, pk_values, schema.column_count);
             let pk = schema.extract_pk(&full_values);
-            *builder = core::mem::take(builder).delete_with_schema(schema.clone(), &pk);
+            *builder = core::mem::take(builder).delete(schema, &pk);
         }
         op_codes::UPDATE => {
             // Note: old_values are parsed but ignored for patchsets since PK is in new_values
@@ -449,9 +444,7 @@ fn parse_patchset_operation(
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            // PK is extracted from new_values automatically
-            *builder = core::mem::take(builder)
-                .update(Update::from_new_values(schema.clone(), new_values));
+            *builder = core::mem::take(builder).update_raw(schema, new_values);
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }

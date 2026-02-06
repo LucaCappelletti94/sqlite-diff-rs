@@ -105,11 +105,7 @@ impl core::ops::Add for Operation<ChangesetFormat> {
                     None // Same values — cancel out
                 } else {
                     // Different — becomes UPDATE from old to new
-                    let update_values = del_values
-                        .into_iter()
-                        .zip(ins_values)
-                        .map(|(old, new)| (old, new))
-                        .collect();
+                    let update_values = del_values.into_iter().zip(ins_values).collect();
                     Some(Operation::Update(update_values))
                 }
             }

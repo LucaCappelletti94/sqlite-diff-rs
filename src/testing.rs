@@ -8,11 +8,13 @@
 //! - [`session_changeset_and_patchset`]: execute SQL in rusqlite and capture raw changeset/patchset bytes
 //! - [`byte_diff_report`]: pretty-print a byte-level diff between two buffers
 //! - [`assert_bit_parity`]: assert byte-for-byte equality for both changeset and patchset
-//! - [`assert_fromstr_bit_parity`]: end-to-end bit-parity via `str::parse()`
-//! - [`parse_schema`]: parse a `CREATE TABLE` statement into a `sqlparser` AST node
-//! - [`apply_changeset`]: apply a changeset/patchset to a rusqlite connection
-//! - [`get_all_rows`]: query all rows from a table as string vectors
-//! - [`compare_db_states`]: assert two databases have identical contents
+
+use core::fmt::Write;
+// - [`assert_fromstr_bit_parity`]: end-to-end bit-parity via `str::parse()`
+// - [`parse_schema`]: parse a `CREATE TABLE` statement into a `sqlparser` AST node
+// - [`apply_changeset`]: apply a changeset/patchset to a rusqlite connection
+// - [`get_all_rows`]: query all rows from a table as string vectors
+// - [`compare_db_states`]: assert two databases have identical contents
 
 extern crate std;
 
@@ -33,6 +35,7 @@ use crate::{ChangeSet, PatchSet};
 /// # Panics
 ///
 /// Panics if the SQL is not a valid `CREATE TABLE` statement.
+#[must_use]
 pub fn parse_schema(sql: &str) -> CreateTable {
     let stmts = Parser::parse_sql(&SQLiteDialect {}, sql).unwrap();
     match &stmts[0] {
@@ -46,6 +49,7 @@ pub fn parse_schema(sql: &str) -> CreateTable {
 ///
 /// DDL (`CREATE TABLE`) is executed before the session starts.
 /// DML (`INSERT`/`UPDATE`/`DELETE`) is executed inside the session.
+#[must_use]
 pub fn session_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>) {
     fn run_session(statements: &[&str], extract: impl Fn(&mut Session<'_>) -> Vec<u8>) -> Vec<u8> {
         let conn = Connection::open_in_memory().unwrap();
@@ -81,6 +85,7 @@ pub fn session_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>)
 /// Pretty-print a byte-level diff between two changeset/patchset buffers.
 ///
 /// Returns a human-readable string describing where they differ.
+#[must_use]
 pub fn byte_diff_report(label: &str, expected: &[u8], actual: &[u8]) -> String {
     if expected == actual {
         return format!("{label}: MATCH ({} bytes)", expected.len());
@@ -97,27 +102,30 @@ pub fn byte_diff_report(label: &str, expected: &[u8], actual: &[u8]) -> String {
     let first_diff = (0..min_len).find(|&i| expected[i] != actual[i]);
 
     if let Some(pos) = first_diff {
-        report.push_str(&format!(
-            "  first diff at byte {pos}: expected 0x{:02x}, actual 0x{:02x}\n",
+        let _ = writeln!(
+            report,
+            "  first diff at byte {pos}: expected 0x{:02x}, actual 0x{:02x}",
             expected[pos], actual[pos]
-        ));
+        );
         // Show context around the diff
         let start = pos.saturating_sub(4);
         let end = (pos + 8).min(min_len);
-        report.push_str(&format!(
-            "  expected[{start}..{end}]: {:02x?}\n",
+        let _ = writeln!(
+            report,
+            "  expected[{start}..{end}]: {:02x?}",
             &expected[start..end]
-        ));
-        report.push_str(&format!(
-            "  actual  [{start}..{end}]: {:02x?}\n",
+        );
+        let _ = writeln!(
+            report,
+            "  actual  [{start}..{end}]: {:02x?}",
             &actual[start..end]
-        ));
+        );
     } else {
         report.push_str("  common prefix matches, difference is in length only\n");
     }
 
-    report.push_str(&format!("  expected: {:02x?}\n", expected));
-    report.push_str(&format!("  actual:   {:02x?}\n", actual));
+    let _ = writeln!(report, "  expected: {expected:02x?}");
+    let _ = writeln!(report, "  actual:   {actual:02x?}");
 
     report
 }
@@ -128,18 +136,17 @@ pub fn byte_diff_report(label: &str, expected: &[u8], actual: &[u8]) -> String {
 /// # Panics
 ///
 /// Panics with a detailed diff report if the bytes don't match.
-pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: Vec<u8>, our_patchset: Vec<u8>) {
+pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: &[u8], our_patchset: &[u8]) {
     let (sqlite_changeset, sqlite_patchset) = session_changeset_and_patchset(sql_statements);
 
-    let cs_report = byte_diff_report("changeset", &sqlite_changeset, &our_changeset);
-    let ps_report = byte_diff_report("patchset", &sqlite_patchset, &our_patchset);
+    let cs_report = byte_diff_report("changeset", &sqlite_changeset, our_changeset);
+    let ps_report = byte_diff_report("patchset", &sqlite_patchset, our_patchset);
 
-    if sqlite_changeset != our_changeset || sqlite_patchset != our_patchset {
-        panic!(
-            "Bit parity failure!\n\n{cs_report}\n{ps_report}\n\nSQL:\n{}",
-            sql_statements.join("\n")
-        );
-    }
+    assert!(
+        sqlite_changeset == our_changeset && sqlite_patchset == our_patchset,
+        "Bit parity failure!\n\n{cs_report}\n{ps_report}\n\nSQL:\n{}",
+        sql_statements.join("\n")
+    );
 }
 
 /// Run bit-parity test using the `FromStr` parsing path.
@@ -159,15 +166,19 @@ pub fn assert_fromstr_bit_parity(sql: &str) {
 
     // Reconstruct the statement list for rusqlite
     let stmts = Parser::parse_sql(&SQLiteDialect {}, sql).unwrap();
-    let sql_strings: Vec<String> = stmts.iter().map(|s| s.to_string()).collect();
-    let sql_refs: Vec<&str> = sql_strings.iter().map(|s| s.as_str()).collect();
+    let sql_strings: Vec<String> = stmts.iter().map(ToString::to_string).collect();
+    let sql_refs: Vec<&str> = sql_strings.iter().map(String::as_str).collect();
 
-    assert_bit_parity(&sql_refs, our_changeset, our_patchset);
+    assert_bit_parity(&sql_refs, &our_changeset, &our_patchset);
 }
 
 /// Apply a changeset or patchset to a database connection.
 ///
 /// Uses `SQLITE_CHANGESET_ABORT` on conflict.
+///
+/// # Errors
+///
+/// Returns an error if the changeset application fails.
 pub fn apply_changeset(conn: &Connection, changeset: &[u8]) -> Result<(), rusqlite::Error> {
     use rusqlite::session::{ChangesetItem, ConflictAction, ConflictType};
     let mut cursor = Cursor::new(changeset);
@@ -183,9 +194,8 @@ pub fn apply_changeset(conn: &Connection, changeset: &[u8]) -> Result<(), rusqli
 /// Rows are sorted for order-independent comparison.
 pub fn get_all_rows(conn: &Connection, table_name: &str) -> Vec<Vec<String>> {
     let query = format!("SELECT * FROM {table_name} ORDER BY rowid");
-    let mut stmt = match conn.prepare(&query) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+    let Ok(mut stmt) = conn.prepare(&query) else {
+        return Vec::new();
     };
 
     let column_count = stmt.column_count();
@@ -199,7 +209,7 @@ pub fn get_all_rows(conn: &Connection, table_name: &str) -> Vec<Vec<String>> {
     });
 
     let mut rows: Vec<Vec<String>> = match rows_result {
-        Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+        Ok(mapped) => mapped.filter_map(Result::ok).collect(),
         Err(_) => Vec::new(),
     };
 
@@ -228,6 +238,7 @@ pub fn compare_db_states(conn1: &Connection, conn2: &Connection, create_table_sq
 }
 
 /// Extract the table name from a `CREATE TABLE` SQL string.
+#[must_use]
 pub fn extract_table_name(create_sql: &str) -> String {
     let lower = create_sql.to_lowercase();
     let start = lower.find("create table").unwrap() + "create table".len();

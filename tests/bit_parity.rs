@@ -215,8 +215,8 @@ fn bit_parity_builder_single_insert() {
             "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
             "INSERT INTO users (id, name) VALUES (1, 'Alice')",
         ],
-        our_changeset,
-        our_patchset,
+        &our_changeset,
+        &our_patchset,
     );
 }
 
@@ -248,8 +248,8 @@ fn bit_parity_builder_two_inserts() {
             "INSERT INTO users (id, name) VALUES (1, 'Alice')",
             "INSERT INTO users (id, name) VALUES (2, 'Bob')",
         ],
-        our_changeset,
-        our_patchset,
+        &our_changeset,
+        &our_patchset,
     );
 }
 
@@ -284,8 +284,8 @@ fn bit_parity_builder_insert_then_update() {
             "INSERT INTO users (id, name) VALUES (1, 'Alice')",
             "UPDATE users SET name = 'Alicia' WHERE id = 1",
         ],
-        our_changeset,
-        our_patchset,
+        &our_changeset,
+        &our_patchset,
     );
 }
 
@@ -320,8 +320,8 @@ fn bit_parity_builder_two_tables() {
             "INSERT INTO users (id, name) VALUES (1, 'Alice')",
             "INSERT INTO posts (id, title) VALUES (1, 'Hello')",
         ],
-        our_changeset,
-        our_patchset,
+        &our_changeset,
+        &our_patchset,
     );
 }
 
@@ -330,12 +330,12 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let schema_a = parse_schema("CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)");
     let schema_b = parse_schema("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
 
-    let insert_a1 = Insert::from(schema_a.clone())
+    let insert_a = Insert::from(schema_a.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "a1")
         .unwrap();
-    let insert_b1 = Insert::from(schema_b.clone())
+    let insert_b = Insert::from(schema_b.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "b1")
@@ -353,17 +353,17 @@ fn bit_parity_builder_table_cancel_and_readd() {
 
     // Changeset
     let changeset: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert_a1.clone())
-        .insert(insert_b1.clone())
+        .insert(insert_a.clone())
+        .insert(insert_b.clone())
         .delete(delete_a1)
         .insert(insert_a2.clone());
     let our_changeset: Vec<u8> = changeset.into();
 
     // Patchset (delete uses PK only)
     let patchset: PatchSet<CreateTable> = PatchSet::new()
-        .insert(insert_a1)
-        .insert(insert_b1)
-        .delete(schema_a.clone(), &[sqlite_diff_rs::Value::Integer(1)])
+        .insert(insert_a)
+        .insert(insert_b)
+        .delete(&schema_a, &[sqlite_diff_rs::Value::Integer(1)])
         .insert(insert_a2);
     let our_patchset: Vec<u8> = patchset.into();
 
@@ -376,8 +376,8 @@ fn bit_parity_builder_table_cancel_and_readd() {
             "DELETE FROM table_a WHERE id = 1",
             "INSERT INTO table_a (id, val) VALUES (2, 'a2')",
         ],
-        our_changeset,
-        our_patchset,
+        &our_changeset,
+        &our_patchset,
     );
 }
 

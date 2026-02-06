@@ -15,6 +15,7 @@ use crate::testing::{byte_diff_report, session_changeset_and_patchset};
 use crate::{
     ChangeDelete, ChangesetFormat, DiffSetBuilder, Insert, PatchsetFormat, SchemaWithPK, Update,
 };
+use alloc::string::String;
 use alloc::string::ToString;
 use rusqlite::Connection;
 use rusqlite::session::Session;
@@ -66,6 +67,7 @@ fn table_name_from_delete(delete: &ast::Delete) -> Option<std::string::String> {
 /// from regression tests. It will:
 /// - Return silently for invalid/uninteresting SQL (expected failures)
 /// - Panic on real bugs (byte-level comparison mismatches)
+#[allow(clippy::too_many_lines)]
 pub fn run_differential_test(sql: &str) {
     // Parse SQL with sqlparser
     let dialect = SQLiteDialect {};
@@ -192,7 +194,7 @@ pub fn run_differential_test(sql: &str) {
                 let pk: alloc::vec::Vec<_> =
                     schema.extract_pk(our_delete.values()).into_iter().collect();
                 our_changeset_builder = our_changeset_builder.delete(our_delete);
-                our_patchset_builder = our_patchset_builder.delete(schema, &pk);
+                our_patchset_builder = our_patchset_builder.delete(&schema, &pk);
             }
             _ => {}
         }
@@ -203,17 +205,16 @@ pub fn run_differential_test(sql: &str) {
     let our_patchset: std::vec::Vec<u8> = our_patchset_builder.build();
 
     // Get rusqlite's changeset and patchset via session_changeset_and_patchset
-    let sql_refs: std::vec::Vec<&str> = sql_strings.iter().map(|s| s.as_str()).collect();
+    let sql_refs: std::vec::Vec<&str> = sql_strings.iter().map(String::as_str).collect();
     let (rusqlite_changeset, rusqlite_patchset) = session_changeset_and_patchset(&sql_refs);
 
     // --- Byte-for-byte comparison ---
     let cs_report = byte_diff_report("changeset", &rusqlite_changeset, &our_changeset);
     let ps_report = byte_diff_report("patchset", &rusqlite_patchset, &our_patchset);
 
-    if rusqlite_changeset != our_changeset || rusqlite_patchset != our_patchset {
-        panic!(
-            "Bit parity failure in differential test!\n\n{cs_report}\n{ps_report}\n\nSQL:\n{}",
-            sql_strings.join("\n")
-        );
-    }
+    assert!(
+        rusqlite_changeset == our_changeset && rusqlite_patchset == our_patchset,
+        "Bit parity failure in differential test!\n\n{cs_report}\n{ps_report}\n\nSQL:\n{}",
+        sql_strings.join("\n")
+    );
 }

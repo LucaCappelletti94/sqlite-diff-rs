@@ -70,7 +70,7 @@ fn run_apply_roundtrip_test(sql: &str) {
     let sql_refs: Vec<&str> = sql_strings.iter().map(|s| s.as_str()).collect();
 
     // Step 5: Byte-for-byte comparison with rusqlite
-    assert_bit_parity(&sql_refs, our_changeset.clone(), our_patchset.clone());
+    assert_bit_parity(&sql_refs, &our_changeset, &our_patchset);
 
     // Step 6: Verify DB state by applying both changesets to empty databases
     if !our_changeset.is_empty() {

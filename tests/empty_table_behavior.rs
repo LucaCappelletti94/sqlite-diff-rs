@@ -110,8 +110,7 @@ fn extract_table_names(data: &[u8]) -> Vec<String> {
                     let vtype = data[pos];
                     pos += 1;
                     match vtype {
-                        0x00 => {} // Undefined - no payload
-                        0x05 => {} // NULL - no payload
+                        0x00 | 0x05 => {} // Undefined/NULL - no payload
                         0x01 => {
                             // Integer: 8-byte big-endian
                             pos += 8;
@@ -124,7 +123,10 @@ fn extract_table_names(data: &[u8]) -> Vec<String> {
                             // Text/Blob: varint length + data
                             let (len, consumed) = read_varint(&data[pos..]);
                             pos += consumed;
-                            pos += len as usize;
+                            #[allow(clippy::cast_possible_truncation)]
+                            {
+                                pos += len as usize;
+                            }
                         }
                         _ => return names, // Unknown value type
                     }
@@ -440,8 +442,7 @@ fn test_our_builder_empty_after_cancel() {
 
     assert_eq!(
         changeset_bytes, sqlite_changeset,
-        "Our changeset after cancel should match SQLite's.\nOurs: {:02x?}\nSQLite: {:02x?}",
-        changeset_bytes, sqlite_changeset,
+        "Our changeset after cancel should match SQLite's.\nOurs: {changeset_bytes:02x?}\nSQLite: {sqlite_changeset:02x?}",
     );
 }
 
@@ -455,12 +456,12 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     let schema_b = parse_create_table("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Build: insert A, insert B, delete A, insert A again
-    let insert_a1 = Insert::from(schema_a.clone())
+    let insert_a = Insert::from(schema_a.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "a1")
         .unwrap();
-    let insert_b1 = Insert::from(schema_b.clone())
+    let insert_b = Insert::from(schema_b.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "b1")
@@ -477,8 +478,8 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
         .unwrap();
 
     let our_builder: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert_a1)
-        .insert(insert_b1)
+        .insert(insert_a)
+        .insert(insert_b)
         .delete(delete_a1)
         .insert(insert_a2);
     let our_bytes: Vec<u8> = our_builder.into();
@@ -516,8 +517,7 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     assert_eq!(
         our_table_order, sqlite_table_order,
         "Table ordering mismatch!\nOurs: {our_table_order:?}\nSQLite: {sqlite_table_order:?}\n\
-         Our bytes: {:02x?}\nSQLite bytes: {:02x?}",
-        our_bytes, sqlite_bytes,
+         Our bytes: {our_bytes:02x?}\nSQLite bytes: {sqlite_bytes:02x?}",
     );
 }
 

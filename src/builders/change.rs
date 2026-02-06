@@ -56,6 +56,7 @@ const fn hash_append(h: u32, add: u32) -> u32 {
 /// Hash a 64-bit integer using SQLite's `sessionHashAppendI64`.
 ///
 /// Hashes the lower 32 bits first, then the upper 32 bits.
+#[allow(clippy::cast_sign_loss)]
 fn session_hash_append_i64(h: u32, i: i64) -> u32 {
     let lo = (i as u64 & 0xFFFF_FFFF) as u32;
     let hi = ((i as u64 >> 32) & 0xFFFF_FFFF) as u32;
@@ -253,9 +254,7 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     /// If the table doesn't exist yet, it's inserted at the end of the
     /// `IndexMap`, preserving first-touch ordering.
     fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<F>> {
-        self.tables
-            .entry(table.clone())
-            .or_insert_with(IndexMap::default)
+        self.tables.entry(table.clone()).or_default()
     }
 
     /// Returns true if the builder has no operations.
@@ -313,14 +312,14 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
                 match (&existing, &new_op) {
                     (Operation::Insert(_), Operation::Update(_)) => {
                         // Apply update to insert values, then re-extract PK
-                        if let Some(combined) = existing + new_op {
-                            if let Operation::Insert(ref values) = combined {
-                                let new_pk = table.extract_pk(values);
-                                // The new PK may collide with a different existing row
-                                rows.shift_remove(&new_pk);
-                                let index = original_index.min(rows.len());
-                                rows.shift_insert(index, new_pk, combined);
-                            }
+                        if let Some(combined) = existing + new_op
+                            && let Operation::Insert(ref values) = combined
+                        {
+                            let new_pk = table.extract_pk(values);
+                            // The new PK may collide with a different existing row
+                            rows.shift_remove(&new_pk);
+                            let index = original_index.min(rows.len());
+                            rows.shift_insert(index, new_pk, combined);
                         }
                     }
                     _ => {
@@ -350,12 +349,26 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
 
+    /// Add an INSERT operation from raw values (internal use).
+    #[must_use]
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<Value>) -> Self {
+        let pk = table.extract_pk(&values);
+        self.add_operation(table, pk, Operation::Insert(values))
+    }
+
     /// Add a DELETE operation.
     #[must_use]
     pub fn delete(self, delete: ChangeDelete<T>) -> Self {
         let pk = delete.as_ref().extract_pk(delete.values());
         let table = delete.as_ref().clone();
         self.add_operation(&table, pk, Operation::Delete(delete.into_values()))
+    }
+
+    /// Add a DELETE operation from raw values (internal use).
+    #[must_use]
+    pub(crate) fn delete_raw(self, table: &T, values: Vec<Value>) -> Self {
+        let pk = table.extract_pk(&values);
+        self.add_operation(table, pk, Operation::Delete(values))
     }
 
     /// Add an UPDATE operation.
@@ -373,31 +386,17 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
         self.add_operation(&table, pk, Operation::Update(values))
     }
 
-    /// Insert a row using the schema and values directly.
+    /// Add an UPDATE operation from raw values (internal use).
     #[must_use]
-    pub fn insert_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
-        self.insert(Insert::from_values(table, values.to_vec()))
-    }
-
-    /// Delete a row using the schema and values directly.
-    #[must_use]
-    pub fn delete_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
-        self.delete(ChangeDelete::from_values(table, values.to_vec()))
-    }
-
-    /// Update a row using the schema and old/new values directly.
-    #[must_use]
-    pub fn update_with_schema(
+    pub(crate) fn update_raw(
         self,
-        table: T,
-        old_values: &[crate::encoding::Value],
-        new_values: &[crate::encoding::Value],
+        table: &T,
+        old_values: Vec<Value>,
+        new_values: Vec<Value>,
     ) -> Self {
-        self.update(Update::from_values(
-            table,
-            old_values.to_vec(),
-            new_values.to_vec(),
-        ))
+        let pk = table.extract_pk(&old_values);
+        let values: Vec<(Value, Value)> = old_values.into_iter().zip(new_values).collect();
+        self.add_operation(table, pk, Operation::Update(values))
     }
 }
 
@@ -412,6 +411,13 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
         let pk = insert.as_ref().extract_pk(insert.values());
         let table = insert.as_ref().clone();
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
+    }
+
+    /// Add an INSERT operation from raw values (internal use).
+    #[must_use]
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<Value>) -> Self {
+        let pk = table.extract_pk(&values);
+        self.add_operation(table, pk, Operation::Insert(values))
     }
 
     /// Add a DELETE operation by specifying the table and primary key values.
@@ -437,11 +443,11 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// };
     ///
     /// // Delete row where id = 1
-    /// let patchset = PatchSet::new().delete(schema, &[1i64.into()]);
+    /// let patchset = PatchSet::new().delete(&schema, &[1i64.into()]);
     /// ```
     #[must_use]
-    pub fn delete(self, table: T, pk: &[Value]) -> Self {
-        self.add_operation(&table, pk.to_vec(), Operation::Delete(()))
+    pub fn delete(self, table: &T, pk: &[Value]) -> Self {
+        self.add_operation(table, pk.to_vec(), Operation::Delete(()))
     }
 
     /// Add an UPDATE operation.
@@ -480,37 +486,12 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
         self.add_operation(&table, pk, Operation::Update(values))
     }
 
-    /// Insert a row using the schema and values directly.
+    /// Add an UPDATE operation from raw new values (internal use).
     #[must_use]
-    pub fn insert_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
-        self.insert(Insert::from_values(table, values.to_vec()))
-    }
-
-    /// Delete a row using the schema and primary key values directly.
-    ///
-    /// The `pk` slice should contain only the primary key column values, in the order
-    /// they appear in the table schema.
-    #[must_use]
-    pub fn delete_with_schema(self, table: T, pk: &[crate::encoding::Value]) -> Self {
-        self.delete(table, pk)
-    }
-
-    /// Update a row using the schema and new values directly.
-    ///
-    /// Note: The old_values parameter is ignored as of the simplified API.
-    /// The primary key values are extracted from new_values.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use update() directly with Update::from_new_values(). The old_values parameter is no longer needed."
-    )]
-    pub fn update_with_schema(
-        self,
-        table: T,
-        _old_values: &[crate::encoding::Value],
-        new_values: &[crate::encoding::Value],
-    ) -> Self {
-        self.update(Update::from_new_values(table, new_values.to_vec()))
+    pub(crate) fn update_raw(self, table: &T, new_values: Vec<Value>) -> Self {
+        let pk = table.extract_pk(&new_values);
+        let values: Vec<((), Value)> = new_values.into_iter().map(|v| ((), v)).collect();
+        self.add_operation(table, pk, Operation::Update(values))
     }
 }
 
@@ -673,8 +654,9 @@ impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
                 let rev_op = op.reverse();
                 // Recompute PK for reversed operation (INSERT↔DELETE swap values)
                 let rev_pk = match &rev_op {
-                    Operation::Insert(values) => table.extract_pk(values),
-                    Operation::Delete(values) => table.extract_pk(values),
+                    Operation::Insert(values) | Operation::Delete(values) => {
+                        table.extract_pk(values)
+                    }
                     Operation::Update(pairs) => {
                         let old_vals: Vec<_> = pairs.iter().map(|(old, _)| old.clone()).collect();
                         table.extract_pk(&old_vals)
@@ -1403,7 +1385,7 @@ mod sqlparser_impl {
                         let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
                         // Extract just the PK values
                         let pk = schema.extract_pk(delete_op.values());
-                        builder = builder.delete(schema.clone(), &pk);
+                        builder = builder.delete(schema, &pk);
                     }
                     other => {
                         return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
