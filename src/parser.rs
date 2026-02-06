@@ -28,7 +28,7 @@ use alloc::vec::Vec;
 use core::hash::Hash;
 
 use crate::builders::DiffSetBuilder;
-use crate::builders::{ChangesetFormat, PatchsetFormat};
+use crate::builders::{ChangesetFormat, PatchsetFormat, Update};
 use crate::encoding::{Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
@@ -255,7 +255,7 @@ impl ParsedDiffSet {
 /// # Errors
 ///
 /// Returns a `ParseError` if the data is malformed or not a valid changeset.
-pub fn parse_as_changeset(
+fn parse_as_changeset(
     data: &[u8],
 ) -> Result<DiffSetBuilder<ChangesetFormat, ParsedTableSchema>, ParseError> {
     let mut builder = DiffSetBuilder::new();
@@ -290,7 +290,7 @@ pub fn parse_as_changeset(
 /// # Errors
 ///
 /// Returns a `ParseError` if the data is malformed or not a valid patchset.
-pub fn parse_as_patchset(
+fn parse_as_patchset(
     data: &[u8],
 ) -> Result<DiffSetBuilder<PatchsetFormat, ParsedTableSchema>, ParseError> {
     let mut builder = DiffSetBuilder::new();
@@ -439,17 +439,16 @@ fn parse_patchset_operation(
             *builder = core::mem::take(builder).delete_with_schema(schema.clone(), &full_values);
         }
         op_codes::UPDATE => {
-            let (old_values, old_len) =
+            // Note: old_values are parsed but ignored for patchsets since PK is in new_values
+            let (_old_values, old_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += old_len;
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            *builder = core::mem::take(builder).update_with_schema(
-                schema.clone(),
-                &old_values,
-                &new_values,
-            );
+            // PK is extracted from new_values automatically
+            *builder = core::mem::take(builder)
+                .update(Update::from_new_values(schema.clone(), new_values));
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }

@@ -5,10 +5,8 @@ use alloc::vec::Vec;
 use core::ops::Add;
 
 use crate::{
-    DynTable, SchemaWithPK,
-    builders::{
-        ChangesetFormat, Insert, PatchsetFormat, Update, format::Format, operation::Reverse,
-    },
+    DynTable,
+    builders::{ChangesetFormat, Insert, PatchsetFormat, Update, operation::Reverse},
     encoding::Value,
 };
 
@@ -43,8 +41,11 @@ impl<T: DynTable> AsRef<T> for ChangeDelete<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Represents a delete operation in patchset format.
+///
+/// This is a marker struct — patchset deletes only need to identify the row by PK.
+/// It is not constructible outside the crate (the field is private).
 pub struct PatchDelete<T: DynTable> {
-    table: T,
+    pub(crate) table: T,
 }
 
 impl<T: DynTable> AsRef<T> for PatchDelete<T> {
@@ -53,11 +54,9 @@ impl<T: DynTable> AsRef<T> for PatchDelete<T> {
     }
 }
 
-impl<T: DynTable> Reverse for PatchDelete<T> {
-    type Output = crate::builders::Insert<T>;
-
-    fn reverse(self) -> Self::Output {
-        crate::builders::Insert::from(self.table)
+impl<T: DynTable> From<T> for PatchDelete<T> {
+    fn from(table: T) -> Self {
+        Self { table }
     }
 }
 
@@ -71,20 +70,9 @@ impl<T: DynTable> From<T> for ChangeDelete<T> {
     }
 }
 
-impl<T: SchemaWithPK> From<T> for PatchDelete<T> {
-    fn from(table: T) -> Self {
-        // Count PK columns
-        let num_cols = table.number_of_columns();
-        let mut pk_flags = vec![0u8; num_cols];
-        table.write_pk_flags(&mut pk_flags);
-
-        Self { table }
-    }
-}
-
 impl<T: DynTable> ChangeDelete<T> {
     /// Create a delete operation with the given values.
-    pub fn from_values(table: T, values: Vec<Value>) -> Self {
+    pub(super) fn from_values(table: T, values: Vec<Value>) -> Self {
         Self { table, values }
     }
 
@@ -119,6 +107,39 @@ impl<T: DynTable> ChangeDelete<T> {
         }
         self.values[col_idx] = value.into();
         Ok(self)
+    }
+
+    /// Sets a column to NULL.
+    ///
+    /// This is a convenience method equivalent to `.set(col_idx, Value::Null)`.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the provided column index is out of bounds for the table schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::ChangeDelete;
+    /// use sqlparser::ast::CreateTable;
+    /// use sqlparser::dialect::SQLiteDialect;
+    /// use sqlparser::parser::Parser;
+    ///
+    /// let dialect = SQLiteDialect {};
+    /// let sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT)";
+    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
+    /// let schema = match &statements[0] {
+    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
+    ///     _ => panic!(),
+    /// };
+    ///
+    /// // DELETE FROM items WHERE id = 1 AND description IS NULL
+    /// let delete = ChangeDelete::from(schema)
+    ///     .set(0, 1i64).unwrap()
+    ///     .set_null(1).unwrap();
+    /// ```
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+        self.set(col_idx, Value::Null)
     }
 
     /// Returns a reference to the values.
@@ -175,19 +196,19 @@ impl<T: DynTable + Clone> Add<Insert<T>> for PatchDelete<T> {
 // ============================================================================
 
 /// DELETE + UPDATE: Ignore the new update, keep DELETE
-impl<T: DynTable, F: Format> Add<Update<T, F>> for ChangeDelete<T> {
+impl<T: DynTable> Add<Update<T, ChangesetFormat>> for ChangeDelete<T> {
     type Output = Self;
 
-    fn add(self, rhs: Update<T, F>) -> Self::Output {
+    fn add(self, rhs: Update<T, ChangesetFormat>) -> Self::Output {
         assert_eq!(&self.table, rhs.as_ref());
         self
     }
 }
 
-impl<T: DynTable, F: Format> Add<Update<T, F>> for PatchDelete<T> {
+impl<T: DynTable> Add<Update<T, PatchsetFormat>> for PatchDelete<T> {
     type Output = Self;
 
-    fn add(self, rhs: Update<T, F>) -> Self::Output {
+    fn add(self, rhs: Update<T, PatchsetFormat>) -> Self::Output {
         assert_eq!(&self.table, rhs.as_ref());
         self
     }

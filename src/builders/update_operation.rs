@@ -51,7 +51,7 @@ impl<T: DynTable, F: Format> core::ops::Add<Insert<T>> for Update<T, F> {
 }
 
 /// UPDATE + DELETE: In the case of a patchset, the DELETE takes precedence.
-impl<T: DynTable, F: Format> core::ops::Add<PatchDelete<T>> for Update<T, F> {
+impl<T: DynTable> core::ops::Add<PatchDelete<T>> for Update<T, PatchsetFormat> {
     type Output = PatchDelete<T>;
 
     fn add(self, rhs: PatchDelete<T>) -> Self::Output {
@@ -157,6 +157,94 @@ impl<T: DynTable> Update<T, ChangesetFormat> {
         self.values[col_idx] = (old_value, new_value);
         Ok(self)
     }
+
+    /// Sets only the new value for a column, leaving old as Undefined.
+    ///
+    /// This is useful when the old value is not known (e.g., when parsing SQL
+    /// UPDATE statements where only the new value is specified).
+    ///
+    /// # Arguments
+    ///
+    /// * `col_idx` - The index of the column to set.
+    /// * `new` - The new value for the column.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the column index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::{Update, ChangesetFormat};
+    /// use sqlparser::ast::CreateTable;
+    /// use sqlparser::dialect::SQLiteDialect;
+    /// use sqlparser::parser::Parser;
+    ///
+    /// let dialect = SQLiteDialect {};
+    /// let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)";
+    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
+    /// let schema = match &statements[0] {
+    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
+    ///     _ => panic!(),
+    /// };
+    ///
+    /// // UPDATE users SET name = 'Bob' WHERE id = 1
+    /// // We know id=1 (PK, unchanged) and name='Bob' (new), but not the old name
+    /// let update = Update::<_, ChangesetFormat>::from(schema)
+    ///     .set(0, 1i64, 1i64).unwrap()      // PK: old=1, new=1 (unchanged)
+    ///     .set_new(1, "Bob").unwrap();      // name: old=Undefined, new="Bob"
+    /// ```
+    pub fn set_new(
+        mut self,
+        col_idx: usize,
+        new: impl Into<Value>,
+    ) -> Result<Self, crate::errors::Error> {
+        if col_idx >= self.values.len() {
+            return Err(crate::errors::Error::ColumnIndexOutOfBounds(
+                col_idx,
+                self.values.len(),
+            ));
+        }
+        let new_value = new.into();
+
+        if new_value.is_undefined() {
+            return Err(crate::errors::Error::UndefinedValueProvided);
+        }
+
+        self.values[col_idx] = (Value::Undefined, new_value);
+        Ok(self)
+    }
+
+    /// Sets a column to NULL for both old and new values.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the column index is out of bounds for the table schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::{Update, ChangesetFormat};
+    /// use sqlparser::ast::CreateTable;
+    /// use sqlparser::dialect::SQLiteDialect;
+    /// use sqlparser::parser::Parser;
+    ///
+    /// let dialect = SQLiteDialect {};
+    /// let sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT)";
+    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
+    /// let schema = match &statements[0] {
+    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
+    ///     _ => panic!(),
+    /// };
+    ///
+    /// // UPDATE items SET description = NULL WHERE id = 1 AND description = NULL
+    /// let update = Update::<_, ChangesetFormat>::from(schema)
+    ///     .set(0, 1i64, 1i64).unwrap()
+    ///     .set_null(1).unwrap();
+    /// ```
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+        self.set(col_idx, Value::Null, Value::Null)
+    }
 }
 
 impl<T: DynTable> Update<T, PatchsetFormat> {
@@ -164,6 +252,14 @@ impl<T: DynTable> Update<T, PatchsetFormat> {
     pub fn from_new_values(table: T, new_values: Vec<Value>) -> Self {
         let values = new_values.into_iter().map(|new| ((), new)).collect();
         Self { table, values }
+    }
+
+    /// Returns the new values as a slice.
+    ///
+    /// This is useful for extracting the primary key values for patchset operations,
+    /// where the PK values are stored in the new values.
+    pub fn new_values(&self) -> Vec<Value> {
+        self.values.iter().map(|((), new)| new.clone()).collect()
     }
 
     /// Sets the value for a specific column by index.
@@ -201,6 +297,37 @@ impl<T: DynTable> Update<T, PatchsetFormat> {
 
         self.values[col_idx] = ((), new_value);
         Ok(self)
+    }
+
+    /// Sets a column to NULL.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the column index is out of bounds for the table schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::{Update, PatchsetFormat};
+    /// use sqlparser::ast::CreateTable;
+    /// use sqlparser::dialect::SQLiteDialect;
+    /// use sqlparser::parser::Parser;
+    ///
+    /// let dialect = SQLiteDialect {};
+    /// let sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT)";
+    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
+    /// let schema = match &statements[0] {
+    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
+    ///     _ => panic!(),
+    /// };
+    ///
+    /// // UPDATE items SET description = NULL WHERE id = 1
+    /// let update = Update::<_, PatchsetFormat>::from(schema)
+    ///     .set(0, 1i64).unwrap()
+    ///     .set_null(1).unwrap();
+    /// ```
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+        self.set(col_idx, Value::Null)
     }
 }
 

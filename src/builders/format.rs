@@ -12,11 +12,16 @@ use core::fmt::Debug;
 /// The key differences:
 /// - **Changeset**: DELETE stores all column values, UPDATE stores old+new
 /// - **Patchset**: DELETE stores only PK values, UPDATE stores only PK+new
-pub trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
+pub(crate) trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
     /// The type representing old values in this format.
     type Old: Clone + Debug + Default + PartialEq + Eq;
     /// The type of delete operations for this format.
-    type DeleteOps<T: DynTable>: Debug + Into<Operation<T, Self>> + Clone + Eq + PartialEq;
+    type DeleteOps<T: DynTable>: Debug
+        + Into<Operation<T, Self>>
+        + AsRef<T>
+        + Clone
+        + Eq
+        + PartialEq;
 
     /// Table header marker byte.
     /// Changesets use 'T' (0x54), patchsets use 'P' (0x50).

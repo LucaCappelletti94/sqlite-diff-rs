@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 ///
 /// This is the format used by SQLite's session extension for text/blob lengths.
 #[must_use]
-pub fn encode_varint(value: u64) -> Vec<u8> {
+pub(crate) fn encode_varint(value: u64) -> Vec<u8> {
     if value < 128 {
         // Single byte, no continuation needed
         return vec![u8::try_from(value).unwrap()];
@@ -51,7 +51,7 @@ pub fn encode_varint(value: u64) -> Vec<u8> {
 /// Alias for encode_varint - kept for backwards compatibility.
 #[inline]
 #[must_use]
-pub fn encode_varint_simple(value: u64) -> Vec<u8> {
+pub(crate) fn encode_varint_simple(value: u64) -> Vec<u8> {
     encode_varint(value)
 }
 
@@ -59,7 +59,7 @@ pub fn encode_varint_simple(value: u64) -> Vec<u8> {
 ///
 /// Returns the decoded value and number of bytes consumed.
 #[must_use]
-pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
+pub(crate) fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
     if data.is_empty() {
         return None;
     }
@@ -90,7 +90,8 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
 
 /// Calculate the length in bytes needed to encode a value as a varint.
 #[must_use]
-pub fn varint_len(value: u64) -> usize {
+#[allow(dead_code)]
+pub(crate) fn varint_len(value: u64) -> usize {
     if value < 128 {
         1
     } else if value < 16384 {

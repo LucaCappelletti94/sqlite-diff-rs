@@ -14,6 +14,9 @@ pub enum Error {
     /// An undefined value was provided.
     #[error("Undefined value provided.")]
     UndefinedValueProvided,
+    /// The column is not part of the primary key.
+    #[error("Column index {0} is not part of the primary key")]
+    ColumnIsNotPrimaryKey(usize),
 }
 
 // =============================================================================

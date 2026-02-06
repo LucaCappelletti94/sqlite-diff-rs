@@ -19,99 +19,6 @@ use core::hash::{Hash, Hasher};
 
 use super::varint::encode_varint_simple;
 
-/// Changeset value type codes.
-///
-/// These are the type codes used in SQLite changesets (NOT database records).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ChangesetType {
-    /// Undefined - special marker for unchanged columns in UPDATE
-    Undefined = 0,
-    /// INTEGER - always encoded as 8-byte big-endian i64
-    Integer = 1,
-    /// FLOAT - 8-byte big-endian IEEE 754
-    Float = 2,
-    /// TEXT - varint length followed by UTF-8 bytes
-    Text = 3,
-    /// BLOB - varint length followed by raw bytes
-    Blob = 4,
-    /// NULL - no data follows
-    Null = 5,
-}
-
-/// Legacy serial type codes used in SQLite database record format.
-///
-/// Note: These are NOT used in changesets! They are provided for reference
-/// and potential future use with database record parsing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SerialType {
-    /// NULL value
-    Null,
-    /// 8-bit signed integer
-    Int8,
-    /// 16-bit big-endian signed integer
-    Int16,
-    /// 24-bit big-endian signed integer
-    Int24,
-    /// 32-bit big-endian signed integer
-    Int32,
-    /// 48-bit big-endian signed integer
-    Int48,
-    /// 64-bit big-endian signed integer
-    Int64,
-    /// 64-bit IEEE 754 float (big-endian)
-    Float64,
-    /// Integer constant 0
-    Zero,
-    /// Integer constant 1
-    One,
-    /// BLOB of specified length
-    Blob(usize),
-    /// Text (UTF-8) of specified length
-    Text(usize),
-}
-
-impl SerialType {
-    /// Get the serial type code for encoding.
-    #[must_use]
-    pub fn type_code(&self) -> u64 {
-        match self {
-            SerialType::Null => 0,
-            SerialType::Int8 => 1,
-            SerialType::Int16 => 2,
-            SerialType::Int24 => 3,
-            SerialType::Int32 => 4,
-            SerialType::Int48 => 5,
-            SerialType::Int64 => 6,
-            SerialType::Float64 => 7,
-            SerialType::Zero => 8,
-            SerialType::One => 9,
-            SerialType::Blob(len) => 12 + (*len as u64) * 2,
-            SerialType::Text(len) => 13 + (*len as u64) * 2,
-        }
-    }
-
-    /// Determine the appropriate serial type for an integer value.
-    #[must_use]
-    pub fn for_integer(value: i64) -> Self {
-        if value == 0 {
-            SerialType::Zero
-        } else if value == 1 {
-            SerialType::One
-        } else if (-128..=127).contains(&value) {
-            SerialType::Int8
-        } else if (-32768..=32767).contains(&value) {
-            SerialType::Int16
-        } else if (-8388608..=8388607).contains(&value) {
-            SerialType::Int32
-        } else if (-140737488355328..=140737488355327).contains(&value) {
-            SerialType::Int48
-        } else {
-            SerialType::Int64
-        }
-    }
-}
-
 /// A value that can be encoded in SQLite changeset format.
 #[derive(Debug, Clone, Default)]
 pub enum Value {
@@ -167,21 +74,6 @@ impl Hash for Value {
             Value::Text(v) => v.hash(state),
             Value::Blob(v) => v.hash(state),
             Value::Null | Value::Undefined => {}
-        }
-    }
-}
-
-impl Value {
-    /// Get the serial type for this value.
-    #[must_use]
-    pub fn serial_type(&self) -> Option<SerialType> {
-        match self {
-            Value::Null => Some(SerialType::Null),
-            Value::Integer(v) => Some(SerialType::for_integer(*v)),
-            Value::Real(_) => Some(SerialType::Float64),
-            Value::Text(s) => Some(SerialType::Text(s.len())),
-            Value::Blob(b) => Some(SerialType::Blob(b.len())),
-            Value::Undefined => None, // Special marker, not a real SQLite type
         }
     }
 }
@@ -248,7 +140,7 @@ pub mod sqlparser;
 /// - Type 5: NULL (no data follows)
 ///
 /// This is NOT the same as SQLite serial types used in database records!
-pub fn encode_value(out: &mut Vec<u8>, value: &Value) {
+pub(crate) fn encode_value(out: &mut Vec<u8>, value: &Value) {
     match value {
         Value::Undefined => {
             // Undefined marker in changeset format (type 0)
@@ -302,7 +194,7 @@ pub fn encode_value(out: &mut Vec<u8>, value: &Value) {
 ///
 /// Returns the value and number of bytes consumed.
 #[must_use]
-pub fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
+pub(crate) fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
     use super::varint::decode_varint;
 
     if data.is_empty() {
@@ -372,16 +264,6 @@ pub fn decode_value(data: &[u8]) -> Option<(Value, usize)> {
         }
         _ => None,
     }
-}
-
-/// Decode a value where type 0 is treated as NULL instead of Undefined.
-///
-/// This is for compatibility with legacy code that used the old serial type encoding.
-/// In the current changeset format, type 0 = Undefined and type 5 = NULL.
-#[deprecated(note = "Use decode_value instead - changeset format uses type 5 for NULL")]
-#[must_use]
-pub fn decode_value_legacy(data: &[u8]) -> Option<(Value, usize)> {
-    decode_value(data)
 }
 
 #[cfg(test)]

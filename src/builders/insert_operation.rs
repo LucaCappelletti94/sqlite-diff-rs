@@ -125,6 +125,40 @@ impl<T: DynTable> Insert<T> {
         self.values[col_idx] = value;
         Ok(self)
     }
+
+    /// Sets a column to NULL.
+    ///
+    /// This is a convenience method equivalent to `.set(col_idx, Value::Null)`.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the provided column index is out of bounds for the table schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::Insert;
+    /// use sqlparser::ast::CreateTable;
+    /// use sqlparser::dialect::SQLiteDialect;
+    /// use sqlparser::parser::Parser;
+    ///
+    /// let dialect = SQLiteDialect {};
+    /// let sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)";
+    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
+    /// let schema = match &statements[0] {
+    ///     sqlparser::ast::Statement::CreateTable(ct) => ct.clone(),
+    ///     _ => panic!(),
+    /// };
+    ///
+    /// // INSERT INTO items (id, description, price) VALUES (1, NULL, 9.99)
+    /// let insert = Insert::from(schema)
+    ///     .set(0, 1i64).unwrap()
+    ///     .set_null(1).unwrap()    // description = NULL
+    ///     .set(2, 9.99f64).unwrap();
+    /// ```
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+        self.set(col_idx, Value::Null)
+    }
 }
 
 impl<T: DynTable> Reverse for Insert<T> {
