@@ -1,0 +1,41 @@
+[package]
+name = "sqlite-diff-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+honggfuzz = "0.5"
+sqlite-diff-rs = { path = "../", features = ["sqlparser", "rusqlite"] }
+rusqlite = { version = "0.37", features = [
+	"bundled",
+	"session",
+] }
+sqlparser = { workspace = true }
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sql_roundtrip"
+path = "fuzz_targets/sql_roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "apply_roundtrip"
+path = "fuzz_targets/apply_roundtrip.rs"
+test = false
+doc = false

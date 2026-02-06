@@ -1,0 +1,62 @@
+[package]
+name = "sqlite-diff-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Builder pattern for SQLite changeset and patchset binary formats"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/LucaCappelletti94/sqlite-diff-rs"
+
+[workspace]
+members = [".", "fuzz"]
+
+[dependencies]
+sqlparser = { workspace = true, optional = true }
+thiserror = "2"
+hashbrown = "0.16.1"
+rusqlite = { version = "0.37", features = [
+	"bundled",
+	"session",
+], optional = true }
+
+[dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled", "session"] }
+rand = "0.9.2"
+
+[workspace.dependencies]
+sqlparser = { version = "0.60", git = "https://github.com/LucaCappelletti94/sqlparser-rs/", branch = "fuzzing", default-features = false, features = [
+	"recursive-protection",
+] }
+
+[features]
+default = ["sqlparser"]
+rusqlite = ["dep:rusqlite"]
+sqlparser = ["dep:sqlparser"]
+
+[lints.rust]
+missing_docs = "forbid"
+unused_macro_rules = "forbid"
+unconditional_recursion = "forbid"
+unreachable_patterns = "forbid"
+unused_import_braces = "forbid"
+unused_must_use = "forbid"
+deprecated = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "forbid"
+bare_urls = "forbid"
+invalid_codeblock_attributes = "forbid"
+invalid_html_tags = "forbid"
+missing_crate_level_docs = "forbid"
+unescaped_backticks = "forbid"
+redundant_explicit_links = "forbid"
+invalid_rust_codeblocks = "forbid"
+
+[lints.clippy]
+unreadable_literal = "allow"
+missing_panics_doc = "allow"
+new_ret_no_self = "allow"
+struct_excessive_bools = "allow"
+should_panic_without_expect = "allow"
+doc_markdown = "allow"
+clone_on_copy = "forbid"
+pedantic = { level = "deny", priority = -1 }

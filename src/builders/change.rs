@@ -1,0 +1,1507 @@
+//! DiffSet builder for constructing changeset/patchset binary data.
+//!
+//! This module provides [`DiffSetBuilder`] for building SQLite session extension
+//! compatible changesets and patchsets. The builder tracks row state and consolidates
+//! operations according to SQLite's changegroup semantics.
+//!
+//! # Terminology
+//!
+//! - **Changeset**: Full row data for all operations (invertible)
+//! - **Patchset**: Minimal data (PK only for deletes, changed columns for updates)
+//! - **DiffSet**: Generic term for either changeset or patchset
+//!
+//! # Consolidation Rules
+//!
+//! When multiple operations affect the same row (by primary key), they are
+//! consolidated according to SQLite's `sqlite3changegroup_add()` semantics:
+//!
+//! | Existing | New | Result |
+//! |----------|--------|--------|
+//! | INSERT | INSERT | Ignore new |
+//! | INSERT | UPDATE | INSERT with updated values |
+//! | INSERT | DELETE | Remove both (no-op) |
+//! | UPDATE | INSERT | Ignore new |
+//! | UPDATE | UPDATE | Single UPDATE original→final |
+//! | UPDATE | DELETE | DELETE of original |
+//! | DELETE | INSERT | UPDATE if different, no-op if same |
+//! | DELETE | UPDATE | Ignore new |
+//! | DELETE | DELETE | Ignore new |
+
+use hashbrown::HashMap;
+
+use crate::{
+    SchemaWithPK,
+    builders::{
+        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
+        format::Format,
+    },
+    encoding::{Value, encode_value},
+};
+use alloc::vec::Vec;
+
+/// Builder for constructing changeset or patchset binary data.
+///
+/// Generic over the format `F` (Changeset or Patchset) and table schema `T`.
+#[derive(Debug, Clone, Eq)]
+pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
+    tables: HashMap<T, HashMap<Vec<Value>, Operation<T, F>>>,
+    table_order: Vec<T>,
+}
+
+/// Custom PartialEq that ignores tables with empty operations.
+///
+/// Tables with no operations are not serialized (skipped in build()), so after
+/// roundtrip they won't exist. This makes empty tables semantically equivalent
+/// to non-existent tables for comparison purposes.
+///
+/// TODO: Verify this matches SQLite's session extension behavior. If SQLite
+/// preserves empty table entries in changesets/patchsets, this may need revision.
+impl<F: Format, T: SchemaWithPK> PartialEq for DiffSetBuilder<F, T> {
+    fn eq(&self, other: &Self) -> bool {
+        // Filter out tables with empty operations for comparison
+        let self_tables: HashMap<_, _> = self
+            .tables
+            .iter()
+            .filter(|(_, ops)| !ops.is_empty())
+            .collect();
+        let other_tables: HashMap<_, _> = other
+            .tables
+            .iter()
+            .filter(|(_, ops)| !ops.is_empty())
+            .collect();
+
+        if self_tables != other_tables {
+            return false;
+        }
+
+        // Compare table_order, filtering out tables with empty operations
+        let self_order: Vec<_> = self
+            .table_order
+            .iter()
+            .filter(|t| self.tables.get(*t).is_some_and(|ops| !ops.is_empty()))
+            .collect();
+        let other_order: Vec<_> = other
+            .table_order
+            .iter()
+            .filter(|t| other.tables.get(*t).is_some_and(|ops| !ops.is_empty()))
+            .collect();
+
+        self_order == other_order
+    }
+}
+
+/// Type alias for building changesets.
+pub type ChangeSet<T> = DiffSetBuilder<ChangesetFormat, T>;
+/// Type alias for building patchsets.
+pub type PatchSet<T> = DiffSetBuilder<PatchsetFormat, T>;
+
+impl<F: Format, T: SchemaWithPK> Default for DiffSetBuilder<F, T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: SchemaWithPK> From<DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+    fn from(builder: DiffSetBuilder<ChangesetFormat, T>) -> Self {
+        builder.build()
+    }
+}
+
+impl<T: SchemaWithPK> From<DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+    fn from(builder: DiffSetBuilder<PatchsetFormat, T>) -> Self {
+        builder.build()
+    }
+}
+
+use crate::encoding::op_codes;
+
+impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
+    /// Create a new builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tables: HashMap::new(),
+            table_order: Vec::new(),
+        }
+    }
+
+    /// Ensure a table exists in the builder, returning its row map.
+    fn ensure_table(&mut self, table: &T) -> &mut HashMap<Vec<Value>, Operation<T, F>> {
+        if !self.tables.contains_key(table) {
+            self.table_order.push(table.clone());
+            self.tables.insert(table.clone(), HashMap::new());
+        }
+        self.tables.get_mut(table).unwrap()
+    }
+
+    /// Remove a table if it has no operations.
+    ///
+    /// TODO: This removal behavior may diverge from SQLite's session extension.
+    /// When comparing with rusqlite's changeset/patchset output, we need to verify
+    /// whether SQLite keeps empty table entries or removes them. If SQLite keeps them,
+    /// we should either preserve them here or handle the difference in PartialEq.
+    fn cleanup_empty_table(&mut self, table: &T) {
+        if self
+            .tables
+            .get(table)
+            .is_some_and(hashbrown::HashMap::is_empty)
+        {
+            self.tables.remove(table);
+            self.table_order.retain(|t| t != table);
+        }
+    }
+
+    /// Returns true if the builder has no operations.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tables.values().all(HashMap::is_empty)
+    }
+
+    /// Returns the number of operations across all tables.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tables.values().map(HashMap::len).sum()
+    }
+
+    /// Write the table header to the output buffer.
+    ///
+    /// Format:
+    /// - Table marker: 'T' (changeset) or 'P' (patchset)
+    /// - Column count (1 byte)
+    /// - PK flags (1 byte per column: 0x01 = PK, 0x00 = not)
+    /// - Table name (null-terminated UTF-8)
+    fn write_table_header(out: &mut Vec<u8>, table: &T) {
+        // Table marker
+        out.push(F::TABLE_MARKER);
+
+        // Column count (1 byte)
+        let num_cols = table.number_of_columns();
+        out.push(u8::try_from(num_cols).unwrap());
+
+        // PK flags (1 byte per column)
+        let pk_start = out.len();
+        out.resize(pk_start + num_cols, 0);
+        table.write_pk_flags(&mut out[pk_start..]);
+
+        // Table name (null-terminated)
+        out.extend(table.name().as_bytes());
+        out.push(0);
+    }
+}
+
+// ============================================================================
+// Changeset-specific builder methods
+// ============================================================================
+
+impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
+    /// Add an INSERT operation.
+    #[must_use]
+    pub fn insert(mut self, insert: Insert<T>) -> Self {
+        let table = insert.as_ref();
+        let pk = table.extract_pk(insert.values());
+        let rows = self.ensure_table(table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Insert(insert));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + INSERT: keep first (ignore new)
+                rows.insert(pk, Operation::Insert(existing + insert));
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + INSERT: ignore new, keep update
+                rows.insert(pk, Operation::Update(existing + insert));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + INSERT: becomes UPDATE or cancels out
+                if let Some(update) = existing + insert {
+                    rows.insert(pk, Operation::Update(update));
+                }
+                // If None, they cancelled out - don't re-insert
+            }
+        }
+        self
+    }
+
+    /// Add a DELETE operation.
+    #[must_use]
+    pub fn delete(mut self, delete: ChangeDelete<T>) -> Self {
+        let table = delete.as_ref().clone();
+        let pk = table.extract_pk(delete.values());
+        let rows = self.ensure_table(&table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Delete(delete));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + DELETE: cancel out
+                let _ = existing + delete; // Returns None, we discard
+                // Clean up table if now empty
+                self.cleanup_empty_table(&table);
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + DELETE: DELETE with original values
+                rows.insert(pk, Operation::Delete(existing + delete));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + DELETE: keep first (ignore new)
+                rows.insert(pk, Operation::Delete(existing + delete));
+            }
+        }
+        self
+    }
+
+    /// Add an UPDATE operation.
+    #[must_use]
+    pub fn update(mut self, update: Update<T, ChangesetFormat>) -> Self {
+        let table = update.as_ref();
+        // Extract PK from old values
+        let old_values: Vec<_> = update
+            .values()
+            .iter()
+            .map(|(old, _): &(_, _)| old.clone())
+            .collect();
+        let pk = table.extract_pk(&old_values);
+        let rows = self.ensure_table(table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Update(update));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + UPDATE: INSERT with updated values
+                // Note: After applying the update, the Insert's values change,
+                // so we need to recalculate the PK from the new values
+                let updated_insert = existing + update;
+                let new_pk = updated_insert.as_ref().extract_pk(updated_insert.values());
+                rows.insert(new_pk, Operation::Insert(updated_insert));
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + UPDATE: keep original old, use final new
+                rows.insert(pk, Operation::Update(existing + update));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + UPDATE: ignore new, keep delete
+                rows.insert(pk, Operation::Delete(existing + update));
+            }
+        }
+        self
+    }
+
+    /// Build the changeset binary data.
+    ///
+    /// Returns the binary representation compatible with SQLite's session extension.
+    /// The format is:
+    /// - For each table with operations:
+    ///   - Table header (marker, column count, PK flags, name)
+    ///   - For each operation:
+    ///     - Operation code (INSERT=0x12, DELETE=0x09, UPDATE=0x17)
+    ///     - Indirect flag (always 0)
+    ///     - Values encoded according to the operation type
+    #[must_use]
+    pub fn build(self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for table in &self.table_order {
+            let rows = match self.tables.get(table) {
+                Some(rows) if !rows.is_empty() => rows,
+                _ => continue, // Skip tables with no operations
+            };
+
+            // Write table header
+            Self::write_table_header(&mut out, table);
+
+            // Write operations
+            for (_pk, op) in rows {
+                match op {
+                    Operation::Insert(insert) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0); // indirect flag
+                        for value in insert.values() {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Delete(delete) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0); // indirect flag
+                        for value in delete.values() {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Update(update) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0); // indirect flag
+                        // Write old values, then new values
+                        for (old, _new) in update.values() {
+                            encode_value(&mut out, old);
+                        }
+                        for (_old, new) in update.values() {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Insert a row using the schema and values directly.
+    #[must_use]
+    pub fn insert_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
+        self.insert(Insert::from_values(table, values.to_vec()))
+    }
+
+    /// Delete a row using the schema and values directly.
+    #[must_use]
+    pub fn delete_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
+        self.delete(ChangeDelete::from_values(table, values.to_vec()))
+    }
+
+    /// Update a row using the schema and old/new values directly.
+    #[must_use]
+    pub fn update_with_schema(
+        self,
+        table: T,
+        old_values: &[crate::encoding::Value],
+        new_values: &[crate::encoding::Value],
+    ) -> Self {
+        self.update(Update::from_values(
+            table,
+            old_values.to_vec(),
+            new_values.to_vec(),
+        ))
+    }
+}
+
+// ============================================================================
+// Patchset-specific builder methods
+// ============================================================================
+
+impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
+    /// Add an INSERT operation.
+    #[must_use]
+    pub fn insert(mut self, insert: Insert<T>) -> Self {
+        let table = insert.as_ref();
+        let pk = table.extract_pk(insert.values());
+        let rows = self.ensure_table(table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Insert(insert));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + INSERT: keep first (ignore new)
+                rows.insert(pk, Operation::Insert(existing + insert));
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + INSERT: ignore new, keep update
+                rows.insert(pk, Operation::Update(existing + insert));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + INSERT: becomes UPDATE (patchset can't compare)
+                rows.insert(pk, Operation::Update(existing + insert));
+            }
+        }
+        self
+    }
+
+    /// Add a DELETE operation.
+    ///
+    /// For patchset, you must also provide the values to extract the PK.
+    #[must_use]
+    pub fn delete(mut self, delete: PatchDelete<T>, values: &[crate::encoding::Value]) -> Self {
+        let table = delete.as_ref().clone();
+        let pk = table.extract_pk(values);
+        let rows = self.ensure_table(&table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Delete(delete));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + DELETE: cancel out
+                let _ = existing + delete; // Returns None, we discard
+                // Clean up table if now empty
+                self.cleanup_empty_table(&table);
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + DELETE: DELETE (patchset doesn't need old values)
+                rows.insert(pk, Operation::Delete(existing + delete));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + DELETE: keep first (ignore new)
+                rows.insert(pk, Operation::Delete(existing + delete));
+            }
+        }
+        self
+    }
+
+    /// Add an UPDATE operation.
+    ///
+    /// For patchset, you must also provide the old values to extract the PK.
+    #[must_use]
+    pub fn update(
+        mut self,
+        update: Update<T, PatchsetFormat>,
+        old_values: &[crate::encoding::Value],
+    ) -> Self {
+        let table = update.as_ref();
+        let pk = table.extract_pk(old_values);
+        let rows = self.ensure_table(table);
+
+        match rows.remove(&pk) {
+            None => {
+                rows.insert(pk, Operation::Update(update));
+            }
+            Some(Operation::Insert(existing)) => {
+                // INSERT + UPDATE: INSERT with updated values
+                // Note: After applying the update, the Insert's values change,
+                // so we need to recalculate the PK from the new values
+                let updated_insert = existing + update;
+                let new_pk = updated_insert.as_ref().extract_pk(updated_insert.values());
+                rows.insert(new_pk, Operation::Insert(updated_insert));
+            }
+            Some(Operation::Update(existing)) => {
+                // UPDATE + UPDATE: keep original old, use final new
+                rows.insert(pk, Operation::Update(existing + update));
+            }
+            Some(Operation::Delete(existing)) => {
+                // DELETE + UPDATE: ignore new, keep delete
+                rows.insert(pk, Operation::Delete(existing + update));
+            }
+        }
+        self
+    }
+
+    /// Build the patchset binary data.
+    ///
+    /// Returns the binary representation compatible with SQLite's session extension.
+    /// The format is:
+    /// - For each table with operations:
+    ///   - Table header (marker 'P', column count, PK flags, name)
+    ///   - For each operation:
+    ///     - Operation code (INSERT=0x12, DELETE=0x09, UPDATE=0x17)
+    ///     - Indirect flag (always 0)
+    ///     - Values encoded according to the operation type
+    ///
+    /// Note: Patchset format differs from changeset:
+    /// - DELETE stores only PK values
+    /// - UPDATE stores PK values (undefined for non-PK) and all new values
+    #[must_use]
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for table in &self.table_order {
+            let rows = match self.tables.get(table) {
+                Some(rows) if !rows.is_empty() => rows,
+                _ => continue, // Skip tables with no operations
+            };
+
+            // Write table header
+            Self::write_table_header(&mut out, table);
+
+            // Get PK flags for this table
+            let num_cols = table.number_of_columns();
+            let mut pk_flags = alloc::vec![0u8; num_cols];
+            table.write_pk_flags(&mut pk_flags);
+
+            // Build a mapping from column index to position in pk vector.
+            // pk vector is sorted by pk_ordinal, so we need to find each column's
+            // position based on its ordinal rank among all PK columns.
+            let mut pk_col_to_pk_pos: alloc::vec::Vec<Option<usize>> = alloc::vec![None; num_cols];
+            {
+                // Collect (col_idx, pk_ordinal) for PK columns
+                let mut pk_cols: alloc::vec::Vec<(usize, u8)> = pk_flags
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
+                    .collect();
+                // Sort by ordinal to match how pk vector is ordered
+                pk_cols.sort_by_key(|(_, ord)| *ord);
+                // Now pk_cols[pos] = (col_idx, _), so pk[pos] corresponds to col_idx
+                for (pos, (col_idx, _)) in pk_cols.into_iter().enumerate() {
+                    pk_col_to_pk_pos[col_idx] = Some(pos);
+                }
+            }
+
+            // Write operations
+            for (pk, op) in rows {
+                match op {
+                    Operation::Insert(insert) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0); // indirect flag
+                        for value in insert.values() {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Delete(_) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0); // indirect flag
+                        // Patchset DELETE: write PK values in column order
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_value(&mut out, &pk[pk_pos]);
+                                } else {
+                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                }
+                            }
+                        }
+                    }
+                    Operation::Update(update) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0); // indirect flag
+                        // Patchset UPDATE old values: PK columns get their values from pk,
+                        // non-PK columns are undefined. Values must be in column order.
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                // PK column - write the actual PK value at correct position
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_value(&mut out, &pk[pk_pos]);
+                                } else {
+                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                }
+                            } else {
+                                // Non-PK column - write undefined
+                                encode_value(&mut out, &crate::encoding::Value::Undefined);
+                            }
+                        }
+                        // Write new values
+                        for (_old, new) in update.values() {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Insert a row using the schema and values directly.
+    #[must_use]
+    pub fn insert_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
+        self.insert(Insert::from_values(table, values.to_vec()))
+    }
+
+    /// Delete a row using the schema and values directly.
+    #[must_use]
+    pub fn delete_with_schema(self, table: T, values: &[crate::encoding::Value]) -> Self {
+        let delete = PatchDelete::from(table);
+        self.delete(delete, values)
+    }
+
+    /// Update a row using the schema and old/new values directly.
+    #[must_use]
+    pub fn update_with_schema(
+        self,
+        table: T,
+        old_values: &[crate::encoding::Value],
+        new_values: &[crate::encoding::Value],
+    ) -> Self {
+        self.update(
+            Update::from_new_values(table, new_values.to_vec()),
+            old_values,
+        )
+    }
+}
+
+// ============================================================================
+// Reverse implementation for DiffSetBuilder
+// ============================================================================
+
+use crate::builders::operation::Reverse;
+
+impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
+    type Output = DiffSetBuilder<ChangesetFormat, T>;
+
+    fn reverse(self) -> Self::Output {
+        let mut reversed: DiffSetBuilder<ChangesetFormat, T> = DiffSetBuilder::new();
+
+        // Process tables in order to preserve table ordering
+        for table in self.table_order {
+            if let Some(rows) = self.tables.get(&table) {
+                for (_pk, op) in rows {
+                    match op.clone().reverse() {
+                        Operation::Insert(insert) => {
+                            reversed = reversed.insert(insert);
+                        }
+                        Operation::Delete(delete) => {
+                            reversed = reversed.delete(delete);
+                        }
+                        Operation::Update(update) => {
+                            reversed = reversed.update(update);
+                        }
+                    }
+                }
+            }
+        }
+
+        reversed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encoding::Value;
+    use alloc::{string::String, vec};
+
+    /// Simple test table implementation
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct TestTable {
+        name: String,
+        num_columns: usize,
+        pk_column: usize,
+    }
+
+    impl TestTable {
+        fn new(name: &str, num_columns: usize, pk_column: usize) -> Self {
+            Self {
+                name: name.into(),
+                num_columns,
+                pk_column,
+            }
+        }
+    }
+
+    impl crate::DynTable for TestTable {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn number_of_columns(&self) -> usize {
+            self.num_columns
+        }
+
+        fn write_pk_flags(&self, buf: &mut [u8]) {
+            assert_eq!(buf.len(), self.num_columns);
+            buf.fill(0);
+            buf[self.pk_column] = 1;
+        }
+    }
+
+    impl crate::SchemaWithPK for TestTable {
+        fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value> {
+            vec![values[self.pk_column].clone()]
+        }
+    }
+
+    // Type alias for cleaner test code
+    type ChangesetBuilder = DiffSetBuilder<ChangesetFormat, TestTable>;
+
+    #[test]
+    fn test_insert_single_row() {
+        let table = TestTable::new("users", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert);
+
+        assert_eq!(builder.len(), 1);
+        assert!(!builder.is_empty());
+    }
+
+    #[test]
+    fn test_insert_then_delete_cancels_out() {
+        let table = TestTable::new("users", 2, 0);
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert).delete(delete);
+
+        assert_eq!(builder.len(), 0);
+        assert!(builder.is_empty());
+    }
+
+    #[test]
+    fn test_insert_then_update_becomes_insert() {
+        let table = TestTable::new("users", 2, 0);
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64) // PK unchanged
+            .unwrap()
+            .set(1, "alice", "bob")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert).update(update);
+
+        assert_eq!(builder.len(), 1);
+        // Should still be an INSERT with "bob" as the name
+    }
+
+    #[test]
+    fn test_delete_then_insert_same_values_cancels_out() {
+        let table = TestTable::new("users", 2, 0);
+
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
+
+        assert_eq!(builder.len(), 0);
+        assert!(builder.is_empty());
+    }
+
+    #[test]
+    fn test_delete_then_insert_different_values_becomes_update() {
+        let table = TestTable::new("users", 2, 0);
+
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "bob")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
+
+        assert_eq!(builder.len(), 1);
+        // Should be an UPDATE from alice to bob
+    }
+
+    #[test]
+    fn test_multiple_rows() {
+        let table = TestTable::new("users", 2, 0);
+
+        let insert1 = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "bob")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert1).insert(insert2);
+
+        assert_eq!(builder.len(), 2);
+    }
+
+    #[test]
+    fn test_update_then_update_consolidates() {
+        let table = TestTable::new("users", 2, 0);
+
+        let update1 = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "alice", "bob")
+            .unwrap();
+
+        let update2 = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "bob", "charlie")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().update(update1).update(update2);
+
+        assert_eq!(builder.len(), 1);
+        // Should be a single UPDATE from alice to charlie
+    }
+
+    // ========================================================================
+    // Reverse trait tests
+    // ========================================================================
+
+    #[test]
+    fn test_reverse_insert_becomes_delete() {
+        let table = TestTable::new("users", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let delete: ChangeDelete<TestTable> = insert.reverse();
+        assert_eq!(
+            delete.values(),
+            &[Value::Integer(1), Value::Text("alice".into())]
+        );
+    }
+
+    #[test]
+    fn test_reverse_delete_becomes_insert() {
+        let table = TestTable::new("users", 2, 0);
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert: Insert<TestTable> = delete.reverse();
+        assert_eq!(
+            insert.values(),
+            &[Value::Integer(1), Value::Text("alice".into())]
+        );
+    }
+
+    #[test]
+    fn test_reverse_update_swaps_old_new() {
+        let table = TestTable::new("users", 2, 0);
+        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "alice", "bob")
+            .unwrap();
+
+        let reversed: Update<TestTable, ChangesetFormat> = update.reverse();
+        let values = reversed.values();
+        // Old and new should be swapped
+        assert_eq!(values[0], (Value::Integer(1), Value::Integer(1)));
+        assert_eq!(
+            values[1],
+            (Value::Text("bob".into()), Value::Text("alice".into()))
+        );
+    }
+
+    #[test]
+    fn test_reverse_builder_insert_becomes_delete() {
+        let table = TestTable::new("users", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert);
+        let reversed = builder.reverse();
+
+        assert_eq!(reversed.len(), 1);
+        // The reversed builder should have a delete operation
+        let rows = reversed.tables.get(&table).unwrap();
+        assert!(matches!(
+            rows.values().next().unwrap(),
+            Operation::Delete(_)
+        ));
+    }
+
+    #[test]
+    fn test_reverse_builder_delete_becomes_insert() {
+        let table = TestTable::new("users", 2, 0);
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().delete(delete);
+        let reversed = builder.reverse();
+
+        assert_eq!(reversed.len(), 1);
+        // The reversed builder should have an insert operation
+        let rows = reversed.tables.get(&table).unwrap();
+        assert!(matches!(
+            rows.values().next().unwrap(),
+            Operation::Insert(_)
+        ));
+    }
+
+    #[test]
+    fn test_reverse_builder_update_swaps() {
+        let table = TestTable::new("users", 2, 0);
+        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "alice", "bob")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().update(update);
+        let reversed = builder.reverse();
+
+        assert_eq!(reversed.len(), 1);
+        // The reversed builder should have an update operation with swapped values
+        let rows = reversed.tables.get(&table).unwrap();
+        if let Operation::Update(update) = rows.values().next().unwrap() {
+            let values = update.values();
+            assert_eq!(
+                values[1],
+                (Value::Text("bob".into()), Value::Text("alice".into()))
+            );
+        } else {
+            panic!("Expected Update operation");
+        }
+    }
+
+    #[test]
+    fn test_reverse_is_involutory() {
+        // reverse(reverse(x)) == x
+        let table = TestTable::new("users", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let builder = ChangesetBuilder::new().insert(insert.clone());
+        let double_reversed = builder.reverse().reverse();
+
+        assert_eq!(double_reversed.len(), 1);
+        let rows = double_reversed.tables.get(&table).unwrap();
+        if let Operation::Insert(reversed_insert) = rows.values().next().unwrap() {
+            assert_eq!(reversed_insert.values(), insert.values());
+        } else {
+            panic!("Expected Insert operation");
+        }
+    }
+
+    // ========================================================================
+    // Build (serialization) tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_empty_builder() {
+        let builder = ChangesetBuilder::new();
+        let bytes = builder.build();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn test_build_insert_format() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+
+        // Verify the structure:
+        // Table header: 'T', col_count(2), pk_flags(1,0), name("t\0")
+        // Operation: INSERT(0x12), indirect(0), values...
+        assert!(!bytes.is_empty());
+
+        // Check table marker
+        assert_eq!(bytes[0], b'T');
+        // Column count
+        assert_eq!(bytes[1], 2);
+        // PK flags: first column is PK
+        assert_eq!(bytes[2], 1);
+        assert_eq!(bytes[3], 0);
+        // Table name "t" + null terminator
+        assert_eq!(bytes[4], b't');
+        assert_eq!(bytes[5], 0);
+        // Operation code: INSERT = 0x12
+        assert_eq!(bytes[6], 0x12);
+        // Indirect flag
+        assert_eq!(bytes[7], 0);
+    }
+
+    #[test]
+    fn test_build_delete_format() {
+        let table = TestTable::new("t", 2, 0);
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+
+        let bytes = ChangesetBuilder::new().delete(delete).build();
+
+        assert!(!bytes.is_empty());
+        assert_eq!(bytes[0], b'T');
+        // Operation code: DELETE = 0x09
+        assert_eq!(bytes[6], 0x09);
+    }
+
+    #[test]
+    fn test_build_update_format() {
+        let table = TestTable::new("t", 2, 0);
+        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "a", "b")
+            .unwrap();
+
+        let bytes = ChangesetBuilder::new().update(update).build();
+
+        assert!(!bytes.is_empty());
+        assert_eq!(bytes[0], b'T');
+        // Operation code: UPDATE = 0x17
+        assert_eq!(bytes[6], 0x17);
+    }
+
+    #[test]
+    fn test_build_multiple_operations() {
+        let table = TestTable::new("t", 2, 0);
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "b")
+            .unwrap();
+
+        let bytes = ChangesetBuilder::new()
+            .insert(insert)
+            .insert(insert2)
+            .build();
+
+        assert!(!bytes.is_empty());
+        // Should have one table header and two insert operations
+        assert_eq!(bytes[0], b'T');
+    }
+
+    #[test]
+    fn test_build_cancelled_operations_produce_empty() {
+        let table = TestTable::new("t", 2, 0);
+
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+
+        let bytes = ChangesetBuilder::new()
+            .insert(insert)
+            .delete(delete)
+            .build();
+
+        // INSERT + DELETE with same values cancels out
+        assert!(bytes.is_empty());
+    }
+}
+
+// =============================================================================
+// sqlparser integration (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "sqlparser")]
+mod sqlparser_impl {
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+    use core::fmt::{self, Display};
+    use core::str::FromStr;
+
+    use hashbrown::HashMap;
+    use sqlparser::ast::{CreateTable, Statement};
+    use sqlparser::dialect::SQLiteDialect;
+    use sqlparser::parser::Parser;
+
+    use super::{DiffSetBuilder, Operation};
+    use crate::builders::{ChangeDelete, ChangesetFormat, Insert, PatchsetFormat, Update};
+    use crate::errors::DiffSetParseError;
+    use crate::schema::DynTable;
+
+    impl DiffSetBuilder<ChangesetFormat, CreateTable> {
+        /// Try to create a DiffSetBuilder from a slice of SQL statements.
+        ///
+        /// The statements must include CREATE TABLE statements before any DML
+        /// (INSERT/UPDATE/DELETE) statements that reference those tables.
+        ///
+        /// # Errors
+        ///
+        /// Returns `DiffSetParseError` if:
+        /// - A DML statement references a table that hasn't been created yet
+        /// - A statement conversion fails
+        /// - An unsupported statement type is encountered
+        pub fn try_from_statements(statements: &[Statement]) -> Result<Self, DiffSetParseError> {
+            let mut builder = Self::new();
+            let mut schemas: HashMap<String, CreateTable> = HashMap::new();
+
+            for stmt in statements {
+                match stmt {
+                    Statement::CreateTable(create) => {
+                        let table_name = create.name().to_string();
+                        schemas.insert(table_name, create.clone());
+                    }
+                    Statement::Insert(insert) => {
+                        let table_name =
+                            crate::builders::ast_helpers::extract_table_name(match &insert.table {
+                                sqlparser::ast::TableObject::TableName(name) => name,
+                                sqlparser::ast::TableObject::TableFunction(_) => {
+                                    return Err(DiffSetParseError::UnsupportedStatement(
+                                        "Table function in INSERT".into(),
+                                    ));
+                                }
+                            });
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        let insert_op = Insert::try_from_ast(insert, schema)?;
+                        // Convert to owned schema
+                        let owned_insert =
+                            Insert::from_values(schema.clone(), insert_op.into_values());
+                        builder = builder.insert(owned_insert);
+                    }
+                    Statement::Update(update) => {
+                        let table_name = match &update.table.relation {
+                            sqlparser::ast::TableFactor::Table { name, .. } => {
+                                crate::builders::ast_helpers::extract_table_name(name)
+                            }
+                            _ => {
+                                return Err(DiffSetParseError::UnsupportedStatement(
+                                    "Non-table relation in UPDATE".into(),
+                                ));
+                            }
+                        };
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        let update_op = Update::try_from_ast(update, schema)?;
+                        // Convert to owned schema - extract old/new values
+                        let values = update_op.values();
+                        let old_values: Vec<_> =
+                            values.iter().map(|(old, _)| old.clone()).collect();
+                        let new_values: Vec<_> =
+                            values.iter().map(|(_, new)| new.clone()).collect();
+                        let owned_update =
+                            Update::from_values(schema.clone(), old_values, new_values);
+                        builder = builder.update(owned_update);
+                    }
+                    Statement::Delete(delete) => {
+                        let table_name = match &delete.from {
+                            sqlparser::ast::FromTable::WithFromKeyword(tables)
+                            | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables
+                                .first()
+                                .and_then(|t| match &t.relation {
+                                    sqlparser::ast::TableFactor::Table { name, .. } => {
+                                        Some(crate::builders::ast_helpers::extract_table_name(name))
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(""),
+                        };
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
+                        // Convert to owned schema
+                        let owned_delete =
+                            ChangeDelete::from_values(schema.clone(), delete_op.values().to_vec());
+                        builder = builder.delete(owned_delete);
+                    }
+                    other => {
+                        return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
+                            "{other:?}"
+                        )));
+                    }
+                }
+            }
+
+            Ok(builder)
+        }
+    }
+
+    impl TryFrom<&[Statement]> for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(statements: &[Statement]) -> Result<Self, Self::Error> {
+            Self::try_from_statements(statements)
+        }
+    }
+
+    impl TryFrom<Vec<Statement>> for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(statements: Vec<Statement>) -> Result<Self, Self::Error> {
+            Self::try_from_statements(&statements)
+        }
+    }
+
+    impl FromStr for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        type Err = DiffSetParseError;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let dialect = SQLiteDialect {};
+            let statements = Parser::parse_sql(&dialect, s)?;
+            Self::try_from_statements(&statements)
+        }
+    }
+
+    impl TryFrom<&str> for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(s: &str) -> Result<Self, Self::Error> {
+            s.parse()
+        }
+    }
+
+    impl TryFrom<String> for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(s: String) -> Result<Self, Self::Error> {
+            s.parse()
+        }
+    }
+
+    // =========================================================================
+    // Patchset parsing (monodirectional - no Display)
+    // =========================================================================
+
+    impl DiffSetBuilder<PatchsetFormat, CreateTable> {
+        /// Try to create a PatchSet DiffSetBuilder from a slice of SQL statements.
+        ///
+        /// The statements must include CREATE TABLE statements before any DML
+        /// (INSERT/UPDATE/DELETE) statements that reference those tables.
+        ///
+        /// Note: Patchset format has limited information (no old values for updates,
+        /// only PK for deletes), so this conversion may lose information compared
+        /// to the original SQL.
+        ///
+        /// # Errors
+        ///
+        /// Returns `DiffSetParseError` if:
+        /// - A DML statement references a table that hasn't been created yet
+        /// - A statement conversion fails
+        /// - An unsupported statement type is encountered
+        pub fn try_from_statements(statements: &[Statement]) -> Result<Self, DiffSetParseError> {
+            let mut builder = Self::new();
+            let mut schemas: HashMap<String, CreateTable> = HashMap::new();
+
+            for stmt in statements {
+                match stmt {
+                    Statement::CreateTable(create) => {
+                        let table_name = create.name().to_string();
+                        schemas.insert(table_name, create.clone());
+                    }
+                    Statement::Insert(insert) => {
+                        let table_name =
+                            crate::builders::ast_helpers::extract_table_name(match &insert.table {
+                                sqlparser::ast::TableObject::TableName(name) => name,
+                                sqlparser::ast::TableObject::TableFunction(_) => {
+                                    return Err(DiffSetParseError::UnsupportedStatement(
+                                        "Table function in INSERT".into(),
+                                    ));
+                                }
+                            });
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        let insert_op = Insert::try_from_ast(insert, schema)?;
+                        // Convert to owned schema
+                        let owned_insert =
+                            Insert::from_values(schema.clone(), insert_op.into_values());
+                        builder = builder.insert(owned_insert);
+                    }
+                    Statement::Update(update) => {
+                        let table_name = match &update.table.relation {
+                            sqlparser::ast::TableFactor::Table { name, .. } => {
+                                crate::builders::ast_helpers::extract_table_name(name)
+                            }
+                            _ => {
+                                return Err(DiffSetParseError::UnsupportedStatement(
+                                    "Non-table relation in UPDATE".into(),
+                                ));
+                            }
+                        };
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        // For patchset, we use the changeset conversion and extract new values
+                        let update_op =
+                            Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)?;
+                        let new_values: Vec<_> = update_op
+                            .values()
+                            .iter()
+                            .map(|(_, new)| new.clone())
+                            .collect();
+                        let old_values: Vec<_> = update_op
+                            .values()
+                            .iter()
+                            .map(|(old, _)| old.clone())
+                            .collect();
+                        let owned_update = Update::from_new_values(schema.clone(), new_values);
+                        builder = builder.update(owned_update, &old_values);
+                    }
+                    Statement::Delete(delete) => {
+                        let table_name = match &delete.from {
+                            sqlparser::ast::FromTable::WithFromKeyword(tables)
+                            | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables
+                                .first()
+                                .and_then(|t| match &t.relation {
+                                    sqlparser::ast::TableFactor::Table { name, .. } => {
+                                        Some(crate::builders::ast_helpers::extract_table_name(name))
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(""),
+                        };
+                        let schema = schemas.get(table_name).ok_or_else(|| {
+                            DiffSetParseError::TableNotFound(table_name.to_string())
+                        })?;
+                        // For patchset delete, we need the values to extract PK
+                        let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
+                        let values = delete_op.values().to_vec();
+                        let owned_delete = crate::builders::PatchDelete::from(schema.clone());
+                        builder = builder.delete(owned_delete, &values);
+                    }
+                    other => {
+                        return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
+                            "{other:?}"
+                        )));
+                    }
+                }
+            }
+
+            Ok(builder)
+        }
+    }
+
+    impl TryFrom<&[Statement]> for DiffSetBuilder<PatchsetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(statements: &[Statement]) -> Result<Self, Self::Error> {
+            Self::try_from_statements(statements)
+        }
+    }
+
+    impl TryFrom<Vec<Statement>> for DiffSetBuilder<PatchsetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(statements: Vec<Statement>) -> Result<Self, Self::Error> {
+            Self::try_from_statements(&statements)
+        }
+    }
+
+    impl FromStr for DiffSetBuilder<PatchsetFormat, CreateTable> {
+        type Err = DiffSetParseError;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let dialect = SQLiteDialect {};
+            let statements = Parser::parse_sql(&dialect, s)?;
+            Self::try_from_statements(&statements)
+        }
+    }
+
+    impl TryFrom<&str> for DiffSetBuilder<PatchsetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(s: &str) -> Result<Self, Self::Error> {
+            s.parse()
+        }
+    }
+
+    impl TryFrom<String> for DiffSetBuilder<PatchsetFormat, CreateTable> {
+        type Error = DiffSetParseError;
+
+        fn try_from(s: String) -> Result<Self, Self::Error> {
+            s.parse()
+        }
+    }
+
+    // =========================================================================
+    // Display for ChangeSet only (bidirectional conversion)
+    // =========================================================================
+
+    impl Display for DiffSetBuilder<ChangesetFormat, CreateTable> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let statements: Vec<Statement> = self.into();
+            for stmt in statements {
+                writeln!(f, "{stmt};")?;
+            }
+            Ok(())
+        }
+    }
+
+    impl From<&DiffSetBuilder<ChangesetFormat, CreateTable>> for Vec<Statement> {
+        fn from(builder: &DiffSetBuilder<ChangesetFormat, CreateTable>) -> Self {
+            use sqlparser::ast;
+
+            let mut statements = Vec::new();
+
+            // First, emit CREATE TABLE statements for all tables in order
+            for table in &builder.table_order {
+                // Skip tables with no operations
+                if builder.tables.get(table).is_some_and(|ops| !ops.is_empty()) {
+                    statements.push(Statement::CreateTable(table.clone()));
+                }
+            }
+
+            // Then, emit operations for each table
+            for table in &builder.table_order {
+                let rows = match builder.tables.get(table) {
+                    Some(rows) if !rows.is_empty() => rows,
+                    _ => continue,
+                };
+
+                for (_pk, op) in rows {
+                    match op {
+                        Operation::Insert(insert) => {
+                            let owned_insert =
+                                Insert::from_values(table.clone(), insert.values().to_vec());
+                            let ast_insert: ast::Insert = (&owned_insert).into();
+                            statements.push(Statement::Insert(ast_insert));
+                        }
+                        Operation::Delete(delete) => {
+                            let owned_delete =
+                                ChangeDelete::from_values(table.clone(), delete.values().to_vec());
+                            let ast_delete: ast::Delete = (&owned_delete).into();
+                            statements.push(Statement::Delete(ast_delete));
+                        }
+                        Operation::Update(update) => {
+                            let values = update.values();
+                            let old_values: Vec<_> =
+                                values.iter().map(|(old, _)| old.clone()).collect();
+                            let new_values: Vec<_> =
+                                values.iter().map(|(_, new)| new.clone()).collect();
+                            let owned_update =
+                                Update::from_values(table.clone(), old_values, new_values);
+                            let ast_update: ast::Update = (&owned_update).into();
+                            statements.push(Statement::Update(ast_update));
+                        }
+                    }
+                }
+            }
+
+            statements
+        }
+    }
+
+    impl From<DiffSetBuilder<ChangesetFormat, CreateTable>> for Vec<Statement> {
+        fn from(builder: DiffSetBuilder<ChangesetFormat, CreateTable>) -> Self {
+            (&builder).into()
+        }
+    }
+}
