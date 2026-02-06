@@ -32,8 +32,7 @@ use indexmap::IndexMap as IndexMapRaw;
 use crate::{
     SchemaWithPK,
     builders::{
-        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
-        format::Format,
+        ChangeDelete, ChangesetFormat, Insert, Operation, PatchsetFormat, Update, format::Format,
     },
     encoding::{Value, encode_value},
 };
@@ -179,7 +178,7 @@ fn session_row_order<V>(rows: &IndexMap<Vec<Value>, V>) -> Vec<usize> {
 /// Generic over the format `F` (Changeset or Patchset) and table schema `T`.
 #[derive(Debug, Clone, Eq)]
 pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
-    tables: IndexMap<T, IndexMap<Vec<Value>, Operation<T, F>>>,
+    tables: IndexMap<T, IndexMap<Vec<Value>, Operation<F>>>,
 }
 
 /// Custom PartialEq that ignores tables with empty operations.
@@ -214,8 +213,20 @@ impl<F: Format, T: SchemaWithPK> Default for DiffSetBuilder<F, T> {
     }
 }
 
+impl<T: SchemaWithPK> From<&DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+    fn from(builder: &DiffSetBuilder<ChangesetFormat, T>) -> Self {
+        builder.build()
+    }
+}
+
 impl<T: SchemaWithPK> From<DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
     fn from(builder: DiffSetBuilder<ChangesetFormat, T>) -> Self {
+        builder.build()
+    }
+}
+
+impl<T: SchemaWithPK> From<&DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+    fn from(builder: &DiffSetBuilder<PatchsetFormat, T>) -> Self {
         builder.build()
     }
 }
@@ -241,7 +252,7 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     ///
     /// If the table doesn't exist yet, it's inserted at the end of the
     /// `IndexMap`, preserving first-touch ordering.
-    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<T, F>> {
+    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<F>> {
         self.tables
             .entry(table.clone())
             .or_insert_with(IndexMap::default)
@@ -283,20 +294,15 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
         out.extend(table.name().as_bytes());
         out.push(0);
     }
-}
 
-impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T>
-where
-    Operation<T, F>: core::ops::Add<Output = Option<Operation<T, F>>>,
-{
     /// Add any operation, consolidating with existing operations on the same row.
-    fn add_operation(mut self, pk: Vec<Value>, new_op: Operation<T, F>) -> Self {
-        let table = match &new_op {
-            Operation::Insert(i) => i.as_ref().clone(),
-            Operation::Delete(d) => d.as_ref().clone(),
-            Operation::Update(u) => u.as_ref().clone(),
-        };
-        let rows = self.ensure_table(&table);
+    ///
+    /// The table schema is passed separately — operations are schema-less.
+    fn add_operation(mut self, table: &T, pk: Vec<Value>, new_op: Operation<F>) -> Self
+    where
+        Operation<F>: core::ops::Add<Output = Option<Operation<F>>>,
+    {
+        let rows = self.ensure_table(table);
 
         match rows.shift_remove_full(&pk) {
             None => {
@@ -304,19 +310,20 @@ where
             }
             Some((original_index, _removed_key, existing)) => {
                 // Special case: INSERT + UPDATE may change the PK
-                match (existing, new_op) {
-                    (Operation::Insert(ins), Operation::Update(upd)) => {
-                        let updated_insert = ins + upd;
-                        let new_pk = updated_insert.as_ref().extract_pk(updated_insert.values());
-                        // The new PK may collide with a different existing row
-                        // (e.g. when Value::Null ≡ Value::Undefined makes two
-                        // previously-distinct PKs equivalent). Remove any stale
-                        // entry first so shift_insert always sees a vacant slot.
-                        rows.shift_remove(&new_pk);
-                        let index = original_index.min(rows.len());
-                        rows.shift_insert(index, new_pk, Operation::Insert(updated_insert));
+                match (&existing, &new_op) {
+                    (Operation::Insert(_), Operation::Update(_)) => {
+                        // Apply update to insert values, then re-extract PK
+                        if let Some(combined) = existing + new_op {
+                            if let Operation::Insert(ref values) = combined {
+                                let new_pk = table.extract_pk(values);
+                                // The new PK may collide with a different existing row
+                                rows.shift_remove(&new_pk);
+                                let index = original_index.min(rows.len());
+                                rows.shift_insert(index, new_pk, combined);
+                            }
+                        }
                     }
-                    (existing, new_op) => {
+                    _ => {
                         // Standard consolidation
                         if let Some(combined) = existing + new_op {
                             // Re-insert at original position to preserve row ordering
@@ -339,14 +346,16 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     #[must_use]
     pub fn insert(self, insert: Insert<T>) -> Self {
         let pk = insert.as_ref().extract_pk(insert.values());
-        self.add_operation(pk, Operation::Insert(insert))
+        let table = insert.as_ref().clone();
+        self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
 
     /// Add a DELETE operation.
     #[must_use]
     pub fn delete(self, delete: ChangeDelete<T>) -> Self {
         let pk = delete.as_ref().extract_pk(delete.values());
-        self.add_operation(pk, Operation::Delete(delete))
+        let table = delete.as_ref().clone();
+        self.add_operation(&table, pk, Operation::Delete(delete.into_values()))
     }
 
     /// Add an UPDATE operation.
@@ -359,65 +368,9 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
             .map(|(old, _): &(_, _)| old.clone())
             .collect();
         let pk = update.as_ref().extract_pk(&old_values);
-        self.add_operation(pk, Operation::Update(update))
-    }
-
-    /// Build the changeset binary data.
-    ///
-    /// Returns the binary representation compatible with SQLite's session extension.
-    /// The format is:
-    /// - For each table with operations:
-    ///   - Table header (marker, column count, PK flags, name)
-    ///   - For each operation:
-    ///     - Operation code (INSERT=0x12, DELETE=0x09, UPDATE=0x17)
-    ///     - Indirect flag (always 0)
-    ///     - Values encoded according to the operation type
-    #[must_use]
-    pub fn build(self) -> Vec<u8> {
-        let mut out = Vec::new();
-
-        for (table, rows) in &self.tables {
-            if rows.is_empty() {
-                continue; // Skip tables with no operations
-            }
-
-            // Write table header
-            Self::write_table_header(&mut out, table);
-
-            // Write operations in SQLite's session hash table order
-            for idx in session_row_order(rows) {
-                let (_pk, op) = rows.get_index(idx).unwrap();
-                match op {
-                    Operation::Insert(insert) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0); // indirect flag
-                        for value in insert.values() {
-                            encode_value(&mut out, value);
-                        }
-                    }
-                    Operation::Delete(delete) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0); // indirect flag
-                        for value in delete.values() {
-                            encode_value(&mut out, value);
-                        }
-                    }
-                    Operation::Update(update) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0); // indirect flag
-                        // Write old values, then new values
-                        for (old, _new) in update.values() {
-                            encode_value(&mut out, old);
-                        }
-                        for (_old, new) in update.values() {
-                            encode_value(&mut out, new);
-                        }
-                    }
-                }
-            }
-        }
-
-        out
+        let table = update.as_ref().clone();
+        let values: Vec<(Value, Value)> = update.into();
+        self.add_operation(&table, pk, Operation::Update(values))
     }
 
     /// Insert a row using the schema and values directly.
@@ -457,7 +410,8 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     #[must_use]
     pub fn insert(self, insert: Insert<T>) -> Self {
         let pk = insert.as_ref().extract_pk(insert.values());
-        self.add_operation(pk, Operation::Insert(insert))
+        let table = insert.as_ref().clone();
+        self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
 
     /// Add a DELETE operation by specifying the table and primary key values.
@@ -487,8 +441,7 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// ```
     #[must_use]
     pub fn delete(self, table: T, pk: &[Value]) -> Self {
-        let delete = PatchDelete::from(table);
-        self.add_operation(pk.to_vec(), Operation::Delete(delete))
+        self.add_operation(&table, pk.to_vec(), Operation::Delete(()))
     }
 
     /// Add an UPDATE operation.
@@ -522,112 +475,9 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     #[must_use]
     pub fn update(self, update: Update<T, PatchsetFormat>) -> Self {
         let pk = update.as_ref().extract_pk(&update.new_values());
-        self.add_operation(pk, Operation::Update(update))
-    }
-
-    /// Build the patchset binary data.
-    ///
-    /// Returns the binary representation compatible with SQLite's session extension.
-    /// The format is:
-    /// - For each table with operations:
-    ///   - Table header (marker 'P', column count, PK flags, name)
-    ///   - For each operation:
-    ///     - Operation code (INSERT=0x12, DELETE=0x09, UPDATE=0x17)
-    ///     - Indirect flag (always 0)
-    ///     - Values encoded according to the operation type
-    ///
-    /// Note: Patchset format differs from changeset:
-    /// - DELETE stores only PK values
-    /// - UPDATE stores PK values (undefined for non-PK) and all new values
-    #[must_use]
-    pub fn build(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-
-        for (table, rows) in &self.tables {
-            if rows.is_empty() {
-                continue; // Skip tables with no operations
-            }
-
-            // Write table header
-            Self::write_table_header(&mut out, table);
-
-            // Get PK flags for this table
-            let num_cols = table.number_of_columns();
-            let mut pk_flags = alloc::vec![0u8; num_cols];
-            table.write_pk_flags(&mut pk_flags);
-
-            // Build a mapping from column index to position in pk vector.
-            // pk vector is sorted by pk_ordinal, so we need to find each column's
-            // position based on its ordinal rank among all PK columns.
-            let mut pk_col_to_pk_pos: alloc::vec::Vec<Option<usize>> = alloc::vec![None; num_cols];
-            {
-                // Collect (col_idx, pk_ordinal) for PK columns
-                let mut pk_cols: alloc::vec::Vec<(usize, u8)> = pk_flags
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
-                    .collect();
-                // Sort by ordinal to match how pk vector is ordered
-                pk_cols.sort_by_key(|(_, ord)| *ord);
-                // Now pk_cols[pos] = (col_idx, _), so pk[pos] corresponds to col_idx
-                for (pos, (col_idx, _)) in pk_cols.into_iter().enumerate() {
-                    pk_col_to_pk_pos[col_idx] = Some(pos);
-                }
-            }
-
-            // Write operations in SQLite's session hash table order
-            for idx in session_row_order(rows) {
-                let (pk, op) = rows.get_index(idx).unwrap();
-                match op {
-                    Operation::Insert(insert) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0); // indirect flag
-                        for value in insert.values() {
-                            encode_value(&mut out, value);
-                        }
-                    }
-                    Operation::Delete(_) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0); // indirect flag
-                        // Patchset DELETE: write PK values in column order
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &pk[pk_pos]);
-                                } else {
-                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
-                                }
-                            }
-                        }
-                    }
-                    Operation::Update(update) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0); // indirect flag
-                        // Patchset UPDATE old values: PK columns get their values from pk,
-                        // non-PK columns are undefined. Values must be in column order.
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                // PK column - write the actual PK value at correct position
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &pk[pk_pos]);
-                                } else {
-                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
-                                }
-                            } else {
-                                // Non-PK column - write undefined
-                                encode_value(&mut out, &crate::encoding::Value::Undefined);
-                            }
-                        }
-                        // Write new values
-                        for (_old, new) in update.values() {
-                            encode_value(&mut out, new);
-                        }
-                    }
-                }
-            }
-        }
-
-        out
+        let table = update.as_ref().clone();
+        let values: Vec<((), Value)> = update.into();
+        self.add_operation(&table, pk, Operation::Update(values))
     }
 
     /// Insert a row using the schema and values directly.
@@ -665,6 +515,148 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
 }
 
 // ============================================================================
+// Unified build implementation
+// ============================================================================
+
+impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
+    /// Build the changeset binary data.
+    ///
+    /// Returns the binary representation compatible with SQLite's session extension.
+    #[must_use]
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue;
+            }
+
+            Self::write_table_header(&mut out, table);
+
+            for idx in session_row_order(rows) {
+                let (_pk, op) = rows.get_index(idx).unwrap();
+                match op {
+                    Operation::Insert(values) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Delete(values) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Update(values) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0);
+                        // Write old values, then new values
+                        for (old, _new) in values {
+                            encode_value(&mut out, old);
+                        }
+                        for (_old, new) in values {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
+    /// Build the patchset binary data.
+    ///
+    /// Returns the binary representation compatible with SQLite's session extension.
+    #[must_use]
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue;
+            }
+
+            Self::write_table_header(&mut out, table);
+
+            // Get PK flags for this table
+            let num_cols = table.number_of_columns();
+            let mut pk_flags = alloc::vec![0u8; num_cols];
+            table.write_pk_flags(&mut pk_flags);
+
+            // Build a mapping from column index to position in pk vector.
+            let mut pk_col_to_pk_pos: alloc::vec::Vec<Option<usize>> = alloc::vec![None; num_cols];
+            {
+                let mut pk_cols: alloc::vec::Vec<(usize, u8)> = pk_flags
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
+                    .collect();
+                pk_cols.sort_by_key(|(_, ord)| *ord);
+                for (pos, (col_idx, _)) in pk_cols.into_iter().enumerate() {
+                    pk_col_to_pk_pos[col_idx] = Some(pos);
+                }
+            }
+
+            for idx in session_row_order(rows) {
+                let (pk, op) = rows.get_index(idx).unwrap();
+                match op {
+                    Operation::Insert(values) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, value);
+                        }
+                    }
+                    Operation::Delete(()) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0);
+                        // Patchset DELETE: write PK values in column order
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_value(&mut out, &pk[pk_pos]);
+                                } else {
+                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                }
+                            }
+                        }
+                    }
+                    Operation::Update(values) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0);
+                        // Patchset UPDATE old values: PK columns get their values from pk,
+                        // non-PK columns are undefined.
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_value(&mut out, &pk[pk_pos]);
+                                } else {
+                                    encode_value(&mut out, &crate::encoding::Value::Undefined);
+                                }
+                            } else {
+                                encode_value(&mut out, &crate::encoding::Value::Undefined);
+                            }
+                        }
+                        // Write new values
+                        for ((), new) in values {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+// ============================================================================
 // Reverse implementation for DiffSetBuilder
 // ============================================================================
 
@@ -676,20 +668,19 @@ impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
     fn reverse(self) -> Self::Output {
         let mut reversed: DiffSetBuilder<ChangesetFormat, T> = DiffSetBuilder::new();
 
-        // Process tables in insertion order (preserved by IndexMap)
-        for (_table, rows) in self.tables {
+        for (table, rows) in self.tables {
             for (_pk, op) in rows {
-                match op.reverse() {
-                    Operation::Insert(insert) => {
-                        reversed = reversed.insert(insert);
+                let rev_op = op.reverse();
+                // Recompute PK for reversed operation (INSERT↔DELETE swap values)
+                let rev_pk = match &rev_op {
+                    Operation::Insert(values) => table.extract_pk(values),
+                    Operation::Delete(values) => table.extract_pk(values),
+                    Operation::Update(pairs) => {
+                        let old_vals: Vec<_> = pairs.iter().map(|(old, _)| old.clone()).collect();
+                        table.extract_pk(&old_vals)
                     }
-                    Operation::Delete(delete) => {
-                        reversed = reversed.delete(delete);
-                    }
-                    Operation::Update(update) => {
-                        reversed = reversed.update(update);
-                    }
-                }
+                };
+                reversed = reversed.add_operation(&table, rev_pk, rev_op);
             }
         }
 
@@ -897,54 +888,43 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_reverse_insert_becomes_delete() {
-        let table = TestTable::new("users", 2, 0);
-        let insert = Insert::from(table.clone())
-            .set(0, 1i64)
-            .unwrap()
-            .set(1, "alice")
-            .unwrap();
-
-        let delete: ChangeDelete<TestTable> = insert.reverse();
-        assert_eq!(
-            delete.values(),
-            &[Value::Integer(1), Value::Text("alice".into())]
-        );
+    fn test_reverse_operation_insert_becomes_delete() {
+        let op: Operation<ChangesetFormat> =
+            Operation::Insert(vec![Value::Integer(1), Value::Text("alice".into())]);
+        let reversed = op.reverse();
+        assert!(matches!(reversed, Operation::Delete(_)));
+        if let Operation::Delete(values) = reversed {
+            assert_eq!(values, vec![Value::Integer(1), Value::Text("alice".into())]);
+        }
     }
 
     #[test]
-    fn test_reverse_delete_becomes_insert() {
-        let table = TestTable::new("users", 2, 0);
-        let delete = ChangeDelete::from(table.clone())
-            .set(0, 1i64)
-            .unwrap()
-            .set(1, "alice")
-            .unwrap();
-
-        let insert: Insert<TestTable> = delete.reverse();
-        assert_eq!(
-            insert.values(),
-            &[Value::Integer(1), Value::Text("alice".into())]
-        );
+    fn test_reverse_operation_delete_becomes_insert() {
+        let op: Operation<ChangesetFormat> =
+            Operation::Delete(vec![Value::Integer(1), Value::Text("alice".into())]);
+        let reversed = op.reverse();
+        assert!(matches!(reversed, Operation::Insert(_)));
+        if let Operation::Insert(values) = reversed {
+            assert_eq!(values, vec![Value::Integer(1), Value::Text("alice".into())]);
+        }
     }
 
     #[test]
-    fn test_reverse_update_swaps_old_new() {
-        let table = TestTable::new("users", 2, 0);
-        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
-            .set(0, 1i64, 1i64)
-            .unwrap()
-            .set(1, "alice", "bob")
-            .unwrap();
-
-        let reversed: Update<TestTable, ChangesetFormat> = update.reverse();
-        let values = reversed.values();
-        // Old and new should be swapped
-        assert_eq!(values[0], (Value::Integer(1), Value::Integer(1)));
-        assert_eq!(
-            values[1],
-            (Value::Text("bob".into()), Value::Text("alice".into()))
-        );
+    fn test_reverse_operation_update_swaps_old_new() {
+        let op: Operation<ChangesetFormat> = Operation::Update(vec![
+            (Value::Integer(1), Value::Integer(1)),
+            (Value::Text("alice".into()), Value::Text("bob".into())),
+        ]);
+        let reversed = op.reverse();
+        if let Operation::Update(values) = reversed {
+            assert_eq!(values[0], (Value::Integer(1), Value::Integer(1)));
+            assert_eq!(
+                values[1],
+                (Value::Text("bob".into()), Value::Text("alice".into()))
+            );
+        } else {
+            panic!("Expected Update operation");
+        }
     }
 
     #[test]
@@ -1004,8 +984,7 @@ mod tests {
         assert_eq!(reversed.len(), 1);
         // The reversed builder should have an update operation with swapped values
         let rows = reversed.tables.get(&table).unwrap();
-        if let Operation::Update(update) = rows.values().next().unwrap() {
-            let values = update.values();
+        if let Operation::Update(values) = rows.values().next().unwrap() {
             assert_eq!(
                 values[1],
                 (Value::Text("bob".into()), Value::Text("alice".into()))
@@ -1025,13 +1004,14 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert.clone());
+        let original_values = insert.values().to_vec();
+        let builder = ChangesetBuilder::new().insert(insert);
         let double_reversed = builder.reverse().reverse();
 
         assert_eq!(double_reversed.len(), 1);
         let rows = double_reversed.tables.get(&table).unwrap();
-        if let Operation::Insert(reversed_insert) = rows.values().next().unwrap() {
-            assert_eq!(reversed_insert.values(), insert.values());
+        if let Operation::Insert(values) = rows.values().next().unwrap() {
+            assert_eq!(values, &original_values);
         } else {
             panic!("Expected Insert operation");
         }
@@ -1514,24 +1494,22 @@ mod sqlparser_impl {
 
                 for (_pk, op) in rows {
                     match op {
-                        Operation::Insert(insert) => {
-                            let owned_insert =
-                                Insert::from_values(table.clone(), insert.values().to_vec());
+                        Operation::Insert(values) => {
+                            let owned_insert = Insert::from_values(table.clone(), values.clone());
                             let ast_insert: ast::Insert = (&owned_insert).into();
                             statements.push(Statement::Insert(ast_insert));
                         }
-                        Operation::Delete(delete) => {
+                        Operation::Delete(values) => {
                             let owned_delete =
-                                ChangeDelete::from_values(table.clone(), delete.values().to_vec());
+                                ChangeDelete::from_values(table.clone(), values.clone());
                             let ast_delete: ast::Delete = (&owned_delete).into();
                             statements.push(Statement::Delete(ast_delete));
                         }
-                        Operation::Update(update) => {
-                            let values = update.values();
+                        Operation::Update(pairs) => {
                             let old_values: Vec<_> =
-                                values.iter().map(|(old, _)| old.clone()).collect();
+                                pairs.iter().map(|(old, _)| old.clone()).collect();
                             let new_values: Vec<_> =
-                                values.iter().map(|(_, new)| new.clone()).collect();
+                                pairs.iter().map(|(_, new)| new.clone()).collect();
                             let owned_update =
                                 Update::from_values(table.clone(), old_values, new_values);
                             let ast_update: ast::Update = (&owned_update).into();

@@ -1,62 +1,23 @@
-//! Submodule defining a builder for an delete operation.
+//! Submodule defining a builder for a delete operation.
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::ops::Add;
 
-use crate::{
-    DynTable,
-    builders::{ChangesetFormat, Insert, PatchsetFormat, Update, operation::Reverse},
-    encoding::Value,
-};
+use crate::{DynTable, encoding::Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Represents a delete operation in changeset format.
+///
+/// Stores the full old-row values for all columns.
 pub struct ChangeDelete<T: DynTable> {
     table: T,
     /// Old values for the deleted row.
     values: Vec<Value>,
 }
 
-impl<T: DynTable> Reverse for ChangeDelete<T> {
-    type Output = crate::builders::Insert<T>;
-
-    fn reverse(self) -> Self::Output {
-        let mut insert = crate::builders::Insert::from(self.table);
-        for (idx, value) in self.values.into_iter().enumerate() {
-            // Skip Undefined values
-            if !value.is_undefined() {
-                insert = insert.set(idx, value).unwrap();
-            }
-        }
-        insert
-    }
-}
-
 impl<T: DynTable> AsRef<T> for ChangeDelete<T> {
     fn as_ref(&self) -> &T {
         &self.table
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Represents a delete operation in patchset format.
-///
-/// This is a marker struct — patchset deletes only need to identify the row by PK.
-/// It is not constructible outside the crate (the field is private).
-pub struct PatchDelete<T: DynTable> {
-    pub(crate) table: T,
-}
-
-impl<T: DynTable> AsRef<T> for PatchDelete<T> {
-    fn as_ref(&self) -> &T {
-        &self.table
-    }
-}
-
-impl<T: DynTable> From<T> for PatchDelete<T> {
-    fn from(table: T) -> Self {
-        Self { table }
     }
 }
 
@@ -74,13 +35,6 @@ impl<T: DynTable> ChangeDelete<T> {
     /// Create a delete operation with the given values.
     pub(super) fn from_values(table: T, values: Vec<Value>) -> Self {
         Self { table, values }
-    }
-
-    /// Replaces the old values with the provided ones.
-    pub(super) fn replace_values(mut self, values: Vec<Value>) -> Self {
-        assert_eq!(values.len(), self.values.len());
-        self.values = values;
-        self
     }
 
     /// Sets the value for a specific column by index.
@@ -146,94 +100,10 @@ impl<T: DynTable> ChangeDelete<T> {
     pub fn values(&self) -> &[Value] {
         &self.values
     }
-}
 
-// ============================================================================
-// DELETE + INSERT combinations
-// ============================================================================
-
-/// DELETE + INSERT (changeset): If values differ → UPDATE, if same → cancel out
-impl<T: DynTable + Clone> Add<Insert<T>> for ChangeDelete<T> {
-    type Output = Option<Update<T, ChangesetFormat>>;
-
-    fn add(self, rhs: Insert<T>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        if self.values == *rhs.values() {
-            None // Same values - cancel out
-        } else {
-            // Different values - becomes UPDATE from original to new
-            let mut update: Update<T, ChangesetFormat> = Update::from(self.table);
-            for (idx, (old, new)) in self.values.into_iter().zip(rhs.into_values()).enumerate() {
-                // Skip if either value is Undefined
-                if !old.is_undefined() && !new.is_undefined() {
-                    update = update.set(idx, old, new).unwrap();
-                }
-            }
-            Some(update)
-        }
-    }
-}
-
-/// DELETE + INSERT (patchset): Always becomes UPDATE (can't compare old values)
-impl<T: DynTable + Clone> Add<Insert<T>> for PatchDelete<T> {
-    type Output = Update<T, PatchsetFormat>;
-
-    fn add(self, rhs: Insert<T>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        let mut update: Update<T, PatchsetFormat> = Update::from(self.table);
-        for (idx, new) in rhs.into_values().into_iter().enumerate() {
-            // Skip Undefined values - they represent unchanged columns
-            if !new.is_undefined() {
-                update = update.set(idx, new).unwrap();
-            }
-        }
-        update
-    }
-}
-
-// ============================================================================
-// DELETE + UPDATE combinations
-// ============================================================================
-
-/// DELETE + UPDATE: Ignore the new update, keep DELETE
-impl<T: DynTable> Add<Update<T, ChangesetFormat>> for ChangeDelete<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Update<T, ChangesetFormat>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
-    }
-}
-
-impl<T: DynTable> Add<Update<T, PatchsetFormat>> for PatchDelete<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Update<T, PatchsetFormat>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
-    }
-}
-
-// ============================================================================
-// DELETE + DELETE combinations
-// ============================================================================
-
-/// DELETE + DELETE: Ignore the new delete, keep first
-impl<T: DynTable> Add<ChangeDelete<T>> for ChangeDelete<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
-    }
-}
-
-impl<T: DynTable> Add<PatchDelete<T>> for PatchDelete<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
+    /// Consumes self and returns the values.
+    pub fn into_values(self) -> Vec<Value> {
+        self.values
     }
 }
 

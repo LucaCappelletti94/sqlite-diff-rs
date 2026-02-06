@@ -128,11 +128,7 @@ pub fn byte_diff_report(label: &str, expected: &[u8], actual: &[u8]) -> String {
 /// # Panics
 ///
 /// Panics with a detailed diff report if the bytes don't match.
-pub fn assert_bit_parity(
-    sql_statements: &[&str],
-    our_changeset: Vec<u8>,
-    our_patchset: Vec<u8>,
-) {
+pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: Vec<u8>, our_patchset: Vec<u8>) {
     let (sqlite_changeset, sqlite_patchset) = session_changeset_and_patchset(sql_statements);
 
     let cs_report = byte_diff_report("changeset", &sqlite_changeset, &our_changeset);
@@ -178,9 +174,7 @@ pub fn apply_changeset(conn: &Connection, changeset: &[u8]) -> Result<(), rusqli
     conn.apply_strm(
         &mut cursor,
         None::<fn(&str) -> bool>,
-        |_conflict_type: ConflictType, _item: ChangesetItem| {
-            ConflictAction::SQLITE_CHANGESET_ABORT
-        },
+        |_conflict_type: ConflictType, _item: ChangesetItem| ConflictAction::SQLITE_CHANGESET_ABORT,
     )
 }
 

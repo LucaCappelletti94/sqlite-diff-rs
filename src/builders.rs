@@ -11,7 +11,6 @@ mod update_operation;
 
 pub use change::{ChangeSet, DiffSetBuilder, PatchSet};
 pub use delete_operation::ChangeDelete;
-pub(crate) use delete_operation::PatchDelete;
 pub use format::{ChangesetFormat, PatchsetFormat};
 pub use insert_operation::Insert;
 use operation::Operation;

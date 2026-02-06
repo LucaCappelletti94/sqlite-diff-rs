@@ -189,10 +189,8 @@ pub fn run_differential_test(sql: &str) {
                     continue;
                 };
                 // Extract PK values for patchset delete
-                let pk: alloc::vec::Vec<_> = schema
-                    .extract_pk(our_delete.values())
-                    .into_iter()
-                    .collect();
+                let pk: alloc::vec::Vec<_> =
+                    schema.extract_pk(our_delete.values()).into_iter().collect();
                 our_changeset_builder = our_changeset_builder.delete(our_delete);
                 our_patchset_builder = our_patchset_builder.delete(schema, &pk);
             }

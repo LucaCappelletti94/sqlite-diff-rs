@@ -5,10 +5,7 @@ use alloc::vec::Vec;
 
 use crate::{
     DynTable,
-    builders::{
-        ChangeDelete, ChangesetFormat, Insert, PatchDelete, PatchsetFormat, format::Format,
-        operation::Reverse,
-    },
+    builders::{ChangesetFormat, PatchsetFormat, format::Format},
     encoding::Value,
 };
 
@@ -37,72 +34,6 @@ impl<T: DynTable, F: Format> Update<T, F> {
     /// Returns a reference to the (old, new) value pairs.
     pub fn values(&self) -> &[(F::Old, Value)] {
         &self.values
-    }
-}
-
-/// If an insert happens after an update, the new chage is ignored.
-impl<T: DynTable, F: Format> core::ops::Add<Insert<T>> for Update<T, F> {
-    type Output = Self;
-
-    fn add(self, rhs: Insert<T>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
-    }
-}
-
-/// UPDATE + DELETE: In the case of a patchset, the DELETE takes precedence.
-impl<T: DynTable> core::ops::Add<PatchDelete<T>> for Update<T, PatchsetFormat> {
-    type Output = PatchDelete<T>;
-
-    fn add(self, rhs: PatchDelete<T>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        rhs
-    }
-}
-
-/// UPDATE + DELETE: In the case of a changeset, the DELETE old values are taken
-/// from the UPDATE operation.
-impl<T: DynTable> core::ops::Add<ChangeDelete<T>> for Update<T, ChangesetFormat> {
-    type Output = ChangeDelete<T>;
-
-    fn add(self, rhs: ChangeDelete<T>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        rhs.replace_values(self.values.into_iter().map(|(old, _new)| old).collect())
-    }
-}
-
-/// UPDATE + UPDATE: Keep original old values, use final new values.
-impl<T: DynTable, F: Format> core::ops::Add<Update<T, F>> for Update<T, F> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        let new_values: Vec<(F::Old, Value)> = rhs.into();
-        Update {
-            table: self.table,
-            values: self
-                .values
-                .into_iter()
-                .zip(new_values)
-                .map(|((old, _mid), (_mid2, new))| (old, new))
-                .collect(),
-        }
-    }
-}
-
-impl<T: DynTable> Reverse for Update<T, ChangesetFormat> {
-    type Output = Update<T, ChangesetFormat>;
-
-    fn reverse(self) -> Self::Output {
-        let reversed_values = self
-            .values
-            .into_iter()
-            .map(|(old, new)| (new, old))
-            .collect();
-        Update {
-            table: self.table,
-            values: reversed_values,
-        }
     }
 }
 

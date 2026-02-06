@@ -2,13 +2,8 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::ops::Add;
 
-use crate::{
-    DynTable,
-    builders::{Update, format::Format, operation::Reverse},
-    encoding::Value,
-};
+use crate::{DynTable, encoding::Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Builder for an insert operation.
@@ -17,49 +12,6 @@ pub struct Insert<T: DynTable> {
     table: T,
     /// Values for the inserted row.
     values: Vec<Value>,
-}
-
-/// When we add an Insert to another Insert, we just keep the first one.
-impl<T: DynTable> Add<Insert<T>> for Insert<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        self
-    }
-}
-
-/// When we add an Update to an Insert, we apply the updates to the insert values.
-impl<T: DynTable, F: Format> Add<Update<T, F>> for Insert<T> {
-    type Output = Self;
-
-    fn add(self, rhs: Update<T, F>) -> Self::Output {
-        assert_eq!(&self.table, rhs.as_ref());
-        let mut result = self;
-        let values: Vec<(F::Old, Value)> = rhs.into();
-        for (idx, (_old, new)) in values.into_iter().enumerate() {
-            // Only update if new value is defined (not Undefined)
-            // This preserves the original INSERT value for columns not modified by UPDATE
-            if !matches!(new, Value::Undefined) {
-                result.values[idx] = new;
-            }
-        }
-        result
-    }
-}
-
-/// When we add a delete to an Insert, they cancel each other out.
-impl<T: DynTable> Add<crate::builders::ChangeDelete<T>> for Insert<T> {
-    type Output = Option<Self>;
-    fn add(self, _rhs: crate::builders::ChangeDelete<T>) -> Self::Output {
-        None
-    }
-}
-impl<T: DynTable> Add<crate::builders::PatchDelete<T>> for Insert<T> {
-    type Output = Option<Self>;
-    fn add(self, _rhs: crate::builders::PatchDelete<T>) -> Self::Output {
-        None
-    }
 }
 
 impl<T: DynTable> From<T> for Insert<T> {
@@ -158,21 +110,6 @@ impl<T: DynTable> Insert<T> {
     /// ```
     pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
         self.set(col_idx, Value::Null)
-    }
-}
-
-impl<T: DynTable> Reverse for Insert<T> {
-    type Output = crate::builders::ChangeDelete<T>;
-
-    fn reverse(self) -> Self::Output {
-        let mut delete = crate::builders::ChangeDelete::from(self.table);
-        for (idx, value) in self.values.into_iter().enumerate() {
-            // Skip Undefined values
-            if !value.is_undefined() {
-                delete = delete.set(idx, value).unwrap();
-            }
-        }
-        delete
     }
 }
 

@@ -1,48 +1,32 @@
-//! Enumeration of operations (insert, delete, update) for changesets and patchsets,
-//! defined so that only valid operations can be stored in the enum.
+//! Schema-less operation enum for internal use in `DiffSetBuilder`.
+//!
+//! Operations store only row data (values), not the table schema `T`.
+//! The schema lives as the key of the outer `IndexMap` in `DiffSetBuilder`.
+//! All consolidation logic (Operation + Operation) is defined here.
+
+use alloc::vec::Vec;
 
 use crate::{
-    DynTable,
-    builders::{
-        ChangeDelete, ChangesetFormat, Insert, PatchDelete, PatchsetFormat, Update, format::Format,
-    },
+    builders::{ChangesetFormat, PatchsetFormat, format::Format},
+    encoding::Value,
 };
 
+/// A schema-less database operation, parameterized only by the format `F`.
+///
+/// The table schema `T` is NOT stored here — it lives as the key in
+/// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value>, Operation<F>>>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// The type of database operation.
-pub(crate) enum Operation<T: DynTable, F: Format> {
-    /// A row was inserted, or it was inserted and the updated,
-    /// which makes it indistinguishable from a pure insert in patchsets.
-    Insert(Insert<T>),
-    /// A row was deleted.
-    Delete(F::DeleteOps<T>),
-    /// A row was updated.
-    Update(Update<T, F>),
-}
-
-impl<T: DynTable, F: Format> From<Insert<T>> for Operation<T, F> {
-    fn from(insert: Insert<T>) -> Self {
-        Self::Insert(insert)
-    }
-}
-impl<T: DynTable, F: Format> From<Update<T, F>> for Operation<T, F> {
-    fn from(update: Update<T, F>) -> Self {
-        Self::Update(update)
-    }
-}
-impl<T: DynTable, F: Format<DeleteOps<T> = PatchDelete<T>>> From<PatchDelete<T>>
-    for Operation<T, F>
-{
-    fn from(delete: PatchDelete<T>) -> Self {
-        Self::Delete(delete)
-    }
-}
-impl<T: DynTable, F: Format<DeleteOps<T> = ChangeDelete<T>>> From<ChangeDelete<T>>
-    for Operation<T, F>
-{
-    fn from(delete: ChangeDelete<T>) -> Self {
-        Self::Delete(delete)
-    }
+pub(crate) enum Operation<F: Format> {
+    /// A row was inserted. Stores all column values.
+    Insert(Vec<Value>),
+    /// A row was deleted. Stores format-specific delete data:
+    /// - Changeset: `Vec<Value>` (full old-row values)
+    /// - Patchset: `()` (PK is stored as the IndexMap key)
+    Delete(F::DeleteData),
+    /// A row was updated. Stores `(old, new)` pairs per column.
+    /// - Changeset: `(Value, Value)` per column
+    /// - Patchset: `((), Value)` per column
+    Update(Vec<(F::Old, Value)>),
 }
 
 /// Trait for reversing operations.
@@ -54,14 +38,19 @@ pub trait Reverse {
     fn reverse(self) -> Self::Output;
 }
 
-impl<T: DynTable> Reverse for Operation<T, ChangesetFormat> {
-    type Output = Operation<T, ChangesetFormat>;
+impl Reverse for Operation<ChangesetFormat> {
+    type Output = Self;
 
     fn reverse(self) -> Self::Output {
         match self {
-            Operation::Insert(insert) => insert.reverse().into(),
-            Operation::Delete(delete) => delete.reverse().into(),
-            Operation::Update(update) => update.reverse().into(),
+            // INSERT reversed → DELETE (same values)
+            Operation::Insert(values) => Operation::Delete(values),
+            // DELETE reversed → INSERT (same values)
+            Operation::Delete(values) => Operation::Insert(values),
+            // UPDATE reversed → UPDATE with old/new swapped
+            Operation::Update(values) => {
+                Operation::Update(values.into_iter().map(|(old, new)| (new, old)).collect())
+            }
         }
     }
 }
@@ -70,29 +59,66 @@ impl<T: DynTable> Reverse for Operation<T, ChangesetFormat> {
 // Operation + Operation for Changeset
 // ============================================================================
 
-impl<T: DynTable + Clone> core::ops::Add for Operation<T, ChangesetFormat> {
+impl core::ops::Add for Operation<ChangesetFormat> {
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             // INSERT + INSERT: keep first
-            (Operation::Insert(lhs), Operation::Insert(rhs)) => Some(Operation::Insert(lhs + rhs)),
-            // INSERT + UPDATE: apply update to insert
-            (Operation::Insert(lhs), Operation::Update(rhs)) => Some(Operation::Insert(lhs + rhs)),
+            (Operation::Insert(lhs), Operation::Insert(_rhs)) => Some(Operation::Insert(lhs)),
+
+            // INSERT + UPDATE: apply update to insert values
+            (Operation::Insert(mut values), Operation::Update(updates)) => {
+                for (idx, (_old, new)) in updates.into_iter().enumerate() {
+                    if !matches!(new, Value::Undefined) {
+                        values[idx] = new;
+                    }
+                }
+                Some(Operation::Insert(values))
+            }
+
             // INSERT + DELETE: cancel out
-            (Operation::Insert(lhs), Operation::Delete(rhs)) => (lhs + rhs).map(Operation::Insert),
+            (Operation::Insert(_), Operation::Delete(_)) => None,
+
             // UPDATE + INSERT: keep update
-            (Operation::Update(lhs), Operation::Insert(rhs)) => Some(Operation::Update(lhs + rhs)),
-            // UPDATE + UPDATE: merge
-            (Operation::Update(lhs), Operation::Update(rhs)) => Some(Operation::Update(lhs + rhs)),
+            (Operation::Update(lhs), Operation::Insert(_rhs)) => Some(Operation::Update(lhs)),
+
+            // UPDATE + UPDATE: keep original old, use final new
+            (Operation::Update(lhs), Operation::Update(rhs)) => {
+                let merged = lhs
+                    .into_iter()
+                    .zip(rhs)
+                    .map(|((old, _mid), (_mid2, new))| (old, new))
+                    .collect();
+                Some(Operation::Update(merged))
+            }
+
             // UPDATE + DELETE: delete with original old values
-            (Operation::Update(lhs), Operation::Delete(rhs)) => Some(Operation::Delete(lhs + rhs)),
+            (Operation::Update(upd), Operation::Delete(_del)) => {
+                let old_values = upd.into_iter().map(|(old, _new)| old).collect();
+                Some(Operation::Delete(old_values))
+            }
+
             // DELETE + INSERT: update if different, cancel if same
-            (Operation::Delete(lhs), Operation::Insert(rhs)) => (lhs + rhs).map(Operation::Update),
+            (Operation::Delete(del_values), Operation::Insert(ins_values)) => {
+                if del_values == ins_values {
+                    None // Same values — cancel out
+                } else {
+                    // Different — becomes UPDATE from old to new
+                    let update_values = del_values
+                        .into_iter()
+                        .zip(ins_values)
+                        .map(|(old, new)| (old, new))
+                        .collect();
+                    Some(Operation::Update(update_values))
+                }
+            }
+
             // DELETE + UPDATE: keep delete
-            (Operation::Delete(lhs), Operation::Update(rhs)) => Some(Operation::Delete(lhs + rhs)),
+            (Operation::Delete(lhs), Operation::Update(_rhs)) => Some(Operation::Delete(lhs)),
+
             // DELETE + DELETE: keep first
-            (Operation::Delete(lhs), Operation::Delete(rhs)) => Some(Operation::Delete(lhs + rhs)),
+            (Operation::Delete(lhs), Operation::Delete(_rhs)) => Some(Operation::Delete(lhs)),
         }
     }
 }
@@ -101,29 +127,54 @@ impl<T: DynTable + Clone> core::ops::Add for Operation<T, ChangesetFormat> {
 // Operation + Operation for Patchset
 // ============================================================================
 
-impl<T: DynTable + Clone> core::ops::Add for Operation<T, PatchsetFormat> {
+impl core::ops::Add for Operation<PatchsetFormat> {
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             // INSERT + INSERT: keep first
-            (Operation::Insert(lhs), Operation::Insert(rhs)) => Some(Operation::Insert(lhs + rhs)),
-            // INSERT + UPDATE: apply update to insert
-            (Operation::Insert(lhs), Operation::Update(rhs)) => Some(Operation::Insert(lhs + rhs)),
+            (Operation::Insert(lhs), Operation::Insert(_rhs)) => Some(Operation::Insert(lhs)),
+
+            // INSERT + UPDATE: apply update to insert values
+            (Operation::Insert(mut values), Operation::Update(updates)) => {
+                for (idx, ((), new)) in updates.into_iter().enumerate() {
+                    if !matches!(new, Value::Undefined) {
+                        values[idx] = new;
+                    }
+                }
+                Some(Operation::Insert(values))
+            }
+
             // INSERT + DELETE: cancel out
-            (Operation::Insert(lhs), Operation::Delete(rhs)) => (lhs + rhs).map(Operation::Insert),
+            (Operation::Insert(_), Operation::Delete(())) => None,
+
             // UPDATE + INSERT: keep update
-            (Operation::Update(lhs), Operation::Insert(rhs)) => Some(Operation::Update(lhs + rhs)),
-            // UPDATE + UPDATE: merge
-            (Operation::Update(lhs), Operation::Update(rhs)) => Some(Operation::Update(lhs + rhs)),
+            (Operation::Update(lhs), Operation::Insert(_rhs)) => Some(Operation::Update(lhs)),
+
+            // UPDATE + UPDATE: keep original old (unit), use final new
+            (Operation::Update(lhs), Operation::Update(rhs)) => {
+                let merged = lhs
+                    .into_iter()
+                    .zip(rhs)
+                    .map(|((old, _mid), (_mid2, new))| (old, new))
+                    .collect();
+                Some(Operation::Update(merged))
+            }
+
             // UPDATE + DELETE: keep delete (patchset doesn't need old values)
-            (Operation::Update(lhs), Operation::Delete(rhs)) => Some(Operation::Delete(lhs + rhs)),
-            // DELETE + INSERT: always becomes update (patchset can't compare)
-            (Operation::Delete(lhs), Operation::Insert(rhs)) => Some(Operation::Update(lhs + rhs)),
+            (Operation::Update(_upd), Operation::Delete(del)) => Some(Operation::Delete(del)),
+
+            // DELETE + INSERT: always becomes update (patchset can't compare old values)
+            (Operation::Delete(()), Operation::Insert(ins_values)) => {
+                let update_values = ins_values.into_iter().map(|new| ((), new)).collect();
+                Some(Operation::Update(update_values))
+            }
+
             // DELETE + UPDATE: keep delete
-            (Operation::Delete(lhs), Operation::Update(rhs)) => Some(Operation::Delete(lhs + rhs)),
+            (Operation::Delete(lhs), Operation::Update(_rhs)) => Some(Operation::Delete(lhs)),
+
             // DELETE + DELETE: keep first
-            (Operation::Delete(lhs), Operation::Delete(rhs)) => Some(Operation::Delete(lhs + rhs)),
+            (Operation::Delete(lhs), Operation::Delete(_rhs)) => Some(Operation::Delete(lhs)),
         }
     }
 }

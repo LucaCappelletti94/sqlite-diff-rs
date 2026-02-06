@@ -304,7 +304,9 @@ fn test_sqlite_table_order_after_cancel_and_readd_changeset() {
     if table_names[0] == "table_a" {
         eprintln!("RESULT: SQLite preserves original table ordering (table_a first)");
     } else {
-        eprintln!("RESULT: SQLite reorders tables (table_b first after table_a cancelled and re-added)");
+        eprintln!(
+            "RESULT: SQLite reorders tables (table_b first after table_a cancelled and re-added)"
+        );
     }
 
     // Verify both tables are present regardless of order
@@ -409,22 +411,24 @@ fn test_sqlite_table_order_three_tables_cancel_first_patchset() {
 /// operations cancel out on a single table.
 #[test]
 fn test_our_builder_empty_after_cancel() {
-    use sqlite_diff_rs::{ChangeSet, Insert, ChangeDelete};
+    use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert};
     use sqlparser::ast::CreateTable;
 
     let schema = parse_create_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     // Changeset: INSERT + DELETE should produce empty output
     let insert = Insert::from(schema.clone())
-        .set(0, 1i64).unwrap()
-        .set(1, "Alice").unwrap();
+        .set(0, 1i64)
+        .unwrap()
+        .set(1, "Alice")
+        .unwrap();
     let delete = ChangeDelete::from(schema.clone())
-        .set(0, 1i64).unwrap()
-        .set(1, "Alice").unwrap();
+        .set(0, 1i64)
+        .unwrap()
+        .set(1, "Alice")
+        .unwrap();
 
-    let changeset_builder: ChangeSet<CreateTable> = ChangeSet::new()
-        .insert(insert)
-        .delete(delete);
+    let changeset_builder: ChangeSet<CreateTable> = ChangeSet::new().insert(insert).delete(delete);
     let changeset_bytes: Vec<u8> = changeset_builder.into();
 
     // Should match SQLite: empty bytes
@@ -444,7 +448,7 @@ fn test_our_builder_empty_after_cancel() {
 /// Verify table ordering parity with SQLite after cancel + re-add.
 #[test]
 fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
-    use sqlite_diff_rs::{ChangeSet, Insert, ChangeDelete, ParsedDiffSet};
+    use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert, ParsedDiffSet};
     use sqlparser::ast::CreateTable;
 
     let schema_a = parse_create_table("CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)");
@@ -452,17 +456,25 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
 
     // Build: insert A, insert B, delete A, insert A again
     let insert_a1 = Insert::from(schema_a.clone())
-        .set(0, 1i64).unwrap()
-        .set(1, "a1").unwrap();
+        .set(0, 1i64)
+        .unwrap()
+        .set(1, "a1")
+        .unwrap();
     let insert_b1 = Insert::from(schema_b.clone())
-        .set(0, 1i64).unwrap()
-        .set(1, "b1").unwrap();
+        .set(0, 1i64)
+        .unwrap()
+        .set(1, "b1")
+        .unwrap();
     let delete_a1 = ChangeDelete::from(schema_a.clone())
-        .set(0, 1i64).unwrap()
-        .set(1, "a1").unwrap();
+        .set(0, 1i64)
+        .unwrap()
+        .set(1, "a1")
+        .unwrap();
     let insert_a2 = Insert::from(schema_a.clone())
-        .set(0, 2i64).unwrap()
-        .set(1, "a2").unwrap();
+        .set(0, 2i64)
+        .unwrap()
+        .set(1, "a2")
+        .unwrap();
 
     let our_builder: ChangeSet<CreateTable> = ChangeSet::new()
         .insert(insert_a1)
@@ -489,8 +501,8 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
 
     // Semantic comparison via parser (order-independent)
     if !our_bytes.is_empty() && !sqlite_bytes.is_empty() {
-        let our_parsed = ParsedDiffSet::try_from(our_bytes.as_slice())
-            .expect("Failed to parse our changeset");
+        let our_parsed =
+            ParsedDiffSet::try_from(our_bytes.as_slice()).expect("Failed to parse our changeset");
         let sqlite_parsed = ParsedDiffSet::try_from(sqlite_bytes.as_slice())
             .expect("Failed to parse SQLite changeset");
 
@@ -542,11 +554,8 @@ fn test_sqlite_update_revert_to_original() {
     // We need the row to exist before the session starts,
     // then update and revert within the session.
     let conn = Connection::open_in_memory().expect("Failed to open DB");
-    conn.execute(
-        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
-        [],
-    )
-    .unwrap();
+    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", [])
+        .unwrap();
     conn.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')", [])
         .unwrap();
 

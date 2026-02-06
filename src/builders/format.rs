@@ -1,27 +1,27 @@
 //! Format trait defining changeset vs patchset behavior.
 
-use crate::{
-    DynTable,
-    builders::{ChangeDelete, Operation, PatchDelete},
-    encoding::Value,
-};
+use crate::encoding::Value;
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 /// Trait defining the differences between changeset and patchset formats.
 ///
 /// The key differences:
 /// - **Changeset**: DELETE stores all column values, UPDATE stores old+new
-/// - **Patchset**: DELETE stores only PK values, UPDATE stores only PK+new
+/// - **Patchset**: DELETE stores only PK values (data lives externally), UPDATE stores only PK+new
 pub(crate) trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
     /// The type representing old values in this format.
+    ///
+    /// - Changeset: `Value` (full old column value)
+    /// - Patchset: `()` (old values not stored)
     type Old: Clone + Debug + Default + PartialEq + Eq;
-    /// The type of delete operations for this format.
-    type DeleteOps<T: DynTable>: Debug
-        + Into<Operation<T, Self>>
-        + AsRef<T>
-        + Clone
-        + Eq
-        + PartialEq;
+
+    /// The data stored for a DELETE operation (beyond the PK which is always
+    /// stored as the `IndexMap` key in `DiffSetBuilder`).
+    ///
+    /// - Changeset: `Vec<Value>` — full old-row values
+    /// - Patchset: `()` — only the PK matters (stored externally)
+    type DeleteData: Clone + Debug + Default + PartialEq + Eq;
 
     /// Table header marker byte.
     /// Changesets use 'T' (0x54), patchsets use 'P' (0x50).
@@ -36,7 +36,7 @@ impl Format for ChangesetFormat {
     const TABLE_MARKER: u8 = b'T';
 
     type Old = Value;
-    type DeleteOps<T: DynTable> = ChangeDelete<T>;
+    type DeleteData = Vec<Value>;
 }
 
 /// Patchset format marker.
@@ -45,7 +45,7 @@ pub struct PatchsetFormat;
 
 impl Format for PatchsetFormat {
     type Old = ();
-    type DeleteOps<T: DynTable> = PatchDelete<T>;
+    type DeleteData = ();
 
     const TABLE_MARKER: u8 = b'P';
 }

@@ -8,9 +8,7 @@
 
 use honggfuzz::fuzz;
 use rusqlite::Connection;
-use sqlite_diff_rs::testing::{
-    apply_changeset, assert_bit_parity, compare_db_states,
-};
+use sqlite_diff_rs::testing::{apply_changeset, assert_bit_parity, compare_db_states};
 use sqlite_diff_rs::{ChangeSet, PatchSet};
 use sqlparser::ast::{CreateTable, Statement};
 
