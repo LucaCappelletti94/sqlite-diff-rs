@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/LucaCappelletti94/sqlite-diff-rs"
 
 [workspace]
-members = [".", "fuzz"]
+members = [".", "fuzz", "compile-bench"]
 
 [dependencies]
 sqlparser = { workspace = true, optional = true }

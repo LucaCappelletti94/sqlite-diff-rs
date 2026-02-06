@@ -1,0 +1,25 @@
+[package]
+name = "compile-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Feature: rusqlite — uses rusqlite's session extension directly
+rusqlite = { version = "0.37", features = [
+    "bundled",
+    "session",
+], optional = true }
+
+# Features: builder and sqlparser — both use sqlite-diff-rs
+# The sqlparser feature enables sqlite-diff-rs's own "sqlparser" feature
+sqlite-diff-rs = { path = "..", optional = true, default-features = false }
+
+[features]
+default = ["rusqlite", "builder", "sqlparser"]
+rusqlite = ["dep:rusqlite"]
+builder = ["dep:sqlite-diff-rs"]
+sqlparser = ["dep:sqlite-diff-rs", "sqlite-diff-rs/sqlparser"]
