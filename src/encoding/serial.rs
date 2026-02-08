@@ -20,18 +20,18 @@ use core::hash::{Hash, Hasher};
 use super::varint::encode_varint_simple;
 
 /// A value that can be encoded in SQLite changeset format.
-#[derive(Debug, Clone)]
-pub enum Value {
+#[derive(Debug, Clone, Copy)]
+pub enum Value<S: AsRef<str>, B: AsRef<[u8]>> {
     /// SQL NULL
     Null,
-    /// Integer (any size, will be encoded optimally)
+    /// 64-bit signed integer (always encoded as 8 bytes big-endian)
     Integer(i64),
-    /// IEEE 754 floating point
+    /// IEEE 754 floating point (8 bytes big-endian)
     Real(f64),
-    /// UTF-8 text
-    Text(String),
-    /// Binary blob
-    Blob(Vec<u8>),
+    /// UTF-8 text (varint length + bytes)
+    Text(S),
+    /// Binary blob (varint length + bytes)
+    Blob(B),
 }
 
 /// Internal type for representing values in changesets, where `None` means "undefined"

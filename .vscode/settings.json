@@ -1,0 +1,11 @@
+{
+  // Automatically forward the chat app port so it is reachable from the
+  // browser when working over Remote SSH, WSL, or Codespaces.
+  "remote.portsAttributes": {
+    "3000": {
+      "label": "Chat App",
+      "onAutoForward": "openBrowserOnce",
+      "protocol": "http"
+    }
+  }
+}

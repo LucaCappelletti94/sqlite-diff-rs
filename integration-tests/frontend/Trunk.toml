@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+
+# Trunk is used as a build tool only — `trunk build` produces the WASM
+# bundle and static assets in `dist/`.  At runtime the Axum backend
+# serves these files directly (no Trunk dev-server needed).
+
+[watch]
+watch = ["src", "index.html"]

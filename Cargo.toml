@@ -3,11 +3,19 @@ name = "sqlite-diff-rs"
 version = "0.1.0"
 edition = "2024"
 description = "Builder pattern for SQLite changeset and patchset binary formats"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/LucaCappelletti94/sqlite-diff-rs"
 
 [workspace]
-members = [".", "fuzz", "compile-bench"]
+members = [
+	".",
+	"fuzz",
+	"compile-bench",
+	"integration-tests/shared",
+	"integration-tests/backend",
+	"integration-tests/frontend",
+	"integration-tests/payload-size-bench",
+]
 
 [dependencies]
 sqlparser = { workspace = true, optional = true }

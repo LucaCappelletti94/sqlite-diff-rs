@@ -1,0 +1,34 @@
+[package]
+name = "chat-frontend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+chat-shared = { path = "../shared" }
+sqlite-diff-rs = { path = "../.." }
+yew = { version = "0.22", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "WebSocket",
+    "BinaryType",
+    "MessageEvent",
+    "ErrorEvent",
+    "CloseEvent",
+    "Blob",
+    "console",
+    "HtmlInputElement",
+    "HtmlSelectElement",
+] }
+js-sys = "0.3"
+gloo-timers = "0.3"
+futures = "0.3"
+uuid = { version = "1", features = ["v4", "js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-rs = "0.5"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

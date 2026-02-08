@@ -1,0 +1,25 @@
+services:
+  # -----------------------------------------------------------------------
+  # Run integration tests (single command):
+  #   docker compose run --rm test
+  # -----------------------------------------------------------------------
+  test:
+    build:
+      context: ..
+      dockerfile: integration-tests/Dockerfile
+      target: test
+
+  # -----------------------------------------------------------------------
+  # Run the full chat application:
+  #   docker compose up app
+  #
+  # A single Axum server serves the pre-built Yew SPA and the WebSocket
+  # endpoint on port 3000.  Open http://localhost:3000 in two browser tabs.
+  # -----------------------------------------------------------------------
+  app:
+    build:
+      context: ..
+      dockerfile: integration-tests/Dockerfile
+      target: app
+    ports:
+      - "3000:3000"
