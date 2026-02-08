@@ -2,19 +2,28 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt::Debug;
 
 use crate::{DynTable, encoding::Value};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 /// Builder for an insert operation.
-pub struct Insert<T: DynTable> {
+pub struct Insert<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
     /// The table being inserted into.
-    table: T,
+    pub(crate) table: T,
     /// Values for the inserted row.
-    values: Vec<Value>,
+    pub(crate) values: Vec<Value<S, B>>,
 }
 
-impl<T: DynTable> From<T> for Insert<T> {
+impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Insert<T, S, B> {
+    fn eq(&self, other: &Self) -> bool {
+        self.table == other.table && self.values == other.values
+    }
+}
+
+impl<T: DynTable + Eq, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Insert<T, S, B> {}
+
+impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u8]>> From<T> for Insert<T, S, B> {
     #[inline]
     fn from(table: T) -> Self {
         let num_cols = table.number_of_columns();
@@ -25,23 +34,23 @@ impl<T: DynTable> From<T> for Insert<T> {
     }
 }
 
-impl<T: DynTable> AsRef<T> for Insert<T> {
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for Insert<T, S, B> {
     #[inline]
     fn as_ref(&self) -> &T {
         &self.table
     }
 }
 
-impl<T: DynTable> Insert<T> {
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Insert<T, S, B> {
     /// Returns a reference to the values.
     #[inline]
-    pub(crate) fn values(&self) -> &[Value] {
+    pub(crate) fn values(&self) -> &[Value<S, B>] {
         &self.values
     }
 
     /// Consumes self and returns the values.
     #[inline]
-    pub(crate) fn into_values(self) -> Vec<Value> {
+    pub(crate) fn into_values(self) -> Vec<Value<S, B>> {
         self.values
     }
 
@@ -59,7 +68,7 @@ impl<T: DynTable> Insert<T> {
     pub fn set(
         mut self,
         col_idx: usize,
-        value: impl Into<Value>,
+        value: impl Into<Value<S, B>>,
     ) -> Result<Self, crate::errors::Error> {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
@@ -86,206 +95,19 @@ impl<T: DynTable> Insert<T> {
     /// use sqlite_diff_rs::{Insert, TableSchema};
     ///
     /// // CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)
-    /// let schema = TableSchema::new("items".into(), 3, vec![1, 0, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("items".into(), 3, vec![1, 0, 0]);
     ///
     /// // INSERT INTO items (id, description, price) VALUES (1, NULL, 9.99)
-    /// let insert = Insert::from(schema)
+    /// let insert = Insert::<_, String, Vec<u8>>::from(schema)
     ///     .set(0, 1i64).unwrap()
     ///     .set_null(1).unwrap()    // description = NULL
     ///     .set(2, 9.99f64).unwrap();
     /// ```
-    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error>
+    where
+        S: Default,
+        B: Default,
+    {
         self.set(col_idx, Value::Null)
-    }
-}
-
-// =============================================================================
-// sqlparser integration
-// =============================================================================
-
-#[cfg(feature = "sqlparser")]
-mod sqlparser_impl {
-    use alloc::boxed::Box;
-    use alloc::string::String;
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use core::fmt::{self, Display};
-
-    use sqlparser::ast::{
-        self, CreateTable, Expr, Ident, Query, SetExpr, TableObject, Values,
-        helpers::attached_token::AttachedToken,
-    };
-
-    use super::Insert;
-    use crate::builders::ast_helpers::make_object_name;
-    use crate::encoding::Value;
-    use crate::errors::InsertConversionError;
-    use crate::schema::DynTable;
-
-    impl<'a> Insert<&'a CreateTable> {
-        /// Try to create an Insert from a sqlparser INSERT statement and a table schema.
-        ///
-        /// # Errors
-        ///
-        /// Returns `InsertConversionError` if the INSERT statement cannot be converted.
-        pub(crate) fn try_from_ast(
-            insert: &ast::Insert,
-            schema: &'a CreateTable,
-        ) -> Result<Self, InsertConversionError> {
-            // Validate table name
-            let insert_table_name = match &insert.table {
-                TableObject::TableName(name) => name.0.last().map_or("", |part| match part {
-                    ast::ObjectNamePart::Identifier(ident) => ident.value.as_str(),
-                    ast::ObjectNamePart::Function(func) => func.name.value.as_str(),
-                }),
-                TableObject::TableFunction(_) => "",
-            };
-
-            let schema_name = schema.name();
-            if insert_table_name != schema_name {
-                return Err(InsertConversionError::TableNameMismatch {
-                    expected: schema_name.into(),
-                    got: insert_table_name.into(),
-                });
-            }
-
-            // Get the VALUES from the source
-            let source = insert
-                .source
-                .as_ref()
-                .ok_or(InsertConversionError::NoSource)?;
-            let rows = match source.body.as_ref() {
-                SetExpr::Values(values) => &values.rows,
-                _ => return Err(InsertConversionError::NotValuesSource),
-            };
-
-            // We only support single-row inserts
-            if rows.len() != 1 {
-                return Err(InsertConversionError::MultipleRows);
-            }
-            let row = &rows[0];
-
-            // Build the Insert
-            let num_cols = schema.number_of_columns();
-            let mut result = Insert::from(schema);
-
-            // If columns are specified, match by name; otherwise assume positional
-            if insert.columns.is_empty() {
-                // Positional: values must match column count
-                if row.len() != num_cols {
-                    return Err(InsertConversionError::WrongValueCount {
-                        expected: num_cols,
-                        got: row.len(),
-                    });
-                }
-                for (idx, expr) in row.iter().enumerate() {
-                    let value = Value::try_from(expr)?;
-                    result = result.set(idx, value).map_err(|_| {
-                        InsertConversionError::WrongValueCount {
-                            expected: num_cols,
-                            got: idx + 1,
-                        }
-                    })?;
-                }
-            } else {
-                // Named columns: match by name
-                if insert.columns.len() != row.len() {
-                    return Err(InsertConversionError::WrongValueCount {
-                        expected: insert.columns.len(),
-                        got: row.len(),
-                    });
-                }
-
-                // Resolve column indices upfront to avoid holding a borrow across set()
-                let col_indices: Vec<(usize, String)> = insert
-                    .columns
-                    .iter()
-                    .map(|col_ident| {
-                        let col_name = &col_ident.value;
-                        let col_idx = result
-                            .as_ref()
-                            .columns
-                            .iter()
-                            .position(|c| &c.name.value == col_name)
-                            .ok_or_else(|| InsertConversionError::ColumnMismatch {
-                                column: col_name.clone(),
-                            })?;
-                        Ok((col_idx, col_name.clone()))
-                    })
-                    .collect::<Result<_, InsertConversionError>>()?;
-
-                for ((col_idx, col_name), expr) in col_indices.into_iter().zip(row.iter()) {
-                    let value = Value::try_from(expr)?;
-                    result = result
-                        .set(col_idx, value)
-                        .map_err(|_| InsertConversionError::ColumnMismatch { column: col_name })?;
-                }
-            }
-
-            Ok(result)
-        }
-    }
-
-    impl From<&Insert<CreateTable>> for ast::Insert {
-        fn from(insert: &Insert<CreateTable>) -> Self {
-            let table = insert.as_ref();
-            let values = insert.values();
-
-            // Convert column names to Idents
-            let columns: Vec<Ident> = table
-                .columns
-                .iter()
-                .map(|c| Ident::new(&c.name.value))
-                .collect();
-
-            // Convert values to expressions
-            let row: Vec<Expr> = values.iter().map(Expr::from).collect();
-
-            ast::Insert {
-                insert_token: AttachedToken::empty(),
-                optimizer_hint: None,
-                or: None,
-                ignore: false,
-                into: true,
-                table: TableObject::TableName(make_object_name(table.name())),
-                table_alias: None,
-                columns,
-                overwrite: false,
-                source: Some(Box::new(Query {
-                    with: None,
-                    body: Box::new(SetExpr::Values(Values {
-                        explicit_row: false,
-                        value_keyword: false,
-                        rows: vec![row],
-                    })),
-                    order_by: None,
-                    limit_clause: None,
-                    fetch: None,
-                    locks: vec![],
-                    for_clause: None,
-                    settings: None,
-                    format_clause: None,
-                    pipe_operators: vec![],
-                })),
-                assignments: vec![],
-                partitioned: None,
-                after_columns: vec![],
-                has_table_keyword: false,
-                on: None,
-                returning: None,
-                replace_into: false,
-                priority: None,
-                insert_alias: None,
-                settings: None,
-                format_clause: None,
-            }
-        }
-    }
-
-    impl Display for Insert<CreateTable> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let stmt: ast::Insert = self.into();
-            write!(f, "{stmt}")
-        }
     }
 }

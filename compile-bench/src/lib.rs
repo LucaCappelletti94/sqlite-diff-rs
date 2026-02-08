@@ -138,13 +138,11 @@ pub mod builder_approach {
         ChangeDelete, ChangeSet, ChangeUpdate, Insert, PatchSet, PatchUpdate, TableSchema, Value,
     };
 
-    fn create_schemas() -> (
-        TableSchema,
-        TableSchema,
-        TableSchema,
-        TableSchema,
-        TableSchema,
-    ) {
+    // Type aliases for cleaner code
+    type Schema = TableSchema<String>;
+    type Val = Value<String, Vec<u8>>;
+
+    fn create_schemas() -> (Schema, Schema, Schema, Schema, Schema) {
         let users = TableSchema::new("users".into(), 7, vec![1, 0, 0, 0, 0, 0, 0]);
         let posts = TableSchema::new("posts".into(), 8, vec![1, 0, 0, 0, 0, 0, 0, 0]);
         let comments = TableSchema::new("comments".into(), 7, vec![1, 0, 0, 0, 0, 0, 0]);
@@ -153,7 +151,7 @@ pub mod builder_approach {
         (users, posts, comments, tags, post_tags)
     }
 
-    fn get_user_rows() -> Vec<Vec<Value>> {
+    fn get_user_rows() -> Vec<Vec<Val>> {
         vec![
             vec![
                 1i64.into(),
@@ -203,7 +201,7 @@ pub mod builder_approach {
         ]
     }
 
-    fn get_post_rows() -> Vec<Vec<Value>> {
+    fn get_post_rows() -> Vec<Vec<Val>> {
         vec![
             vec![
                 1i64.into(),
@@ -258,7 +256,7 @@ pub mod builder_approach {
         ]
     }
 
-    fn get_tag_rows() -> Vec<Vec<Value>> {
+    fn get_tag_rows() -> Vec<Vec<Val>> {
         vec![
             vec![1i64.into(), "rust".into()],
             vec![2i64.into(), "database".into()],
@@ -268,7 +266,7 @@ pub mod builder_approach {
         ]
     }
 
-    fn get_post_tag_rows() -> Vec<Vec<Value>> {
+    fn get_post_tag_rows() -> Vec<Vec<Val>> {
         vec![
             vec![1i64.into(), 1i64.into()],
             vec![1i64.into(), 3i64.into()],
@@ -278,7 +276,7 @@ pub mod builder_approach {
         ]
     }
 
-    fn get_comment_rows() -> Vec<Vec<Value>> {
+    fn get_comment_rows() -> Vec<Vec<Val>> {
         vec![
             vec![
                 1i64.into(),
@@ -329,13 +327,13 @@ pub mod builder_approach {
     }
 
     fn add_inserts(
-        mut builder: ChangeSet<TableSchema>,
-        users: &TableSchema,
-        posts: &TableSchema,
-        comments: &TableSchema,
-        tags: &TableSchema,
-        post_tags: &TableSchema,
-    ) -> ChangeSet<TableSchema> {
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        posts: &Schema,
+        comments: &Schema,
+        tags: &Schema,
+        post_tags: &Schema,
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -355,11 +353,11 @@ pub mod builder_approach {
     }
 
     fn add_changeset_updates(
-        mut builder: ChangeSet<TableSchema>,
-        users: &TableSchema,
-        posts: &TableSchema,
-    ) -> ChangeSet<TableSchema> {
-        let user_updates: &[(&[Value], &[Value])] = &[
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        posts: &Schema,
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
+        let user_updates: &[(&[Val], &[Val])] = &[
             (
                 &[
                     1i64.into(),
@@ -409,7 +407,7 @@ pub mod builder_approach {
             builder = builder.update(update);
         }
 
-        let post_updates: &[(&[Value], &[Value])] = &[
+        let post_updates: &[(&[Val], &[Val])] = &[
             (
                 &[
                     1i64.into(),
@@ -489,11 +487,11 @@ pub mod builder_approach {
     }
 
     fn add_changeset_deletes(
-        mut builder: ChangeSet<TableSchema>,
-        users: &TableSchema,
-        comments: &TableSchema,
-        post_tags: &TableSchema,
-    ) -> ChangeSet<TableSchema> {
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        comments: &Schema,
+        post_tags: &Schema,
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
         // Delete comment 5
         let mut delete = ChangeDelete::from(comments.clone());
         for (i, val) in [
@@ -551,13 +549,13 @@ pub mod builder_approach {
     }
 
     fn add_patchset_inserts(
-        mut builder: PatchSet<TableSchema>,
-        users: &TableSchema,
-        posts: &TableSchema,
-        comments: &TableSchema,
-        tags: &TableSchema,
-        post_tags: &TableSchema,
-    ) -> PatchSet<TableSchema> {
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        posts: &Schema,
+        comments: &Schema,
+        tags: &Schema,
+        post_tags: &Schema,
+    ) -> PatchSet<Schema, String, Vec<u8>> {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -577,11 +575,11 @@ pub mod builder_approach {
     }
 
     fn add_patchset_updates(
-        mut builder: PatchSet<TableSchema>,
-        users: &TableSchema,
-        posts: &TableSchema,
-    ) -> PatchSet<TableSchema> {
-        let user_updates: &[&[(usize, Value)]] = &[
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        posts: &Schema,
+    ) -> PatchSet<Schema, String, Vec<u8>> {
+        let user_updates: &[&[(usize, Val)]] = &[
             &[(0, 1i64.into()), (4, 1002000i64.into())],
             &[(0, 2i64.into()), (4, 1002100i64.into())],
         ];
@@ -593,7 +591,7 @@ pub mod builder_approach {
             builder = builder.update(update);
         }
 
-        let post_updates: &[&[(usize, Value)]] = &[
+        let post_updates: &[&[(usize, Val)]] = &[
             &[(0, 1i64.into()), (6, 10i64.into())],
             &[(0, 2i64.into()), (6, 5i64.into())],
             &[
@@ -614,11 +612,11 @@ pub mod builder_approach {
     }
 
     fn add_patchset_deletes(
-        mut builder: PatchSet<TableSchema>,
-        users: &TableSchema,
-        comments: &TableSchema,
-        post_tags: &TableSchema,
-    ) -> PatchSet<TableSchema> {
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        users: &Schema,
+        comments: &Schema,
+        post_tags: &Schema,
+    ) -> PatchSet<Schema, String, Vec<u8>> {
         builder = builder.delete(comments, &[5i64.into()]);
         builder = builder.delete(post_tags, &[3i64.into(), 5i64.into()]);
         builder = builder.delete(users, &[4i64.into()]);

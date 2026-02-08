@@ -14,12 +14,10 @@ rusqlite = { version = "0.37", features = [
     "session",
 ], optional = true }
 
-# Features: builder and sqlparser — both use sqlite-diff-rs
-# The sqlparser feature enables sqlite-diff-rs's own "sqlparser" feature
+# Features: builder — uses sqlite-diff-rs
 sqlite-diff-rs = { path = "..", optional = true, default-features = false }
 
 [features]
-default = ["rusqlite", "builder", "sqlparser"]
+default = ["rusqlite", "builder"]
 rusqlite = ["dep:rusqlite"]
 builder = ["dep:sqlite-diff-rs"]
-sqlparser = ["dep:sqlite-diff-rs", "sqlite-diff-rs/sqlparser"]

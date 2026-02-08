@@ -7,9 +7,11 @@ use sqlite_diff_rs::{Insert, PatchSet, PatchUpdate, TableSchema, Value};
 
 use crate::common::{Format, TestMessage, messages_schema};
 
+type Schema = TableSchema<String>;
+
 pub struct Patchset;
 
-pub fn build_insert<'a>(schema: &'a TableSchema, m: &TestMessage) -> Insert<&'a TableSchema> {
+pub fn build_insert<'a>(schema: &'a Schema, m: &TestMessage) -> Insert<&'a Schema, String, Vec<u8>> {
     Insert::from(schema)
         .set(0, Value::Blob(m.id.as_bytes().to_vec()))
         .unwrap()
@@ -23,7 +25,7 @@ pub fn build_insert<'a>(schema: &'a TableSchema, m: &TestMessage) -> Insert<&'a 
         .unwrap()
 }
 
-fn build_update<'a>(schema: &'a TableSchema, m: &TestMessage) -> PatchUpdate<&'a TableSchema> {
+fn build_update<'a>(schema: &'a Schema, m: &TestMessage) -> PatchUpdate<&'a Schema, String, Vec<u8>> {
     PatchUpdate::from(schema)
         .set(0, Value::Blob(m.id.as_bytes().to_vec()))
         .unwrap()
@@ -43,7 +45,7 @@ impl Format for Patchset {
         deletes: &[TestMessage],
     ) -> Vec<u8> {
         let schema = messages_schema();
-        let mut pset = PatchSet::<&TableSchema>::new();
+        let mut pset = PatchSet::<&Schema, String, Vec<u8>>::new();
         for m in inserts {
             pset = pset.insert(build_insert(&schema, m));
         }

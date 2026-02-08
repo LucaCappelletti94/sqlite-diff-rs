@@ -1,20 +1,15 @@
 //! Testing utilities for bit-parity verification against rusqlite's session extension.
 //!
-//! This module is gated behind the `testing` feature, which pulls in `rusqlite`
-//! (with bundled SQLite + session support) and `sqlparser`.
+//! This module is gated behind the `testing` feature.
 //!
 //! # Provided helpers
 //!
 //! - [`session_changeset_and_patchset`]: execute SQL in rusqlite and capture raw changeset/patchset bytes
 //! - [`byte_diff_report`]: pretty-print a byte-level diff between two buffers
 //! - [`assert_bit_parity`]: assert byte-for-byte equality for both changeset and patchset
+//! - [`parse_schema`]: parse a `CREATE TABLE` statement into a `SimpleTable`
 
 use core::fmt::Write;
-// - [`assert_fromstr_bit_parity`]: end-to-end bit-parity via `str::parse()`
-// - [`parse_schema`]: parse a `CREATE TABLE` statement into a `sqlparser` AST node
-// - [`apply_changeset`]: apply a changeset/patchset to a rusqlite connection
-// - [`get_all_rows`]: query all rows from a table as string vectors
-// - [`compare_db_states`]: assert two databases have identical contents
 
 extern crate std;
 
@@ -23,23 +18,23 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use rusqlite::Connection;
 use rusqlite::session::Session;
-use sqlparser::ast::{CreateTable, Statement};
-use sqlparser::dialect::SQLiteDialect;
-use sqlparser::parser::Parser;
 use std::io::Cursor;
 
+use crate::schema::SimpleTable;
+use crate::sql::{FormatSql, Parser, Statement};
 use crate::{ChangeSet, PatchSet};
 
-/// Parse a `CREATE TABLE` statement and return the AST node.
+/// Parse a `CREATE TABLE` statement and return a `SimpleTable`.
 ///
 /// # Panics
 ///
 /// Panics if the SQL is not a valid `CREATE TABLE` statement.
 #[must_use]
-pub fn parse_schema(sql: &str) -> CreateTable {
-    let stmts = Parser::parse_sql(&SQLiteDialect {}, sql).unwrap();
+pub fn parse_schema(sql: &str) -> SimpleTable {
+    let mut parser = Parser::new(sql);
+    let stmts = parser.parse_all().expect("Failed to parse SQL");
     match &stmts[0] {
-        Statement::CreateTable(ct) => ct.clone(),
+        Statement::CreateTable(ct) => SimpleTable::from(ct.clone()),
         _ => panic!("Expected CREATE TABLE"),
     }
 }
@@ -158,15 +153,16 @@ pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: &[u8], our_patc
 ///
 /// Panics if parsing fails or if the bytes don't match.
 pub fn assert_fromstr_bit_parity(sql: &str) {
-    let changeset: ChangeSet<CreateTable> = sql.parse().unwrap();
-    let patchset: PatchSet<CreateTable> = sql.parse().unwrap();
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().unwrap();
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = sql.parse().unwrap();
 
     let our_changeset: Vec<u8> = changeset.into();
     let our_patchset: Vec<u8> = patchset.into();
 
     // Reconstruct the statement list for rusqlite
-    let stmts = Parser::parse_sql(&SQLiteDialect {}, sql).unwrap();
-    let sql_strings: Vec<String> = stmts.iter().map(ToString::to_string).collect();
+    let mut parser = Parser::new(sql);
+    let stmts = parser.parse_all().unwrap();
+    let sql_strings: Vec<String> = stmts.iter().map(|s| s.format_sql()).collect();
     let sql_refs: Vec<&str> = sql_strings.iter().map(String::as_str).collect();
 
     assert_bit_parity(&sql_refs, &our_changeset, &our_patchset);

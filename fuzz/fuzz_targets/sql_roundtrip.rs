@@ -5,18 +5,18 @@
 //! 2. PatchSet: Parse arbitrary SQL without crashing (no roundtrip since PatchSet has no Display)
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::{ChangeSet, DiffSetParseError, PatchSet};
-use sqlparser::ast::{CreateTable, Statement};
+use sqlite_diff_rs::{ChangeSet, DiffSetParseError, PatchSet, SimpleTable};
+use sqlite_diff_rs::sql::Statement;
 
 fn main() {
     loop {
         fuzz!(|sql: String| {
             // Test PatchSet parsing - just ensure it doesn't crash
             // PatchSet has no Display, so no roundtrip check
-            let _patchset: Result<PatchSet<CreateTable>, DiffSetParseError> = sql.parse();
+            let _patchset: Result<PatchSet<SimpleTable, String, Vec<u8>>, DiffSetParseError> = sql.parse();
 
             // Test ChangeSet parsing with full roundtrip
-            let Ok(builder): Result<ChangeSet<CreateTable>, DiffSetParseError> = sql.parse() else {
+            let Ok(builder): Result<ChangeSet<SimpleTable, String, Vec<u8>>, DiffSetParseError> = sql.parse() else {
                 return; // Skip unparseable inputs for roundtrip test
             };
 
@@ -38,7 +38,7 @@ fn main() {
             let output = builder.to_string();
 
             // Re-parse the generated SQL
-            let reparsed: ChangeSet<CreateTable> = output
+            let reparsed: ChangeSet<SimpleTable, String, Vec<u8>> = output
                 .parse()
                 .expect("Re-parsing generated SQL should succeed");
 
@@ -63,7 +63,7 @@ fn main() {
 
             // Also verify the reparsed builder can be serialized again
             let output2 = reparsed.to_string();
-            let reparsed2: ChangeSet<CreateTable> =
+            let reparsed2: ChangeSet<SimpleTable, String, Vec<u8>> =
                 output2.parse().expect("Second re-parse should succeed");
             assert_eq!(
                 reparsed.len(),

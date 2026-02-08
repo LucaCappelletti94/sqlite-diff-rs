@@ -36,10 +36,10 @@ pub enum Value<S: AsRef<str>, B: AsRef<[u8]>> {
 
 /// Internal type for representing values in changesets, where `None` means "undefined"
 /// (unchanged column in UPDATE operations).
-pub(crate) type MaybeValue = Option<Value>;
+pub(crate) type MaybeValue<S, B> = Option<Value<S, B>>;
 
 // Custom PartialEq to handle f64 bit-equality
-impl PartialEq for Value {
+impl<S: AsRef<str> + PartialEq, B: AsRef<[u8]> + PartialEq> PartialEq for Value<S, B> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Integer(a), Value::Integer(b)) => a == b,
@@ -52,9 +52,9 @@ impl PartialEq for Value {
     }
 }
 
-impl Eq for Value {}
+impl<S: AsRef<str> + Eq, B: AsRef<[u8]> + Eq> Eq for Value<S, B> {}
 
-impl Hash for Value {
+impl<S: AsRef<str> + Hash, B: AsRef<[u8]> + Hash> Hash for Value<S, B> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
         match self {
@@ -68,48 +68,54 @@ impl Hash for Value {
 }
 
 // From implementations for common types
-impl From<i64> for Value {
+impl<S: AsRef<str>, B: AsRef<[u8]>> From<i64> for Value<S, B> {
     #[inline]
     fn from(v: i64) -> Self {
         Value::Integer(v)
     }
 }
 
-impl From<i32> for Value {
+impl<S: AsRef<str>, B: AsRef<[u8]>> From<i32> for Value<S, B> {
     #[inline]
     fn from(v: i32) -> Self {
         Value::Integer(i64::from(v))
     }
 }
 
-impl From<String> for Value {
+impl<B: AsRef<[u8]>> From<String> for Value<String, B> {
     #[inline]
     fn from(v: String) -> Self {
         Value::Text(v)
     }
 }
 
-impl From<&str> for Value {
+impl<B: AsRef<[u8]>> From<&str> for Value<String, B> {
     #[inline]
     fn from(v: &str) -> Self {
         Value::Text(v.to_string())
     }
 }
 
-impl From<f64> for Value {
+impl<S: AsRef<str>, B: AsRef<[u8]>> From<f64> for Value<S, B> {
     #[inline]
     fn from(v: f64) -> Self {
         Value::Real(v)
     }
 }
 
-impl From<Vec<u8>> for Value {
+impl<S: AsRef<str>> From<Vec<u8>> for Value<S, Vec<u8>> {
     fn from(v: Vec<u8>) -> Self {
         Value::Blob(v)
     }
 }
 
-impl<T: Into<Value>> From<Option<T>> for Value {
+impl<S: AsRef<str>> From<&[u8]> for Value<S, Vec<u8>> {
+    fn from(v: &[u8]) -> Self {
+        Value::Blob(v.to_vec())
+    }
+}
+
+impl<T: Into<Value<String, Vec<u8>>>> From<Option<T>> for Value<String, Vec<u8>> {
     fn from(opt: Option<T>) -> Self {
         match opt {
             Some(v) => v.into(),
@@ -118,12 +124,43 @@ impl<T: Into<Value>> From<Option<T>> for Value {
     }
 }
 
+impl<S: AsRef<str>, B: AsRef<[u8]>> Value<S, B> {
+    /// Convert to an owned Value by cloning the underlying data.
+    pub fn to_owned(&self) -> Value<String, Vec<u8>> {
+        match self {
+            Value::Null => Value::Null,
+            Value::Integer(v) => Value::Integer(*v),
+            Value::Real(v) => Value::Real(*v),
+            Value::Text(s) => Value::Text(s.as_ref().to_string()),
+            Value::Blob(b) => Value::Blob(b.as_ref().to_vec()),
+        }
+    }
+
+    /// Borrow as a reference Value.
+    pub fn as_ref(&self) -> Value<&str, &[u8]> {
+        match self {
+            Value::Null => Value::Null,
+            Value::Integer(v) => Value::Integer(*v),
+            Value::Real(v) => Value::Real(*v),
+            Value::Text(s) => Value::Text(s.as_ref()),
+            Value::Blob(b) => Value::Blob(b.as_ref()),
+        }
+    }
+}
+
 mod display;
 
-#[cfg(feature = "sqlparser")]
-pub mod sqlparser;
+pub mod simple_sql;
 
-/// Encode a value into the changeset binary format.
+/// Encode the "undefined" marker (type 0) into the changeset binary format.
+///
+/// This is used for unchanged columns in UPDATE operations.
+#[inline]
+pub(crate) fn encode_undefined(out: &mut Vec<u8>) {
+    out.push(0x00);
+}
+
+/// Encode a Maybe value (Option<Value>) into the changeset binary format.
 ///
 /// SQLite changesets use a DIFFERENT encoding than database records:
 /// - Type 0: Undefined (special marker for unchanged columns in UPDATE)
@@ -134,22 +171,32 @@ pub mod sqlparser;
 /// - Type 5: NULL (no data follows)
 ///
 /// This is NOT the same as SQLite serial types used in database records!
-pub(crate) fn encode_value(out: &mut Vec<u8>, value: &MaybeValue) {
+pub(crate) fn encode_value<S: AsRef<str>, B: AsRef<[u8]>>(
+    out: &mut Vec<u8>,
+    value: &Option<Value<S, B>>,
+) {
     match value {
-        None => {
-            // Undefined marker in changeset format (type 0)
-            out.push(0x00);
-        }
-        Some(Value::Null) => {
+        None => encode_undefined(out),
+        Some(v) => encode_defined_value(out, v),
+    }
+}
+
+/// Encode a defined (non-undefined) value into the changeset binary format.
+pub(crate) fn encode_defined_value<S: AsRef<str>, B: AsRef<[u8]>>(
+    out: &mut Vec<u8>,
+    value: &Value<S, B>,
+) {
+    match value {
+        Value::Null => {
             // NULL is type 5 in changeset format
             out.push(0x05);
         }
-        Some(Value::Integer(v)) => {
+        Value::Integer(v) => {
             // INTEGER is type 1, always 8 bytes big-endian
             out.push(0x01);
             out.extend(v.to_be_bytes());
         }
-        Some(Value::Real(v)) => {
+        Value::Real(v) => {
             // SQLite converts NaN to NULL, but preserves Infinity
             if v.is_nan() {
                 out.push(0x05); // NULL
@@ -161,14 +208,16 @@ pub(crate) fn encode_value(out: &mut Vec<u8>, value: &MaybeValue) {
                 out.extend(normalized.to_be_bytes());
             }
         }
-        Some(Value::Text(s)) => {
+        Value::Text(s) => {
             // TEXT is type 3, varint length + UTF-8 bytes
+            let s = s.as_ref();
             out.push(0x03);
             out.extend(encode_varint_simple(s.len() as u64));
             out.extend(s.as_bytes());
         }
-        Some(Value::Blob(b)) => {
+        Value::Blob(b) => {
             // BLOB is type 4, varint length + raw bytes
+            let b = b.as_ref();
             out.push(0x04);
             out.extend(encode_varint_simple(b.len() as u64));
             out.extend(b);
@@ -188,7 +237,7 @@ pub(crate) fn encode_value(out: &mut Vec<u8>, value: &MaybeValue) {
 ///
 /// Returns the value (None for Undefined) and number of bytes consumed.
 #[must_use]
-pub(crate) fn decode_value(data: &[u8]) -> Option<(MaybeValue, usize)> {
+pub(crate) fn decode_value(data: &[u8]) -> Option<(MaybeValue<String, Vec<u8>>, usize)> {
     use super::varint::decode_varint;
 
     if data.is_empty() {
@@ -265,12 +314,15 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    // Type alias for common test usage
+    type TestValue = Value<String, Vec<u8>>;
+
     #[test]
     fn test_encode_decode_null() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Null));
+        encode_value(&mut buf, &Some(TestValue::Null));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Some(Value::Null));
+        assert_eq!(decoded, Some(TestValue::Null));
         assert_eq!(len, buf.len());
     }
 
@@ -288,9 +340,9 @@ mod tests {
             i64::MAX,
         ] {
             let mut buf = Vec::new();
-            encode_value(&mut buf, &Some(Value::Integer(v)));
+            encode_value(&mut buf, &Some(TestValue::Integer(v)));
             let (decoded, len) = decode_value(&buf).unwrap();
-            assert_eq!(decoded, Some(Value::Integer(v)), "Failed for {v}");
+            assert_eq!(decoded, Some(TestValue::Integer(v)), "Failed for {v}");
             assert_eq!(len, buf.len());
             // All integers should be encoded as type 1 + 8 bytes = 9 bytes total
             assert_eq!(buf.len(), 9, "Integer {v} should be 9 bytes");
@@ -300,9 +352,9 @@ mod tests {
     #[test]
     fn test_encode_decode_real() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Real(6.14159)));
+        encode_value(&mut buf, &Some(TestValue::Real(6.14159)));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Some(Value::Real(6.14159)));
+        assert_eq!(decoded, Some(TestValue::Real(6.14159)));
         assert_eq!(len, buf.len());
         // Float is type 2 + 8 bytes = 9 bytes total
         assert_eq!(buf.len(), 9);
@@ -311,9 +363,11 @@ mod tests {
     #[test]
     fn test_encode_decode_text() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Text("hello".to_string())));
+        // Use reference type for encoding
+        let ref_value: Value<&str, &[u8]> = Value::Text("hello");
+        encode_value(&mut buf, &Some(ref_value));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Some(Value::Text("hello".to_string())));
+        assert_eq!(decoded, Some(TestValue::Text("hello".to_string())));
         assert_eq!(len, buf.len());
         // Text is type 3 + varint(5) + "hello" = 1 + 1 + 5 = 7 bytes
         assert_eq!(buf.len(), 7);
@@ -322,9 +376,12 @@ mod tests {
     #[test]
     fn test_encode_decode_blob() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Blob(vec![1, 2, 3, 4, 5])));
+        // Use reference type for encoding
+        let data: &[u8] = &[1, 2, 3, 4, 5];
+        let ref_value: Value<&str, &[u8]> = Value::Blob(data);
+        encode_value(&mut buf, &Some(ref_value));
         let (decoded, len) = decode_value(&buf).unwrap();
-        assert_eq!(decoded, Some(Value::Blob(vec![1, 2, 3, 4, 5])));
+        assert_eq!(decoded, Some(TestValue::Blob(vec![1, 2, 3, 4, 5])));
         assert_eq!(len, buf.len());
         // Blob is type 4 + varint(5) + data = 1 + 1 + 5 = 7 bytes
         assert_eq!(buf.len(), 7);
@@ -333,7 +390,7 @@ mod tests {
     #[test]
     fn test_encode_decode_undefined() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &None);
+        encode_value::<String, Vec<u8>>(&mut buf, &None);
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, None);
         assert_eq!(len, buf.len());
@@ -347,7 +404,7 @@ mod tests {
 
         // Integer 1 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Integer(1)));
+        encode_value(&mut buf, &Some(TestValue::Integer(1)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
@@ -355,20 +412,46 @@ mod tests {
 
         // Integer 100 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Integer(100)));
+        encode_value(&mut buf, &Some(TestValue::Integer(100)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64]
         );
 
         // Text "alice" should be: type 3 + varint(5) + "alice"
+        // Using reference type here
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Text("alice".to_string())));
+        let ref_value: Value<&str, &[u8]> = Value::Text("alice");
+        encode_value(&mut buf, &Some(ref_value));
         assert_eq!(buf, vec![0x03, 0x05, b'a', b'l', b'i', b'c', b'e']);
 
         // NULL should be type 5
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Null));
+        encode_value(&mut buf, &Some(Value::Null::<&str, &[u8]>));
         assert_eq!(buf, vec![0x05]);
+    }
+
+    #[test]
+    fn test_cross_type_equality() {
+        // Test that Value<&str, &[u8]> and Value<String, Vec<u8>> can be compared via conversion
+        let owned: Value<String, Vec<u8>> = Value::Text("hello".to_string());
+        let borrowed: Value<&str, &[u8]> = Value::Text("hello");
+        assert_eq!(owned.as_ref(), borrowed);
+        assert_eq!(borrowed.to_owned(), owned);
+
+        let owned_blob: Value<String, Vec<u8>> = Value::Blob(vec![1, 2, 3]);
+        let data: &[u8] = &[1, 2, 3];
+        let borrowed_blob: Value<&str, &[u8]> = Value::Blob(data);
+        assert_eq!(owned_blob.as_ref(), borrowed_blob);
+    }
+
+    #[test]
+    fn test_to_owned_and_as_ref() {
+        let owned: Value<String, Vec<u8>> = Value::Text("hello".to_string());
+        let borrowed = owned.as_ref();
+        assert_eq!(owned.as_ref(), borrowed);
+
+        let back_to_owned = borrowed.to_owned();
+        assert_eq!(owned, back_to_owned);
     }
 }

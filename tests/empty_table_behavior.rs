@@ -414,23 +414,23 @@ fn test_sqlite_table_order_three_tables_cancel_first_patchset() {
 #[test]
 fn test_our_builder_empty_after_cancel() {
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert};
-    use sqlparser::ast::CreateTable;
+    use sqlite_diff_rs::SimpleTable;
 
     let schema = parse_create_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     // Changeset: INSERT + DELETE should produce empty output
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
         .unwrap();
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
         .unwrap();
 
-    let changeset_builder: ChangeSet<CreateTable> = ChangeSet::new().insert(insert).delete(delete);
+    let changeset_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert).delete(delete);
     let changeset_bytes: Vec<u8> = changeset_builder.into();
 
     // Should match SQLite: empty bytes
@@ -450,34 +450,34 @@ fn test_our_builder_empty_after_cancel() {
 #[test]
 fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert, ParsedDiffSet};
-    use sqlparser::ast::CreateTable;
+    use sqlite_diff_rs::SimpleTable;
 
     let schema_a = parse_create_table("CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)");
     let schema_b = parse_create_table("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Build: insert A, insert B, delete A, insert A again
-    let insert_a = Insert::from(schema_a.clone())
+    let insert_a = Insert::<_, String, Vec<u8>>::from(schema_a.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "a1")
         .unwrap();
-    let insert_b = Insert::from(schema_b.clone())
+    let insert_b = Insert::<_, String, Vec<u8>>::from(schema_b.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "b1")
         .unwrap();
-    let delete_a1 = ChangeDelete::from(schema_a.clone())
+    let delete_a1 = ChangeDelete::<_, String, Vec<u8>>::from(schema_a.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "a1")
         .unwrap();
-    let insert_a2 = Insert::from(schema_a.clone())
+    let insert_a2 = Insert::<_, String, Vec<u8>>::from(schema_a.clone())
         .set(0, 2i64)
         .unwrap()
         .set(1, "a2")
         .unwrap();
 
-    let our_builder: ChangeSet<CreateTable> = ChangeSet::new()
+    let our_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(insert_a)
         .insert(insert_b)
         .delete(delete_a1)
@@ -589,15 +589,12 @@ fn test_sqlite_update_revert_to_original() {
 // Helper
 // =============================================================================
 
-fn parse_create_table(sql: &str) -> sqlparser::ast::CreateTable {
-    use sqlparser::ast::Statement;
-    use sqlparser::dialect::SQLiteDialect;
-    use sqlparser::parser::Parser;
+fn parse_create_table(sql: &str) -> sqlite_diff_rs::SimpleTable {
+    use sqlite_diff_rs::sql::{Parser, Statement};
 
-    let dialect = SQLiteDialect {};
-    let stmts = Parser::parse_sql(&dialect, sql).expect("Failed to parse SQL");
+    let stmts = Parser::new(sql).parse_all().expect("Failed to parse SQL");
     match &stmts[0] {
-        Statement::CreateTable(ct) => ct.clone(),
+        Statement::CreateTable(ct) => ct.clone().into(),
         _ => panic!("Expected CREATE TABLE"),
     }
 }

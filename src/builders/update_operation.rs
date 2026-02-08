@@ -2,6 +2,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt::Debug;
 
 use crate::{
     DynTable,
@@ -9,39 +10,56 @@ use crate::{
     encoding::{MaybeValue, Value},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Builder for an update operation, parameterized by the format type `F`.
-pub struct Update<T: DynTable, F: Format> {
+#[derive(Debug, Clone)]
+/// Builder for an update operation, parameterized by the format type `F` and value types `S`, `B`.
+pub struct Update<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> {
     /// The table being updated.
-    table: T,
+    pub(crate) table: T,
     /// Values for the updated row, stored as pairs of (old, new) values.
-    /// New values use `MaybeValue` (Option<Value>) where `None` = undefined/unchanged.
-    values: Vec<(F::Old, MaybeValue)>,
+    /// New values use `MaybeValue<S, B>` (Option<Value<S, B>>) where `None` = undefined/unchanged.
+    pub(crate) values: Vec<(F::Old, MaybeValue<S, B>)>,
 }
 
-impl<T: DynTable, F: Format> From<Update<T, F>> for Vec<(F::Old, MaybeValue)> {
+impl<T: DynTable + PartialEq, F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Update<T, F, S, B>
+where
+    F::Old: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.table == other.table && self.values == other.values
+    }
+}
+
+impl<T: DynTable + Eq, F: Format<S, B>, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Update<T, F, S, B>
+where
+    F::Old: Eq,
+{}
+
+impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> From<Update<T, F, S, B>> for Vec<(F::Old, MaybeValue<S, B>)> {
     #[inline]
-    fn from(update: Update<T, F>) -> Self {
+    fn from(update: Update<T, F, S, B>) -> Self {
         update.values
     }
 }
 
-impl<T: DynTable, F: Format> AsRef<T> for Update<T, F> {
+impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for Update<T, F, S, B> {
     #[inline]
     fn as_ref(&self) -> &T {
         &self.table
     }
 }
 
-impl<T: DynTable, F: Format> Update<T, F> {
+impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> Update<T, F, S, B> {
     /// Returns a reference to the (old, new) value pairs.
     #[inline]
-    pub fn values(&self) -> &[(F::Old, MaybeValue)] {
+    pub fn values(&self) -> &[(F::Old, MaybeValue<S, B>)] {
         &self.values
     }
 }
 
-impl<T: DynTable, F: Format> From<T> for Update<T, F> {
+impl<T: DynTable, F: Format<S, B>, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>> From<T> for Update<T, F, S, B>
+where
+    F::Old: Clone,
+{
     #[inline]
     fn from(table: T) -> Self {
         let num_cols = table.number_of_columns();
@@ -52,7 +70,7 @@ impl<T: DynTable, F: Format> From<T> for Update<T, F> {
     }
 }
 
-impl<T: DynTable> Update<T, ChangesetFormat> {
+impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Update<T, ChangesetFormat, S, B> {
     /// Sets the value for a specific column by index.
     ///
     /// # Arguments
@@ -68,8 +86,8 @@ impl<T: DynTable> Update<T, ChangesetFormat> {
     pub fn set(
         mut self,
         col_idx: usize,
-        old: impl Into<Value>,
-        new: impl Into<Value>,
+        old: impl Into<Value<S, B>>,
+        new: impl Into<Value<S, B>>,
     ) -> Result<Self, crate::errors::Error> {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
@@ -102,18 +120,18 @@ impl<T: DynTable> Update<T, ChangesetFormat> {
     /// use sqlite_diff_rs::{Update, ChangesetFormat, TableSchema};
     ///
     /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)
-    /// let schema = TableSchema::new("users".into(), 3, vec![1, 0, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("users".into(), 3, vec![1, 0, 0]);
     ///
     /// // UPDATE users SET name = 'Bob' WHERE id = 1
     /// // We know id=1 (PK, unchanged) and name='Bob' (new), but not the old name
-    /// let update = Update::<_, ChangesetFormat>::from(schema)
+    /// let update = Update::<_, ChangesetFormat, String, Vec<u8>>::from(schema)
     ///     .set(0, 1i64, 1i64).unwrap()      // PK: old=1, new=1 (unchanged)
     ///     .set_new(1, "Bob").unwrap();      // name: old=undefined, new="Bob"
     /// ```
     pub fn set_new(
         mut self,
         col_idx: usize,
-        new: impl Into<Value>,
+        new: impl Into<Value<S, B>>,
     ) -> Result<Self, crate::errors::Error> {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
@@ -138,15 +156,19 @@ impl<T: DynTable> Update<T, ChangesetFormat> {
     /// use sqlite_diff_rs::{Update, ChangesetFormat, TableSchema};
     ///
     /// // CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT)
-    /// let schema = TableSchema::new("items".into(), 2, vec![1, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("items".into(), 2, vec![1, 0]);
     ///
     /// // UPDATE items SET description = NULL WHERE id = 1 AND description = NULL
-    /// let update = Update::<_, ChangesetFormat>::from(schema)
+    /// let update = Update::<_, ChangesetFormat, String, Vec<u8>>::from(schema)
     ///     .set(0, 1i64, 1i64).unwrap()
     ///     .set_null(1).unwrap();
     /// ```
     #[inline]
-    pub fn set_null(mut self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+    pub fn set_null(mut self, col_idx: usize) -> Result<Self, crate::errors::Error>
+    where
+        S: Default,
+        B: Default,
+    {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
                 col_idx,
@@ -158,13 +180,17 @@ impl<T: DynTable> Update<T, ChangesetFormat> {
     }
 }
 
-impl<T: DynTable> Update<T, PatchsetFormat> {
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Update<T, PatchsetFormat, S, B> {
     /// Returns the new values.
     ///
     /// This is useful for extracting the primary key values for patchset operations,
     /// where the PK values are stored in the new values.
     #[inline]
-    pub(crate) fn new_values(&self) -> Vec<MaybeValue> {
+    pub(crate) fn new_values(&self) -> Vec<MaybeValue<S, B>>
+    where
+        S: Clone,
+        B: Clone,
+    {
         self.values.iter().map(|((), new)| new.clone()).collect()
     }
 
@@ -187,7 +213,7 @@ impl<T: DynTable> Update<T, PatchsetFormat> {
     pub fn set(
         mut self,
         col_idx: usize,
-        new: impl Into<Value>,
+        new: impl Into<Value<S, B>>,
     ) -> Result<Self, crate::errors::Error> {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
@@ -212,292 +238,19 @@ impl<T: DynTable> Update<T, PatchsetFormat> {
     /// use sqlite_diff_rs::{Update, PatchsetFormat, TableSchema};
     ///
     /// // CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT)
-    /// let schema = TableSchema::new("items".into(), 2, vec![1, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("items".into(), 2, vec![1, 0]);
     ///
     /// // UPDATE items SET description = NULL WHERE id = 1
-    /// let update = Update::<_, PatchsetFormat>::from(schema)
+    /// let update = Update::<_, PatchsetFormat, String, Vec<u8>>::from(schema)
     ///     .set(0, 1i64).unwrap()
     ///     .set_null(1).unwrap();
     /// ```
-    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error> {
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error>
+    where
+        S: Default,
+        B: Default,
+    {
         self.set(col_idx, Value::Null)
     }
 }
 
-// =============================================================================
-// sqlparser integration
-// =============================================================================
-
-#[cfg(feature = "sqlparser")]
-mod sqlparser_impl {
-    use alloc::boxed::Box;
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use core::fmt::{self, Display};
-
-    use sqlparser::ast::{
-        self, Assignment, AssignmentTarget, CreateTable, Expr, Ident, TableFactor, TableWithJoins,
-        helpers::attached_token::AttachedToken,
-    };
-
-    use super::Update;
-    use crate::builders::ChangesetFormat;
-    use crate::builders::PatchsetFormat;
-    use crate::builders::ast_helpers::{
-        extract_where_conditions, make_object_name, make_table_factor,
-    };
-    use crate::encoding::serial::sqlparser::maybe_value_to_expr;
-    use crate::encoding::{MaybeValue, Value};
-    use crate::errors::UpdateConversionError;
-    use crate::schema::{DynTable, sqlparser::get_pk_indices};
-
-    impl<'a> Update<&'a CreateTable, ChangesetFormat> {
-        /// Try to create an Update from a sqlparser UPDATE statement and a table schema.
-        ///
-        /// Note: This creates a changeset-style Update where we need both old and new values.
-        /// The old values for PK columns come from the WHERE clause.
-        /// For non-PK columns not in the SET clause, old = new = None (undefined/unchanged).
-        /// For non-PK columns in the SET clause, old is set to None (unknown from SQL alone).
-        ///
-        /// # Errors
-        ///
-        /// Returns `UpdateConversionError` if the UPDATE statement cannot be converted.
-        pub(crate) fn try_from_ast(
-            update: &ast::Update,
-            schema: &'a CreateTable,
-        ) -> Result<Self, UpdateConversionError> {
-            // Validate table name
-            let update_table_name = match &update.table.relation {
-                TableFactor::Table { name, .. } => name.0.last().map_or("", |part| match part {
-                    ast::ObjectNamePart::Identifier(ident) => ident.value.as_str(),
-                    ast::ObjectNamePart::Function(func) => func.name.value.as_str(),
-                }),
-                _ => "",
-            };
-
-            let schema_name = schema.name();
-            if update_table_name != schema_name {
-                return Err(UpdateConversionError::TableNameMismatch {
-                    expected: schema_name.into(),
-                    got: update_table_name.into(),
-                });
-            }
-
-            // Extract PK values from WHERE clause
-            let where_clause = update
-                .selection
-                .as_ref()
-                .ok_or(UpdateConversionError::NoWhereClause)?;
-            let where_conditions =
-                extract_where_conditions(where_clause, UpdateConversionError::CannotExtractPK)?;
-
-            // Get schema info
-            let pk_indices = get_pk_indices(schema);
-            let num_cols = schema.number_of_columns();
-
-            // Initialize old and new values as undefined (None)
-            let mut old_values: Vec<MaybeValue> = vec![None; num_cols];
-            let mut new_values: Vec<MaybeValue> = vec![None; num_cols];
-
-            // Set PK columns from WHERE clause (old = new for PKs)
-            for &pk_idx in &pk_indices {
-                let col_name = &schema.columns[pk_idx].name.value;
-                let pk_value = where_conditions
-                    .iter()
-                    .find(|(name, _)| name == col_name)
-                    .map(|(_, v)| v.clone())
-                    .ok_or_else(|| UpdateConversionError::MissingPKColumn {
-                        column: col_name.clone(),
-                    })?;
-                old_values[pk_idx] = Some(pk_value.clone());
-                new_values[pk_idx] = Some(pk_value);
-            }
-
-            // Apply SET assignments (only affects new_values, old remains Undefined)
-            for assignment in &update.assignments {
-                let col_name = match &assignment.target {
-                    AssignmentTarget::ColumnName(name) => name
-                        .0
-                        .last()
-                        .map(|part| match part {
-                            ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
-                            ast::ObjectNamePart::Function(func) => func.name.value.clone(),
-                        })
-                        .unwrap_or_default(),
-                    AssignmentTarget::Tuple(_) => continue,
-                };
-
-                let col_idx = schema
-                    .columns
-                    .iter()
-                    .position(|c| c.name.value == col_name)
-                    .ok_or_else(|| UpdateConversionError::ColumnMismatch {
-                        column: col_name.clone(),
-                    })?;
-
-                let new_value = Value::try_from(&assignment.value)?;
-                new_values[col_idx] = Some(new_value);
-            }
-
-            Ok(Self {
-                table: schema,
-                values: old_values.into_iter().zip(new_values).collect(),
-            })
-        }
-    }
-
-    impl<'a> Update<&'a CreateTable, PatchsetFormat> {
-        /// Try to create a patchset Update from a sqlparser UPDATE statement and a table schema.
-        ///
-        /// In patchset format only new values are stored:
-        /// - PK columns get their values from the WHERE clause.
-        /// - SET columns get their new values from the assignments.
-        /// - All other columns remain undefined.
-        ///
-        /// # Errors
-        ///
-        /// Returns `UpdateConversionError` if the UPDATE statement cannot be converted.
-        pub(crate) fn try_from_ast(
-            update: &ast::Update,
-            schema: &'a CreateTable,
-        ) -> Result<Self, UpdateConversionError> {
-            // Validate table name
-            let update_table_name = match &update.table.relation {
-                TableFactor::Table { name, .. } => name.0.last().map_or("", |part| match part {
-                    ast::ObjectNamePart::Identifier(ident) => ident.value.as_str(),
-                    ast::ObjectNamePart::Function(func) => func.name.value.as_str(),
-                }),
-                _ => "",
-            };
-
-            let schema_name = schema.name();
-            if update_table_name != schema_name {
-                return Err(UpdateConversionError::TableNameMismatch {
-                    expected: schema_name.into(),
-                    got: update_table_name.into(),
-                });
-            }
-
-            // Extract PK values from WHERE clause
-            let where_clause = update
-                .selection
-                .as_ref()
-                .ok_or(UpdateConversionError::NoWhereClause)?;
-            let where_conditions =
-                extract_where_conditions(where_clause, UpdateConversionError::CannotExtractPK)?;
-
-            // Get schema info
-            let pk_indices = get_pk_indices(schema);
-            let num_cols = schema.number_of_columns();
-
-            // Initialize new values as undefined (None)
-            let mut new_values: Vec<MaybeValue> = vec![None; num_cols];
-
-            // Set PK columns from WHERE clause
-            for &pk_idx in &pk_indices {
-                let col_name = &schema.columns[pk_idx].name.value;
-                let pk_value = where_conditions
-                    .iter()
-                    .find(|(name, _)| name == col_name)
-                    .map(|(_, v)| v.clone())
-                    .ok_or_else(|| UpdateConversionError::MissingPKColumn {
-                        column: col_name.clone(),
-                    })?;
-                new_values[pk_idx] = Some(pk_value);
-            }
-
-            // Apply SET assignments
-            for assignment in &update.assignments {
-                let col_name = match &assignment.target {
-                    AssignmentTarget::ColumnName(name) => name
-                        .0
-                        .last()
-                        .map(|part| match part {
-                            ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
-                            ast::ObjectNamePart::Function(func) => func.name.value.clone(),
-                        })
-                        .unwrap_or_default(),
-                    AssignmentTarget::Tuple(_) => continue,
-                };
-
-                let col_idx = schema
-                    .columns
-                    .iter()
-                    .position(|c| c.name.value == col_name)
-                    .ok_or_else(|| UpdateConversionError::ColumnMismatch {
-                        column: col_name.clone(),
-                    })?;
-
-                let new_value = Value::try_from(&assignment.value)?;
-                new_values[col_idx] = Some(new_value);
-            }
-
-            Ok(Self {
-                table: schema,
-                values: new_values.into_iter().map(|new| ((), new)).collect(),
-            })
-        }
-    }
-
-    impl From<&Update<CreateTable, ChangesetFormat>> for ast::Update {
-        fn from(update: &Update<CreateTable, ChangesetFormat>) -> Self {
-            let table = update.as_ref();
-            let values = update.values();
-            let pk_indices = get_pk_indices(table);
-
-            // Build assignments for changed non-PK columns
-            let assignments: Vec<Assignment> = values
-                .iter()
-                .enumerate()
-                .filter(|(i, (old, new))| !pk_indices.contains(i) && old != new)
-                .map(|(i, (_, new))| Assignment {
-                    target: AssignmentTarget::ColumnName(make_object_name(
-                        &table.columns[i].name.value,
-                    )),
-                    value: maybe_value_to_expr(new),
-                })
-                .collect();
-
-            // Build WHERE clause from PK columns
-            let selection = pk_indices
-                .iter()
-                .map(|&pk_idx| {
-                    let (old, _) = &values[pk_idx];
-                    Expr::BinaryOp {
-                        left: Box::new(Expr::Identifier(Ident::new(
-                            &table.columns[pk_idx].name.value,
-                        ))),
-                        op: ast::BinaryOperator::Eq,
-                        right: Box::new(maybe_value_to_expr(old)),
-                    }
-                })
-                .reduce(|acc, expr| Expr::BinaryOp {
-                    left: Box::new(acc),
-                    op: ast::BinaryOperator::And,
-                    right: Box::new(expr),
-                });
-
-            ast::Update {
-                update_token: AttachedToken::empty(),
-                optimizer_hint: None,
-                table: TableWithJoins {
-                    relation: make_table_factor(table.name()),
-                    joins: vec![],
-                },
-                assignments,
-                from: None,
-                selection,
-                returning: None,
-                or: None,
-                limit: None,
-            }
-        }
-    }
-
-    impl Display for Update<CreateTable, ChangesetFormat> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let stmt: ast::Update = self.into();
-            write!(f, "{stmt}")
-        }
-    }
-}

@@ -15,7 +15,7 @@ use uuid::{NoContext, Timestamp, Uuid};
 // ---------------------------------------------------------------------------
 
 /// messages (id BLOB PK, sender_id BLOB, receiver_id BLOB, body TEXT, created_at TEXT)
-pub fn messages_schema() -> TableSchema {
+pub fn messages_schema() -> TableSchema<String> {
     TableSchema::new("messages".into(), 5, vec![1, 0, 0, 0, 0])
 }
 

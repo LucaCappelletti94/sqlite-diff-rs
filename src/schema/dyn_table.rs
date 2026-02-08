@@ -63,11 +63,17 @@ pub trait SchemaWithPK: DynTable + Clone + Hash {
     ///
     /// The values slice must have length equal to `number_of_columns()`.
     /// Returns the PK values in column order, typed appropriately.
-    fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value>;
+    fn extract_pk<S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>(
+        &self,
+        values: &[Value<S, B>],
+    ) -> alloc::vec::Vec<Value<S, B>>;
 }
 
 impl<T: SchemaWithPK> SchemaWithPK for &T {
-    fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value> {
+    fn extract_pk<S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>(
+        &self,
+        values: &[Value<S, B>],
+    ) -> alloc::vec::Vec<Value<S, B>> {
         T::extract_pk(self, values)
     }
 }

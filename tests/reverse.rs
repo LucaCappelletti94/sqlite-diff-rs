@@ -10,8 +10,7 @@
 
 use rusqlite::Connection;
 use sqlite_diff_rs::testing::{apply_changeset, get_all_rows, parse_schema};
-use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangesetFormat, Insert, Reverse, Update};
-use sqlparser::ast::CreateTable;
+use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangesetFormat, Insert, Reverse, SimpleTable, Update};
 
 // =============================================================================
 // Basic reversal tests
@@ -22,7 +21,7 @@ fn test_reverse_single_insert() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -47,7 +46,7 @@ fn test_reverse_single_delete() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -64,7 +63,7 @@ fn test_reverse_single_update() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let update = Update::<CreateTable, ChangesetFormat>::from(schema.clone())
+    let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
         .unwrap() // PK unchanged
         .set(1, "Alice", "Alicia")
@@ -81,19 +80,19 @@ fn test_reverse_multiple_operations() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let insert1 = Insert::from(schema.clone())
+    let insert1 = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
         .unwrap();
 
-    let insert2 = Insert::from(schema.clone())
+    let insert2 = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 2i64)
         .unwrap()
         .set(1, "Bob")
         .unwrap();
 
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 3i64)
         .unwrap()
         .set(1, "Charlie")
@@ -117,7 +116,7 @@ fn test_double_reverse_is_identity() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -135,7 +134,7 @@ fn test_double_reverse_complex() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -143,7 +142,7 @@ fn test_double_reverse_complex() {
         .set(2, 30i64)
         .unwrap();
 
-    let update = Update::<CreateTable, ChangesetFormat>::from(schema.clone())
+    let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 2i64, 2i64)
         .unwrap()
         .set(1, "Bob", "Robert")
@@ -151,7 +150,7 @@ fn test_double_reverse_complex() {
         .set(2, 25i64, 26i64)
         .unwrap();
 
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 3i64)
         .unwrap()
         .set(1, "Charlie")
@@ -184,7 +183,7 @@ fn test_apply_and_reverse_insert() {
 
     // Apply an insert to conn1
     let schema = parse_schema(schema_sql);
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -227,7 +226,7 @@ fn test_apply_and_reverse_delete() {
 
     // Delete from conn1
     let schema = parse_schema(schema_sql);
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
@@ -275,7 +274,7 @@ fn test_apply_and_reverse_update() {
 
     // Update in conn1
     let schema = parse_schema(schema_sql);
-    let update = Update::<CreateTable, ChangesetFormat>::from(schema.clone())
+    let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
         .unwrap()
         .set(1, "Alice", "Alicia")
@@ -334,19 +333,19 @@ fn test_apply_and_reverse_multiple_operations() {
     let schema = parse_schema(schema_sql);
 
     // Create a changeset with multiple operations
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 3i64)
         .unwrap()
         .set(1, "Charlie")
         .unwrap();
 
-    let update = Update::<CreateTable, ChangesetFormat>::from(schema.clone())
+    let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
         .unwrap()
         .set(1, "Alice", "Alicia")
         .unwrap();
 
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 2i64)
         .unwrap()
         .set(1, "Bob")
@@ -388,7 +387,7 @@ fn test_reverse_with_composite_primary_key() {
     let schema_sql = "CREATE TABLE orders (user_id INTEGER, order_id INTEGER, status TEXT, PRIMARY KEY (user_id, order_id))";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, 100i64)
@@ -409,7 +408,7 @@ fn test_reverse_with_null_values() {
     let schema_sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set_null(1)
@@ -430,7 +429,7 @@ fn test_reverse_with_null_values() {
 
 #[test]
 fn test_reverse_empty_changeset() {
-    let changeset: ChangeSet<CreateTable> = ChangeSet::new();
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
     let reversed = changeset.clone().reverse();
 
     assert_eq!(reversed.len(), 0);
@@ -444,13 +443,13 @@ fn test_reverse_consolidated_operations() {
     let schema = parse_schema(schema_sql);
 
     // INSERT + UPDATE consolidates to INSERT with updated values
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
         .unwrap();
 
-    let update = Update::<CreateTable, ChangesetFormat>::from(schema.clone())
+    let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
         .unwrap()
         .set(1, "Alice", "Alicia")
@@ -477,13 +476,13 @@ fn test_reverse_cancelled_operations() {
     let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let schema = parse_schema(schema_sql);
 
-    let insert = Insert::from(schema.clone())
+    let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")
         .unwrap();
 
-    let delete = ChangeDelete::from(schema.clone())
+    let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
         .set(1, "Alice")

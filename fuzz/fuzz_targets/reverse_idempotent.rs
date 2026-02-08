@@ -6,14 +6,13 @@
 //! 3. No panics occur during reversal
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::{ChangeSet, Reverse};
-use sqlparser::ast::CreateTable;
+use sqlite_diff_rs::{ChangeSet, Reverse, SimpleTable};
 
 fn main() {
     loop {
         fuzz!(|data: String| {
             // Try to parse as a changeset
-            let Ok(changeset) = data.parse::<ChangeSet<CreateTable>>() else {
+            let Ok(changeset) = data.parse::<ChangeSet<SimpleTable, String, Vec<u8>>>() else {
                 return;
             };
 

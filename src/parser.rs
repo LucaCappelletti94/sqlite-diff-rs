@@ -84,9 +84,9 @@ pub enum FormatMarker {
 /// This type implements [`DynTable`] and [`SchemaWithPK`], allowing it
 /// to be used with [`DiffSetBuilder`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TableSchema {
+pub struct TableSchema<S> {
     /// The table name.
-    name: String,
+    name: S,
     /// Number of columns.
     column_count: usize,
     /// Primary key flags - raw bytes from the changeset/patchset.
@@ -98,11 +98,11 @@ pub struct TableSchema {
     pk_flags: Vec<u8>,
 }
 
-impl TableSchema {
+impl<S> TableSchema<S> {
     /// Create a new parsed table schema.
     #[inline]
     #[must_use]
-    pub fn new(name: String, column_count: usize, pk_flags: Vec<u8>) -> Self {
+    pub fn new(name: S, column_count: usize, pk_flags: Vec<u8>) -> Self {
         debug_assert_eq!(pk_flags.len(), column_count);
         Self {
             name,
@@ -114,7 +114,7 @@ impl TableSchema {
     /// Returns the name of the table.
     #[inline]
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &S {
         &self.name
     }
 
@@ -140,10 +140,10 @@ impl TableSchema {
     }
 }
 
-impl DynTable for TableSchema {
+impl<S: AsRef<str> + Clone + Eq + core::fmt::Debug> DynTable for TableSchema<S> {
     #[inline]
     fn name(&self) -> &str {
-        &self.name
+        self.name.as_ref()
     }
 
     #[inline]
@@ -158,8 +158,12 @@ impl DynTable for TableSchema {
     }
 }
 
-impl SchemaWithPK for TableSchema {
-    fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value> {
+impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWithPK for TableSchema<N> {
+    fn extract_pk<S, B>(&self, values: &[Value<S, B>]) -> Vec<Value<S, B>>
+    where
+        S: Clone + AsRef<str>,
+        B: Clone + AsRef<[u8]>,
+    {
         self.pk_indices()
             .into_iter()
             .map(|i| values[i].clone())
@@ -171,9 +175,9 @@ impl SchemaWithPK for TableSchema {
 #[derive(Debug, Clone, Eq)]
 pub enum ParsedDiffSet {
     /// A changeset builder.
-    Changeset(DiffSetBuilder<ChangesetFormat, TableSchema>),
+    Changeset(DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>),
     /// A patchset builder.
-    Patchset(DiffSetBuilder<PatchsetFormat, TableSchema>),
+    Patchset(DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>),
 }
 
 impl PartialEq for ParsedDiffSet {
@@ -267,7 +271,7 @@ impl ParsedDiffSet {
 /// Returns a `ParseError` if the data is malformed or not a valid changeset.
 fn parse_as_changeset(
     data: &[u8],
-) -> Result<DiffSetBuilder<ChangesetFormat, TableSchema>, ParseError> {
+) -> Result<DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
     let mut builder = DiffSetBuilder::new();
     let mut pos = 0;
 
@@ -302,7 +306,7 @@ fn parse_as_changeset(
 /// Returns a `ParseError` if the data is malformed or not a valid patchset.
 fn parse_as_patchset(
     data: &[u8],
-) -> Result<DiffSetBuilder<PatchsetFormat, TableSchema>, ParseError> {
+) -> Result<DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
     let mut builder = DiffSetBuilder::new();
     let mut pos = 0;
 
@@ -334,7 +338,7 @@ fn parse_as_patchset(
 fn parse_table_header(
     data: &[u8],
     base_pos: usize,
-) -> Result<(TableSchema, FormatMarker, usize), ParseError> {
+) -> Result<(TableSchema<String>, FormatMarker, usize), ParseError> {
     let mut pos = 0;
 
     if data.is_empty() {
@@ -385,8 +389,8 @@ fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, usize), P
 fn parse_changeset_operation(
     data: &[u8],
     base_pos: usize,
-    schema: &TableSchema,
-    builder: &mut DiffSetBuilder<ChangesetFormat, TableSchema>,
+    schema: &TableSchema<String>,
+    builder: &mut DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>,
 ) -> Result<usize, ParseError> {
     let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
 
@@ -420,8 +424,8 @@ fn parse_changeset_operation(
 fn parse_patchset_operation(
     data: &[u8],
     base_pos: usize,
-    schema: &TableSchema,
-    builder: &mut DiffSetBuilder<PatchsetFormat, TableSchema>,
+    schema: &TableSchema<String>,
+    builder: &mut DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>,
 ) -> Result<usize, ParseError> {
     let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
 
@@ -441,7 +445,7 @@ fn parse_patchset_operation(
             // but the builder stores them sorted by pk_ordinal (matching the serializer).
             let full_values = expand_pk_values(&schema.pk_flags, pk_values, schema.column_count);
             // Convert MaybeValue to Value for extract_pk (PK values should always be defined)
-            let full_values_concrete: Vec<Value> = full_values
+            let full_values_concrete: Vec<Value<String, Vec<u8>>> = full_values
                 .into_iter()
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
@@ -470,10 +474,10 @@ fn parse_patchset_operation(
 /// PK values are expected in the order they appear in pk_flags (not sorted by ordinal).
 fn expand_pk_values(
     pk_flags: &[u8],
-    pk_values: Vec<MaybeValue>,
+    pk_values: Vec<MaybeValue<String, Vec<u8>>>,
     column_count: usize,
-) -> Vec<MaybeValue> {
-    let mut full: Vec<MaybeValue> = vec![None; column_count];
+) -> Vec<MaybeValue<String, Vec<u8>>> {
+    let mut full: Vec<MaybeValue<String, Vec<u8>>> = vec![None; column_count];
     let mut pk_iter = pk_values.into_iter();
     for (i, &pk_ordinal) in pk_flags.iter().enumerate() {
         if pk_ordinal > 0
@@ -490,7 +494,7 @@ fn parse_values(
     data: &[u8],
     base_pos: usize,
     count: usize,
-) -> Result<(Vec<MaybeValue>, usize), ParseError> {
+) -> Result<(Vec<MaybeValue<String, Vec<u8>>>, usize), ParseError> {
     let mut values = Vec::with_capacity(count);
     let mut pos = 0;
 
@@ -503,6 +507,7 @@ fn parse_values(
 
     Ok((values, pos))
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -619,7 +624,7 @@ mod tests {
 
     #[test]
     fn test_parsed_table_schema_dyn_table() {
-        let schema = TableSchema::new("users".into(), 3, vec![1, 0, 0]);
+        let schema: TableSchema<String> = TableSchema::new("users".into(), 3, vec![1, 0, 0]);
         assert_eq!(schema.name(), "users");
         assert_eq!(schema.number_of_columns(), 3);
 
@@ -630,13 +635,14 @@ mod tests {
 
     #[test]
     fn test_parsed_table_schema_extract_pk() {
-        let schema = TableSchema::new("users".into(), 3, vec![1, 0, 2]);
-        let values = vec![
+        let schema: TableSchema<String> = TableSchema::new("users".into(), 3, vec![1, 0, 2]);
+        let values: Vec<Value<String, Vec<u8>>> = vec![
             Value::Integer(1),
             Value::Text("alice".into()),
             Value::Integer(100),
         ];
         let pk = schema.extract_pk(&values);
-        assert_eq!(pk, vec![Value::Integer(1), Value::Integer(100)]);
+        let expected: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Integer(100)];
+        assert_eq!(pk, expected);
     }
 }

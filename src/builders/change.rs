@@ -29,15 +29,18 @@
 
 use indexmap::IndexMap as IndexMapRaw;
 
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::Hash;
+
 use crate::{
     SchemaWithPK,
     builders::{
         ChangeDelete, ChangesetFormat, Insert, Operation, PatchsetFormat, Update, format::Format,
     },
-    encoding::{MaybeValue, Value, encode_value},
+    encoding::{MaybeValue, Value, encode_defined_value, encode_undefined, encode_value},
 };
-use alloc::vec;
-use alloc::vec::Vec;
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
 type IndexMap<K, V> = IndexMapRaw<K, V, hashbrown::DefaultHashBuilder>;
@@ -78,7 +81,7 @@ fn session_hash_append_blob(mut h: u32, data: &[u8]) -> u32 {
 ///
 /// For each PK value: `h = HASH_APPEND(h, type_code)`, then hash the value.
 /// Type codes match SQLite: INTEGER=1, FLOAT=2, TEXT=3, BLOB=4.
-fn session_hash_pk(pk: &[Value]) -> u32 {
+fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
     let mut h: u32 = 0;
     for value in pk {
         match value {
@@ -94,11 +97,11 @@ fn session_hash_pk(pk: &[Value]) -> u32 {
             }
             Value::Text(s) => {
                 h = hash_append(h, 3); // SQLITE_TEXT
-                h = session_hash_append_blob(h, s.as_bytes());
+                h = session_hash_append_blob(h, s.as_ref().as_bytes());
             }
             Value::Blob(b) => {
                 h = hash_append(h, 4); // SQLITE_BLOB
-                h = session_hash_append_blob(h, b);
+                h = session_hash_append_blob(h, b.as_ref());
             }
             Value::Null => {
                 // NULL PKs: SQLite skips hashing for these.
@@ -118,13 +121,13 @@ fn session_hash_pk(pk: &[Value]) -> u32 {
 ///
 /// This function returns indices into `rows` in the order that SQLite's
 /// changeset/patchset output would contain them.
-fn session_row_order<V>(rows: &IndexMap<Vec<Value>, V>) -> Vec<usize> {
+fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(rows: &IndexMap<Vec<Value<S, B>>, V>) -> Vec<usize> {
     let n = rows.len();
     if n == 0 {
         return Vec::new();
     }
 
-    let pks: Vec<&Vec<Value>> = rows.keys().collect();
+    let pks: Vec<&Vec<Value<S, B>>> = rows.keys().collect();
 
     // Simulate the hash table. We store each bucket as a Vec of entry indices
     // in the REVERSE of SQLite's linked-list order (we push; SQLite prepends).
@@ -176,10 +179,10 @@ fn session_row_order<V>(rows: &IndexMap<Vec<Value>, V>) -> Vec<usize> {
 
 /// Builder for constructing changeset or patchset binary data.
 ///
-/// Generic over the format `F` (Changeset or Patchset) and table schema `T`.
-#[derive(Debug, Clone, Eq)]
-pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
-    tables: IndexMap<T, IndexMap<Vec<Value>, Operation<F>>>,
+/// Generic over the format `F` (Changeset or Patchset), table schema `T`, and value types `S`, `B`.
+#[derive(Debug, Clone)]
+pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>> {
+    pub(crate) tables: IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>,
 }
 
 /// Custom PartialEq that ignores tables with empty operations.
@@ -192,7 +195,13 @@ pub struct DiffSetBuilder<F: Format, T: SchemaWithPK> {
 /// changesets/patchsets when all operations cancel out. Our builder keeps them
 /// in memory to preserve table ordering, but they are correctly excluded here
 /// and in `build()`.
-impl<F: Format, T: SchemaWithPK> PartialEq for DiffSetBuilder<F, T> {
+impl<F: Format<S, B>, T: SchemaWithPK, S, B> PartialEq for DiffSetBuilder<F, T, S, B>
+where
+    S: PartialEq + Eq + Hash + AsRef<str>,
+    B: PartialEq + Eq + Hash + AsRef<[u8]>,
+    F::Old: PartialEq,
+    F::DeleteData: PartialEq,
+{
     fn eq(&self, other: &Self) -> bool {
         // Filter out tables with empty operations, then compare element by element.
         // IndexMap preserves insertion order, so this also checks table ordering.
@@ -203,48 +212,57 @@ impl<F: Format, T: SchemaWithPK> PartialEq for DiffSetBuilder<F, T> {
     }
 }
 
-/// Type alias for building changesets.
-pub type ChangeSet<T> = DiffSetBuilder<ChangesetFormat, T>;
-/// Type alias for building patchsets.
-pub type PatchSet<T> = DiffSetBuilder<PatchsetFormat, T>;
+impl<F: Format<S, B>, T: SchemaWithPK, S, B> Eq for DiffSetBuilder<F, T, S, B>
+where
+    S: Eq + Hash + AsRef<str>,
+    B: Eq + Hash + AsRef<[u8]>,
+    F::Old: Eq,
+    F::DeleteData: Eq,
+{}
 
-impl<F: Format, T: SchemaWithPK> Default for DiffSetBuilder<F, T> {
+
+/// Type alias for building changesets.
+pub type ChangeSet<T, S, B> = DiffSetBuilder<ChangesetFormat, T, S, B>;
+/// Type alias for building patchsets.
+pub type PatchSet<T, S, B> = DiffSetBuilder<PatchsetFormat, T, S, B>;
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq> Default for DiffSetBuilder<F, T, S, B> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: SchemaWithPK> From<&DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8> {
     #[inline]
-    fn from(builder: &DiffSetBuilder<ChangesetFormat, T>) -> Self {
+    fn from(builder: &DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK> From<DiffSetBuilder<ChangesetFormat, T>> for Vec<u8> {
+impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8> {
     #[inline]
-    fn from(builder: DiffSetBuilder<ChangesetFormat, T>) -> Self {
+    fn from(builder: DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK> From<&DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq> From<&DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8> {
     #[inline]
-    fn from(builder: &DiffSetBuilder<PatchsetFormat, T>) -> Self {
+    fn from(builder: &DiffSetBuilder<PatchsetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK> From<DiffSetBuilder<PatchsetFormat, T>> for Vec<u8> {
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq> From<DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8> {
     #[inline]
-    fn from(builder: DiffSetBuilder<PatchsetFormat, T>) -> Self {
+    fn from(builder: DiffSetBuilder<PatchsetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
 use crate::encoding::op_codes;
 
-impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq> DiffSetBuilder<F, T, S, B> {
     /// Create a new builder.
     #[inline]
     #[must_use]
@@ -259,7 +277,7 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     /// If the table doesn't exist yet, it's inserted at the end of the
     /// `IndexMap`, preserving first-touch ordering.
     #[inline]
-    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value>, Operation<F>> {
+    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value<S, B>>, Operation<F, S, B>> {
         self.tables.entry(table.clone()).or_default()
     }
 
@@ -305,9 +323,11 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
     /// Add any operation, consolidating with existing operations on the same row.
     ///
     /// The table schema is passed separately — operations are schema-less.
-    fn add_operation(mut self, table: &T, pk: Vec<Value>, new_op: Operation<F>) -> Self
+    fn add_operation(mut self, table: &T, pk: Vec<Value<S, B>>, new_op: Operation<F, S, B>) -> Self
     where
-        Operation<F>: core::ops::Add<Output = Option<Operation<F>>>,
+        S: Clone,
+        B: Clone,
+        Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
     {
         let rows = self.ensure_table(table);
 
@@ -348,54 +368,62 @@ impl<F: Format, T: SchemaWithPK> DiffSetBuilder<F, T> {
 // Changeset-specific builder methods
 // ============================================================================
 
-impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add an INSERT operation.
     #[must_use]
-    pub fn insert(self, insert: Insert<T>) -> Self {
+    pub fn insert(self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.as_ref().extract_pk(insert.values());
         let table = insert.as_ref().clone();
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add an INSERT operation from raw values (internal use).
     ///
     /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
-        // Convert MaybeValue to Value, using Null for undefined
-        let values: Vec<Value> = values
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
+        // Convert MaybeValue to Value<S, B>, using Null for undefined
+        let values: Vec<Value<S, B>> = values
             .into_iter()
             .map(|v| v.unwrap_or(Value::Null))
             .collect();
         let pk = table.extract_pk(&values);
         self.add_operation(table, pk, Operation::Insert(values))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add a DELETE operation.
     #[must_use]
-    pub fn delete(self, delete: ChangeDelete<T>) -> Self {
+    pub fn delete(self, delete: ChangeDelete<T, S, B>) -> Self {
         let pk = delete.as_ref().extract_pk(delete.values());
         let table = delete.as_ref().clone();
         self.add_operation(&table, pk, Operation::Delete(delete.into_values()))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add a DELETE operation from raw values (internal use).
     ///
     /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn delete_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
-        // Convert MaybeValue to Value, using Null for undefined
-        let values: Vec<Value> = values
+    pub(crate) fn delete_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
+        // Convert MaybeValue to Value<S, B>, using Null for undefined
+        let values: Vec<Value<S, B>> = values
             .into_iter()
             .map(|v| v.unwrap_or(Value::Null))
             .collect();
         let pk = table.extract_pk(&values);
         self.add_operation(table, pk, Operation::Delete(values))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add an UPDATE operation.
     #[must_use]
-    pub fn update(self, update: Update<T, ChangesetFormat>) -> Self {
+    pub fn update(self, update: Update<T, ChangesetFormat, S, B>) -> Self {
         // Extract PK from old values (convert None to Null for PK extraction)
         let old_values: Vec<_> = update
             .values()
@@ -404,25 +432,27 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
             .collect();
         let pk = update.as_ref().extract_pk(&old_values);
         let table = update.as_ref().clone();
-        let values: Vec<(MaybeValue, MaybeValue)> = update.into();
+        let values: Vec<(MaybeValue<S, B>, MaybeValue<S, B>)> = update.into();
         self.add_operation(&table, pk, Operation::Update(values))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Add an UPDATE operation from raw values (internal use).
     #[must_use]
     pub(crate) fn update_raw(
         self,
         table: &T,
-        old_values: Vec<MaybeValue>,
-        new_values: Vec<MaybeValue>,
+        old_values: Vec<MaybeValue<S, B>>,
+        new_values: Vec<MaybeValue<S, B>>,
     ) -> Self {
         // Extract PK using concrete values (convert None to Null)
-        let pk_values: Vec<Value> = old_values
+        let pk_values: Vec<Value<S, B>> = old_values
             .iter()
             .map(|v| v.clone().unwrap_or(Value::Null))
             .collect();
         let pk = table.extract_pk(&pk_values);
-        let values: Vec<(MaybeValue, MaybeValue)> =
+        let values: Vec<(MaybeValue<S, B>, MaybeValue<S, B>)> =
             old_values.into_iter().zip(new_values).collect();
         self.add_operation(table, pk, Operation::Update(values))
     }
@@ -432,22 +462,24 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
 // Patchset-specific builder methods
 // ============================================================================
 
-impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
     /// Add an INSERT operation.
     #[must_use]
-    pub fn insert(self, insert: Insert<T>) -> Self {
+    pub fn insert(self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.as_ref().extract_pk(insert.values());
         let table = insert.as_ref().clone();
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
+}
 
+impl<T: SchemaWithPK, S: Default + Clone + Hash + Eq + AsRef<str>, B: Default + Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
     /// Add an INSERT operation from raw values (internal use).
     ///
     /// Values should all be defined (Some). Undefined values are converted to Null.
     #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue>) -> Self {
+    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
         // Convert MaybeValue to Value, using Null for undefined
-        let values: Vec<Value> = values
+        let values: Vec<Value<S, B>> = values
             .into_iter()
             .map(|v| v.unwrap_or(Value::Null))
             .collect();
@@ -467,13 +499,13 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// use sqlite_diff_rs::{PatchSet, SchemaWithPK, TableSchema};
     ///
     /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
-    /// let schema = TableSchema::new("users".into(), 2, vec![1, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // Delete row where id = 1
-    /// let patchset = PatchSet::new().delete(&schema, &[1i64.into()]);
+    /// let patchset = PatchSet::<_, String, Vec<u8>>::new().delete(&schema, &[1i64.into()]);
     /// ```
     #[must_use]
-    pub fn delete(self, table: &T, pk: &[Value]) -> Self {
+    pub fn delete(self, table: &T, pk: &[Value<S, B>]) -> Self {
         self.add_operation(table, pk.to_vec(), Operation::Delete(()))
     }
 
@@ -488,39 +520,39 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
     /// use sqlite_diff_rs::{PatchSet, PatchsetFormat, Update, TableSchema};
     ///
     /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
-    /// let schema = TableSchema::new("users".into(), 2, vec![1, 0]);
+    /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // UPDATE users SET name = 'Bob' WHERE id = 1
-    /// let update = Update::<_, PatchsetFormat>::from(schema)
+    /// let update = Update::<_, PatchsetFormat, String, Vec<u8>>::from(schema)
     ///     .set(0, 1i64).unwrap()  // PK value
     ///     .set(1, "Bob").unwrap();
     ///
-    /// let patchset = PatchSet::new().update(update);
+    /// let patchset = PatchSet::<_, String, Vec<u8>>::new().update(update);
     /// ```
     #[must_use]
-    pub fn update(self, update: Update<T, PatchsetFormat>) -> Self {
+    pub fn update(self, update: Update<T, PatchsetFormat, S, B>) -> Self {
         // Extract PK from new values (convert None to Null for PK extraction)
-        let new_values: Vec<Value> = update
+        let new_values: Vec<Value<S, B>> = update
             .new_values()
             .into_iter()
             .map(|v| v.unwrap_or(Value::Null))
             .collect();
         let pk = update.as_ref().extract_pk(&new_values);
         let table = update.as_ref().clone();
-        let values: Vec<((), MaybeValue)> = update.into();
+        let values: Vec<((), MaybeValue<S, B>)> = update.into();
         self.add_operation(&table, pk, Operation::Update(values))
     }
 
     /// Add an UPDATE operation from raw new values (internal use).
     #[must_use]
-    pub(crate) fn update_raw(self, table: &T, new_values: Vec<MaybeValue>) -> Self {
+    pub(crate) fn update_raw(self, table: &T, new_values: Vec<MaybeValue<S, B>>) -> Self {
         // Extract PK using concrete values (convert None to Null)
-        let pk_values: Vec<Value> = new_values
+        let pk_values: Vec<Value<S, B>> = new_values
             .iter()
             .map(|v| v.clone().unwrap_or(Value::Null))
             .collect();
         let pk = table.extract_pk(&pk_values);
-        let values: Vec<((), MaybeValue)> = new_values.into_iter().map(|v| ((), v)).collect();
+        let values: Vec<((), MaybeValue<S, B>)> = new_values.into_iter().map(|v| ((), v)).collect();
         self.add_operation(table, pk, Operation::Update(values))
     }
 }
@@ -529,7 +561,7 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
 // Unified build implementation
 // ============================================================================
 
-impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
+impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
     /// Build the changeset binary data.
     ///
     /// Returns the binary representation compatible with SQLite's session extension.
@@ -580,7 +612,7 @@ impl<T: SchemaWithPK> DiffSetBuilder<ChangesetFormat, T> {
     }
 }
 
-impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
     /// Build the patchset binary data.
     ///
     /// Returns the binary representation compatible with SQLite's session extension.
@@ -633,7 +665,7 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
                                     encode_value(&mut out, &Some(pk[pk_pos].clone()));
                                 } else {
-                                    encode_value(&mut out, &None);
+                                    encode_value::<S, B>(&mut out, &None);
                                 }
                             }
                         }
@@ -646,12 +678,12 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
                         for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
                             if pk_flag > 0 {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
+                                    encode_defined_value(&mut out, &pk[pk_pos]);
                                 } else {
-                                    encode_value(&mut out, &None);
+                                    encode_undefined(&mut out);
                                 }
                             } else {
-                                encode_value(&mut out, &None);
+                                encode_undefined(&mut out);
                             }
                         }
                         // Write new values
@@ -673,11 +705,11 @@ impl<T: SchemaWithPK> DiffSetBuilder<PatchsetFormat, T> {
 
 use crate::builders::operation::Reverse;
 
-impl<T: SchemaWithPK> Reverse for DiffSetBuilder<ChangesetFormat, T> {
-    type Output = DiffSetBuilder<ChangesetFormat, T>;
+impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> Reverse for DiffSetBuilder<ChangesetFormat, T, S, B> {
+    type Output = DiffSetBuilder<ChangesetFormat, T, S, B>;
 
     fn reverse(self) -> Self::Output {
-        let mut reversed: DiffSetBuilder<ChangesetFormat, T> = DiffSetBuilder::new();
+        let mut reversed: DiffSetBuilder<ChangesetFormat, T, S, B> = DiffSetBuilder::new();
 
         for (table, rows) in self.tables {
             for (_pk, op) in rows {
@@ -745,13 +777,17 @@ mod tests {
     }
 
     impl crate::SchemaWithPK for TestTable {
-        fn extract_pk(&self, values: &[Value]) -> alloc::vec::Vec<Value> {
+        fn extract_pk<S, B>(&self, values: &[Value<S, B>]) -> alloc::vec::Vec<Value<S, B>>
+        where
+            S: Clone + AsRef<str>,
+            B: Clone + AsRef<[u8]>,
+        {
             vec![values[self.pk_column].clone()]
         }
     }
 
     // Type alias for cleaner test code
-    type ChangesetBuilder = DiffSetBuilder<ChangesetFormat, TestTable>;
+    type ChangesetBuilder = DiffSetBuilder<ChangesetFormat, TestTable, String, Vec<u8>>;
 
     #[test]
     fn test_insert_single_row() {
@@ -800,7 +836,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64) // PK unchanged
             .unwrap()
             .set(1, "alice", "bob")
@@ -881,13 +917,13 @@ mod tests {
     fn test_update_then_update_consolidates() {
         let table = TestTable::new("users", 2, 0);
 
-        let update1 = Update::<TestTable, ChangesetFormat>::from(table.clone())
+        let update1 = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64)
             .unwrap()
             .set(1, "alice", "bob")
             .unwrap();
 
-        let update2 = Update::<TestTable, ChangesetFormat>::from(table.clone())
+        let update2 = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64)
             .unwrap()
             .set(1, "bob", "charlie")
@@ -905,29 +941,29 @@ mod tests {
 
     #[test]
     fn test_reverse_operation_insert_becomes_delete() {
-        let op: Operation<ChangesetFormat> =
+        let op: Operation<ChangesetFormat, String, Vec<u8>> =
             Operation::Insert(vec![Value::Integer(1), Value::Text("alice".into())]);
         let reversed = op.reverse();
         assert!(matches!(reversed, Operation::Delete(_)));
         if let Operation::Delete(values) = reversed {
-            assert_eq!(values, vec![Value::Integer(1), Value::Text("alice".into())]);
+            assert_eq!(values, vec![Value::<String, Vec<u8>>::Integer(1), Value::Text("alice".into())]);
         }
     }
 
     #[test]
     fn test_reverse_operation_delete_becomes_insert() {
-        let op: Operation<ChangesetFormat> =
+        let op: Operation<ChangesetFormat, String, Vec<u8>> =
             Operation::Delete(vec![Value::Integer(1), Value::Text("alice".into())]);
         let reversed = op.reverse();
         assert!(matches!(reversed, Operation::Insert(_)));
         if let Operation::Insert(values) = reversed {
-            assert_eq!(values, vec![Value::Integer(1), Value::Text("alice".into())]);
+            assert_eq!(values, vec![Value::<String, Vec<u8>>::Integer(1), Value::Text("alice".into())]);
         }
     }
 
     #[test]
     fn test_reverse_operation_update_swaps_old_new() {
-        let op: Operation<ChangesetFormat> = Operation::Update(vec![
+        let op: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Update(vec![
             (Some(Value::Integer(1)), Some(Value::Integer(1))),
             (
                 Some(Value::Text("alice".into())),
@@ -997,7 +1033,7 @@ mod tests {
     #[test]
     fn test_reverse_builder_update_swaps() {
         let table = TestTable::new("users", 2, 0);
-        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64)
             .unwrap()
             .set(1, "alice", "bob")
@@ -1108,7 +1144,7 @@ mod tests {
     #[test]
     fn test_build_update_format() {
         let table = TestTable::new("t", 2, 0);
-        let update = Update::<TestTable, ChangesetFormat>::from(table.clone())
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64)
             .unwrap()
             .set(1, "a", "b")
@@ -1174,385 +1210,3 @@ mod tests {
     }
 }
 
-// =============================================================================
-// sqlparser integration (feature-gated)
-// =============================================================================
-
-#[cfg(feature = "sqlparser")]
-mod sqlparser_impl {
-    use alloc::string::{String, ToString};
-    use alloc::vec::Vec;
-    use core::fmt::{self, Display};
-    use core::str::FromStr;
-
-    use hashbrown::HashMap;
-    use sqlparser::ast::{CreateTable, Statement};
-    use sqlparser::dialect::SQLiteDialect;
-    use sqlparser::parser::Parser;
-
-    use super::{DiffSetBuilder, Operation};
-    use crate::builders::{ChangeDelete, ChangesetFormat, Insert, PatchsetFormat, Update};
-    use crate::encoding::MaybeValue;
-    use crate::errors::DiffSetParseError;
-    use crate::schema::{DynTable, SchemaWithPK};
-
-    impl DiffSetBuilder<ChangesetFormat, CreateTable> {
-        /// Try to create a DiffSetBuilder from a slice of SQL statements.
-        ///
-        /// The statements must include CREATE TABLE statements before any DML
-        /// (INSERT/UPDATE/DELETE) statements that reference those tables.
-        ///
-        /// # Errors
-        ///
-        /// Returns `DiffSetParseError` if:
-        /// - A DML statement references a table that hasn't been created yet
-        /// - A statement conversion fails
-        /// - An unsupported statement type is encountered
-        pub fn try_from_statements(statements: &[Statement]) -> Result<Self, DiffSetParseError> {
-            let mut builder = Self::new();
-            let mut schemas: HashMap<String, CreateTable> = HashMap::new();
-
-            for stmt in statements {
-                match stmt {
-                    Statement::CreateTable(create) => {
-                        let table_name = create.name().to_string();
-                        schemas.insert(table_name, create.clone());
-                    }
-                    Statement::Insert(insert) => {
-                        let table_name =
-                            crate::builders::ast_helpers::extract_table_name(match &insert.table {
-                                sqlparser::ast::TableObject::TableName(name) => name,
-                                sqlparser::ast::TableObject::TableFunction(_) => {
-                                    return Err(DiffSetParseError::UnsupportedStatement(
-                                        "Table function in INSERT".into(),
-                                    ));
-                                }
-                            });
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        let insert_op = Insert::try_from_ast(insert, schema)?;
-                        let values: Vec<MaybeValue> =
-                            insert_op.into_values().into_iter().map(Some).collect();
-                        builder = builder.insert_raw(schema, values);
-                    }
-                    Statement::Update(update) => {
-                        let table_name = match &update.table.relation {
-                            sqlparser::ast::TableFactor::Table { name, .. } => {
-                                crate::builders::ast_helpers::extract_table_name(name)
-                            }
-                            _ => {
-                                return Err(DiffSetParseError::UnsupportedStatement(
-                                    "Non-table relation in UPDATE".into(),
-                                ));
-                            }
-                        };
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        let update_op =
-                            Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)?;
-                        let values = update_op.values();
-                        let old_values: Vec<_> =
-                            values.iter().map(|(old, _)| old.clone()).collect();
-                        let new_values: Vec<_> =
-                            values.iter().map(|(_, new)| new.clone()).collect();
-                        builder = builder.update_raw(schema, old_values, new_values);
-                    }
-                    Statement::Delete(delete) => {
-                        let table_name = match &delete.from {
-                            sqlparser::ast::FromTable::WithFromKeyword(tables)
-                            | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables
-                                .first()
-                                .and_then(|t| match &t.relation {
-                                    sqlparser::ast::TableFactor::Table { name, .. } => {
-                                        Some(crate::builders::ast_helpers::extract_table_name(name))
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap_or(""),
-                        };
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
-                        let values: Vec<MaybeValue> =
-                            delete_op.into_values().into_iter().map(Some).collect();
-                        builder = builder.delete_raw(schema, values);
-                    }
-                    other => {
-                        return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
-                            "{other:?}"
-                        )));
-                    }
-                }
-            }
-
-            Ok(builder)
-        }
-    }
-
-    impl TryFrom<&[Statement]> for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(statements: &[Statement]) -> Result<Self, Self::Error> {
-            Self::try_from_statements(statements)
-        }
-    }
-
-    impl TryFrom<Vec<Statement>> for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(statements: Vec<Statement>) -> Result<Self, Self::Error> {
-            Self::try_from_statements(&statements)
-        }
-    }
-
-    impl FromStr for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        type Err = DiffSetParseError;
-
-        fn from_str(s: &str) -> Result<Self, Self::Err> {
-            let dialect = SQLiteDialect {};
-            let statements = Parser::parse_sql(&dialect, s)?;
-            Self::try_from_statements(&statements)
-        }
-    }
-
-    impl TryFrom<&str> for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(s: &str) -> Result<Self, Self::Error> {
-            s.parse()
-        }
-    }
-
-    impl TryFrom<String> for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(s: String) -> Result<Self, Self::Error> {
-            s.parse()
-        }
-    }
-
-    // =========================================================================
-    // Patchset parsing (monodirectional - no Display)
-    // =========================================================================
-
-    impl DiffSetBuilder<PatchsetFormat, CreateTable> {
-        /// Try to create a PatchSet DiffSetBuilder from a slice of SQL statements.
-        ///
-        /// The statements must include CREATE TABLE statements before any DML
-        /// (INSERT/UPDATE/DELETE) statements that reference those tables.
-        ///
-        /// Note: Patchset format has limited information (no old values for updates,
-        /// only PK for deletes), so this conversion may lose information compared
-        /// to the original SQL.
-        ///
-        /// # Errors
-        ///
-        /// Returns `DiffSetParseError` if:
-        /// - A DML statement references a table that hasn't been created yet
-        /// - A statement conversion fails
-        /// - An unsupported statement type is encountered
-        pub fn try_from_statements(statements: &[Statement]) -> Result<Self, DiffSetParseError> {
-            let mut builder = Self::new();
-            let mut schemas: HashMap<String, &CreateTable> = HashMap::new();
-
-            for stmt in statements {
-                match stmt {
-                    Statement::CreateTable(create) => {
-                        let table_name = create.name().to_string();
-                        schemas.insert(table_name, create);
-                    }
-                    Statement::Insert(insert) => {
-                        let table_name =
-                            crate::builders::ast_helpers::extract_table_name(match &insert.table {
-                                sqlparser::ast::TableObject::TableName(name) => name,
-                                sqlparser::ast::TableObject::TableFunction(_) => {
-                                    return Err(DiffSetParseError::UnsupportedStatement(
-                                        "Table function in INSERT".into(),
-                                    ));
-                                }
-                            });
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        let insert_op = Insert::try_from_ast(insert, schema)?;
-                        let values: Vec<MaybeValue> =
-                            insert_op.into_values().into_iter().map(Some).collect();
-                        builder = builder.insert_raw(*schema, values);
-                    }
-                    Statement::Update(update) => {
-                        let table_name = match &update.table.relation {
-                            sqlparser::ast::TableFactor::Table { name, .. } => {
-                                crate::builders::ast_helpers::extract_table_name(name)
-                            }
-                            _ => {
-                                return Err(DiffSetParseError::UnsupportedStatement(
-                                    "Non-table relation in UPDATE".into(),
-                                ));
-                            }
-                        };
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        let update_op =
-                            Update::<&CreateTable, PatchsetFormat>::try_from_ast(update, schema)?;
-                        let new_values: Vec<_> = update_op
-                            .values()
-                            .iter()
-                            .map(|((), new)| new.clone())
-                            .collect();
-                        builder = builder.update_raw(*schema, new_values);
-                    }
-                    Statement::Delete(delete) => {
-                        let table_name = match &delete.from {
-                            sqlparser::ast::FromTable::WithFromKeyword(tables)
-                            | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables
-                                .first()
-                                .and_then(|t| match &t.relation {
-                                    sqlparser::ast::TableFactor::Table { name, .. } => {
-                                        Some(crate::builders::ast_helpers::extract_table_name(name))
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap_or(""),
-                        };
-                        let schema = schemas.get(table_name).ok_or_else(|| {
-                            DiffSetParseError::TableNotFound(table_name.to_string())
-                        })?;
-                        // For patchset delete, we extract PK values from the WHERE clause
-                        let delete_op = ChangeDelete::try_from_ast(delete, schema)?;
-                        // Extract just the PK values
-                        let pk = schema.extract_pk(delete_op.values());
-                        builder = builder.delete(schema, &pk);
-                    }
-                    other => {
-                        return Err(DiffSetParseError::UnsupportedStatement(alloc::format!(
-                            "{other:?}"
-                        )));
-                    }
-                }
-            }
-
-            Ok(builder)
-        }
-    }
-
-    impl TryFrom<&[Statement]> for DiffSetBuilder<PatchsetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(statements: &[Statement]) -> Result<Self, Self::Error> {
-            Self::try_from_statements(statements)
-        }
-    }
-
-    impl TryFrom<Vec<Statement>> for DiffSetBuilder<PatchsetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(statements: Vec<Statement>) -> Result<Self, Self::Error> {
-            Self::try_from_statements(&statements)
-        }
-    }
-
-    impl FromStr for DiffSetBuilder<PatchsetFormat, CreateTable> {
-        type Err = DiffSetParseError;
-
-        fn from_str(s: &str) -> Result<Self, Self::Err> {
-            let dialect = SQLiteDialect {};
-            let statements = Parser::parse_sql(&dialect, s)?;
-            Self::try_from_statements(&statements)
-        }
-    }
-
-    impl TryFrom<&str> for DiffSetBuilder<PatchsetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(s: &str) -> Result<Self, Self::Error> {
-            s.parse()
-        }
-    }
-
-    impl TryFrom<String> for DiffSetBuilder<PatchsetFormat, CreateTable> {
-        type Error = DiffSetParseError;
-
-        fn try_from(s: String) -> Result<Self, Self::Error> {
-            s.parse()
-        }
-    }
-
-    // =========================================================================
-    // Display for ChangeSet only (bidirectional conversion)
-    // =========================================================================
-
-    impl Display for DiffSetBuilder<ChangesetFormat, CreateTable> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let statements: Vec<Statement> = self.into();
-            for stmt in statements {
-                writeln!(f, "{stmt};")?;
-            }
-            Ok(())
-        }
-    }
-
-    impl From<&DiffSetBuilder<ChangesetFormat, CreateTable>> for Vec<Statement> {
-        fn from(builder: &DiffSetBuilder<ChangesetFormat, CreateTable>) -> Self {
-            use sqlparser::ast;
-
-            let mut statements = Vec::new();
-
-            // First, emit CREATE TABLE statements for all tables in order
-            for (table, rows) in &builder.tables {
-                if !rows.is_empty() {
-                    statements.push(Statement::CreateTable(table.clone()));
-                }
-            }
-
-            // Then, emit operations for each table
-            for (table, rows) in &builder.tables {
-                if rows.is_empty() {
-                    continue;
-                }
-
-                for (_pk, op) in rows {
-                    match op {
-                        Operation::Insert(values) => {
-                            let mut owned_insert = Insert::from(table.clone());
-                            for (i, val) in values.iter().enumerate() {
-                                owned_insert = owned_insert.set(i, val.clone()).unwrap();
-                            }
-                            let ast_insert: ast::Insert = (&owned_insert).into();
-                            statements.push(Statement::Insert(ast_insert));
-                        }
-                        Operation::Delete(values) => {
-                            let mut owned_delete = ChangeDelete::from(table.clone());
-                            for (i, val) in values.iter().enumerate() {
-                                owned_delete = owned_delete.set(i, val.clone()).unwrap();
-                            }
-                            let ast_delete: ast::Delete = (&owned_delete).into();
-                            statements.push(Statement::Delete(ast_delete));
-                        }
-                        Operation::Update(pairs) => {
-                            let mut owned_update =
-                                Update::<_, ChangesetFormat>::from(table.clone());
-                            for (i, (old, new)) in pairs.iter().enumerate() {
-                                owned_update =
-                                    owned_update.set(i, old.clone(), new.clone()).unwrap();
-                            }
-                            let ast_update: ast::Update = (&owned_update).into();
-                            statements.push(Statement::Update(ast_update));
-                        }
-                    }
-                }
-            }
-
-            statements
-        }
-    }
-
-    impl From<DiffSetBuilder<ChangesetFormat, CreateTable>> for Vec<Statement> {
-        fn from(builder: DiffSetBuilder<ChangesetFormat, CreateTable>) -> Self {
-            (&builder).into()
-        }
-    }
-}

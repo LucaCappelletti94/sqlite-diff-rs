@@ -13,10 +13,8 @@
 
 use sqlite_diff_rs::testing::{assert_bit_parity, assert_fromstr_bit_parity, parse_schema};
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangesetFormat, Insert, PatchSet, PatchsetFormat, Update,
+    ChangeDelete, ChangeSet, ChangesetFormat, Insert, PatchSet, PatchsetFormat, SimpleTable, Update,
 };
-
-use sqlparser::ast::CreateTable;
 
 // =============================================================================
 // Single-table, single-operation tests
@@ -199,8 +197,8 @@ fn bit_parity_composite_pk() {
 fn bit_parity_builder_single_insert() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
-    let changeset: ChangeSet<&CreateTable> = ChangeSet::new().insert(
-        Insert::from(&schema)
+    let changeset: ChangeSet<&SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(
+        Insert::<_, String, Vec<u8>>::from(&schema)
             .set(0, 1i64)
             .unwrap()
             .set(1, "Alice")
@@ -208,8 +206,8 @@ fn bit_parity_builder_single_insert() {
     );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<&CreateTable> = PatchSet::new().insert(
-        Insert::from(&schema)
+    let patchset: PatchSet<&SimpleTable, String, Vec<u8>> = PatchSet::new().insert(
+        Insert::<_, String, Vec<u8>>::from(&schema)
             .set(0, 1i64)
             .unwrap()
             .set(1, "Alice")
@@ -231,16 +229,16 @@ fn bit_parity_builder_single_insert() {
 fn bit_parity_builder_two_inserts() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
-    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+    let changeset: ChangeSet<&SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 2i64)
                 .unwrap()
                 .set(1, "Bob")
@@ -248,16 +246,16 @@ fn bit_parity_builder_two_inserts() {
         );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+    let patchset: PatchSet<&SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 2i64)
                 .unwrap()
                 .set(1, "Bob")
@@ -280,16 +278,16 @@ fn bit_parity_builder_two_inserts() {
 fn bit_parity_builder_insert_then_update() {
     let schema = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
-    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+    let changeset: ChangeSet<&SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .update(
-            Update::<_, ChangesetFormat>::from(&schema)
+            Update::<_, ChangesetFormat, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64, 1i64)
                 .unwrap()
                 .set(1, "Alice", "Alicia")
@@ -297,16 +295,16 @@ fn bit_parity_builder_insert_then_update() {
         );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+    let patchset: PatchSet<&SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
-            Insert::from(&schema)
+            Insert::<_, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .update(
-            Update::<_, PatchsetFormat>::from(&schema)
+            Update::<_, PatchsetFormat, String, Vec<u8>>::from(&schema)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alicia")
@@ -330,16 +328,16 @@ fn bit_parity_builder_two_tables() {
     let schema_u = parse_schema("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
     let schema_p = parse_schema("CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)");
 
-    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+    let changeset: ChangeSet<&SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
-            Insert::from(&schema_u)
+            Insert::<_, String, Vec<u8>>::from(&schema_u)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema_p)
+            Insert::<_, String, Vec<u8>>::from(&schema_p)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Hello")
@@ -347,16 +345,16 @@ fn bit_parity_builder_two_tables() {
         );
     let our_changeset: Vec<u8> = changeset.into();
 
-    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+    let patchset: PatchSet<&SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
-            Insert::from(&schema_u)
+            Insert::<_, String, Vec<u8>>::from(&schema_u)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Alice")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema_p)
+            Insert::<_, String, Vec<u8>>::from(&schema_p)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "Hello")
@@ -382,30 +380,30 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let schema_b = parse_schema("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Changeset
-    let changeset: ChangeSet<&CreateTable> = ChangeSet::new()
+    let changeset: ChangeSet<&SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
-            Insert::from(&schema_a)
+            Insert::<_, String, Vec<u8>>::from(&schema_a)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "a1")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema_b)
+            Insert::<_, String, Vec<u8>>::from(&schema_b)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "b1")
                 .unwrap(),
         )
         .delete(
-            ChangeDelete::from(&schema_a)
+            ChangeDelete::<_, String, Vec<u8>>::from(&schema_a)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "a1")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema_a)
+            Insert::<_, String, Vec<u8>>::from(&schema_a)
                 .set(0, 2i64)
                 .unwrap()
                 .set(1, "a2")
@@ -414,16 +412,16 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let our_changeset: Vec<u8> = changeset.into();
 
     // Patchset (delete uses PK only)
-    let patchset: PatchSet<&CreateTable> = PatchSet::new()
+    let patchset: PatchSet<&SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
-            Insert::from(&schema_a)
+            Insert::<_, String, Vec<u8>>::from(&schema_a)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "a1")
                 .unwrap(),
         )
         .insert(
-            Insert::from(&schema_b)
+            Insert::<_, String, Vec<u8>>::from(&schema_b)
                 .set(0, 1i64)
                 .unwrap()
                 .set(1, "b1")
@@ -431,7 +429,7 @@ fn bit_parity_builder_table_cancel_and_readd() {
         )
         .delete(&&schema_a, &[sqlite_diff_rs::Value::Integer(1)])
         .insert(
-            Insert::from(&schema_a)
+            Insert::<_, String, Vec<u8>>::from(&schema_a)
                 .set(0, 2i64)
                 .unwrap()
                 .set(1, "a2")

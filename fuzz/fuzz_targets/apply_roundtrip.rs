@@ -9,8 +9,8 @@
 use honggfuzz::fuzz;
 use rusqlite::Connection;
 use sqlite_diff_rs::testing::{apply_changeset, assert_bit_parity, compare_db_states};
-use sqlite_diff_rs::{ChangeSet, PatchSet};
-use sqlparser::ast::{CreateTable, Statement};
+use sqlite_diff_rs::{ChangeSet, PatchSet, SimpleTable};
+use sqlite_diff_rs::sql::Statement;
 
 fn main() {
     loop {
@@ -26,10 +26,10 @@ fn main() {
 /// It will panic on real bugs (mismatches), but return silently for invalid inputs.
 fn run_apply_roundtrip_test(sql: &str) {
     // Step 1: Parse into ChangeSet and PatchSet
-    let Ok(changeset): Result<ChangeSet<CreateTable>, _> = sql.parse() else {
+    let Ok(changeset): Result<ChangeSet<SimpleTable, String, Vec<u8>>, _> = sql.parse() else {
         return; // Invalid SQL for our parser, skip
     };
-    let Ok(patchset): Result<PatchSet<CreateTable>, _> = sql.parse() else {
+    let Ok(patchset): Result<PatchSet<SimpleTable, String, Vec<u8>>, _> = sql.parse() else {
         return;
     };
 
@@ -44,7 +44,8 @@ fn run_apply_roundtrip_test(sql: &str) {
         .iter()
         .filter_map(|s| {
             if let Statement::CreateTable(_) = s {
-                Some(s.to_string())
+                use sqlite_diff_rs::sql::FormatSql;
+                Some(s.format_sql())
             } else {
                 None
             }
@@ -66,7 +67,8 @@ fn run_apply_roundtrip_test(sql: &str) {
     let our_patchset: Vec<u8> = patchset.into();
 
     // Step 4: Reconstruct SQL statement list for rusqlite
-    let sql_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
+    use sqlite_diff_rs::sql::FormatSql;
+    let sql_strings: Vec<String> = statements.iter().map(|s| s.format_sql()).collect();
     let sql_refs: Vec<&str> = sql_strings.iter().map(|s| s.as_str()).collect();
 
     // Step 5: Byte-for-byte comparison with rusqlite

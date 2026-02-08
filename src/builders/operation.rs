@@ -5,29 +5,52 @@
 //! All consolidation logic (Operation + Operation) is defined here.
 
 use alloc::vec::Vec;
+use core::fmt::Debug;
 
 use crate::{
     builders::{ChangesetFormat, PatchsetFormat, format::Format},
     encoding::{MaybeValue, Value},
 };
 
-/// A schema-less database operation, parameterized only by the format `F`.
+/// A schema-less database operation, parameterized by format `F` and value types `S`, `B`.
 ///
 /// The table schema `T` is NOT stored here — it lives as the key in
-/// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value>, Operation<F>>>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Operation<F: Format> {
+/// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>`.
+#[derive(Debug, Clone)]
+pub(crate) enum Operation<F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> {
     /// A row was inserted. Stores all column values.
-    Insert(Vec<Value>),
+    Insert(Vec<Value<S, B>>),
     /// A row was deleted. Stores format-specific delete data:
-    /// - Changeset: `Vec<Value>` (full old-row values)
+    /// - Changeset: `Vec<Value<S, B>>` (full old-row values)
     /// - Patchset: `()` (PK is stored as the IndexMap key)
     Delete(F::DeleteData),
     /// A row was updated. Stores `(old, new)` pairs per column.
-    /// - Changeset: `(MaybeValue, MaybeValue)` per column (None = undefined)
-    /// - Patchset: `((), MaybeValue)` per column
-    Update(Vec<(F::Old, MaybeValue)>),
+    /// - Changeset: `(MaybeValue<S, B>, MaybeValue<S, B>)` per column (None = undefined)
+    /// - Patchset: `((), MaybeValue<S, B>)` per column
+    Update(Vec<(F::Old, MaybeValue<S, B>)>),
 }
+
+/// Implement PartialEq for Operation where needed.
+impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Operation<F, S, B>
+where
+    F::DeleteData: PartialEq,
+    F::Old: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Insert(a), Self::Insert(b)) => a == b,
+            (Self::Delete(a), Self::Delete(b)) => a == b,
+            (Self::Update(a), Self::Update(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<F: Format<S, B>, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Operation<F, S, B>
+where
+    F::DeleteData: Eq,
+    F::Old: Eq,
+{}
 
 /// Trait for reversing operations.
 ///
@@ -43,7 +66,7 @@ pub trait Reverse {
     fn reverse(self) -> Self::Output;
 }
 
-impl Reverse for Operation<ChangesetFormat> {
+impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse for Operation<ChangesetFormat, S, B> {
     type Output = Self;
 
     fn reverse(self) -> Self::Output {
@@ -64,7 +87,9 @@ impl Reverse for Operation<ChangesetFormat> {
 // Operation + Operation for Changeset
 // ============================================================================
 
-impl core::ops::Add for Operation<ChangesetFormat> {
+impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + AsRef<[u8]>> core::ops::Add
+    for Operation<ChangesetFormat, S, B>
+{
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -136,7 +161,7 @@ impl core::ops::Add for Operation<ChangesetFormat> {
 // Operation + Operation for Patchset
 // ============================================================================
 
-impl core::ops::Add for Operation<PatchsetFormat> {
+impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core::ops::Add for Operation<PatchsetFormat, S, B> {
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {

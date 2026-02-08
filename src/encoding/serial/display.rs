@@ -2,7 +2,7 @@
 
 use super::Value;
 
-impl core::fmt::Display for Value {
+impl<S: AsRef<str>, B: AsRef<[u8]>> core::fmt::Display for Value<S, B> {
     /// Format a Value as a SQL literal.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -23,7 +23,7 @@ impl core::fmt::Display for Value {
             Value::Text(s) => {
                 // Escape single quotes by doubling them
                 write!(f, "'")?;
-                for c in s.chars() {
+                for c in s.as_ref().chars() {
                     if c == '\'' {
                         write!(f, "''")?;
                     } else {
@@ -34,7 +34,7 @@ impl core::fmt::Display for Value {
             }
             Value::Blob(b) => {
                 write!(f, "X'")?;
-                for byte in b {
+                for byte in b.as_ref() {
                     write!(f, "{byte:02X}")?;
                 }
                 write!(f, "'")

@@ -19,6 +19,10 @@ use chat_shared::ddl::{messages_table_schema, users_table_schema};
 use chat_shared::schema::{messages_columns, users_columns};
 use sqlite_diff_rs::{Insert, ParsedDiffSet, PatchSet, TableSchema, Value};
 
+// Type aliases to avoid verbosity
+type Val = Value<String, Vec<u8>>;
+type Schema = TableSchema<String>;
+
 use crate::state::{AppState, Message as ChatMessage, User};
 
 /// Axum handler for WebSocket upgrade.
@@ -220,7 +224,7 @@ fn handle_user_insert(
     state: &AppState,
     tx: &mpsc::UnboundedSender<Vec<u8>>,
     my_user_id: &mut Option<Vec<u8>>,
-    values: &[Value],
+    values: &[Val],
 ) {
     if values.len() < 3 {
         warn!("users INSERT with too few columns");
@@ -285,7 +289,7 @@ fn handle_user_insert(
 }
 
 /// Handle an INSERT into the `messages` table.
-fn handle_message_insert(state: &AppState, values: &[Value]) {
+fn handle_message_insert(state: &AppState, values: &[Val]) {
     if values.len() < 5 {
         warn!("messages INSERT with too few columns");
         return;
@@ -343,7 +347,7 @@ fn handle_message_insert(state: &AppState, values: &[Value]) {
 }
 
 /// Build an `Insert` for a user row.
-pub fn user_insert(user: &User) -> Insert<TableSchema> {
+pub fn user_insert(user: &User) -> Insert<Schema, String, Vec<u8>> {
     let schema = users_table_schema();
     Insert::from(schema)
         .set(users_columns::ID, Value::Blob(user.id.clone()))
@@ -359,11 +363,11 @@ pub fn user_insert(user: &User) -> Insert<TableSchema> {
 
 /// Build a patchset containing a single user INSERT.
 pub fn build_user_patchset(user: &User) -> Vec<u8> {
-    Vec::from(PatchSet::<TableSchema>::new().insert(user_insert(user)))
+    Vec::from(PatchSet::<Schema, String, Vec<u8>>::new().insert(user_insert(user)))
 }
 
 /// Build an `Insert` for a message row.
-pub fn message_insert(msg: &ChatMessage) -> Insert<TableSchema> {
+pub fn message_insert(msg: &ChatMessage) -> Insert<Schema, String, Vec<u8>> {
     let schema = messages_table_schema();
     Insert::from(schema)
         .set(messages_columns::ID, Value::Blob(msg.id.clone()))
@@ -389,12 +393,12 @@ pub fn message_insert(msg: &ChatMessage) -> Insert<TableSchema> {
 
 /// Build a patchset containing a single message INSERT.
 pub fn build_message_patchset(msg: &ChatMessage) -> Vec<u8> {
-    Vec::from(PatchSet::<TableSchema>::new().insert(message_insert(msg)))
+    Vec::from(PatchSet::<Schema, String, Vec<u8>>::new().insert(message_insert(msg)))
 }
 
 /// Build a catch-up patchset with all existing users and messages for a given user.
 fn build_catchup_patchset(state: &AppState, user_id: &[u8]) -> Vec<u8> {
-    let mut builder: PatchSet<TableSchema> = PatchSet::new();
+    let mut builder: PatchSet<Schema, String, Vec<u8>> = PatchSet::new();
 
     // Add all users (except the one who just joined — they already have their own row).
     {
@@ -434,7 +438,7 @@ fn build_catchup_patchset(state: &AppState, user_id: &[u8]) -> Vec<u8> {
 /// - 0x03: Text (varint length + UTF-8 bytes)
 /// - 0x04: Blob (varint length + raw bytes)
 /// - 0x05: Null (no data)
-fn parse_n_values(data: &[u8], n: usize) -> Option<(Vec<Value>, usize)> {
+fn parse_n_values(data: &[u8], n: usize) -> Option<(Vec<Val>, usize)> {
     let mut values = Vec::with_capacity(n);
     let mut pos = 0;
 

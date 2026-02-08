@@ -1,5 +1,7 @@
 //! Submodule defining the errors used across the crate.
 
+use crate::sql::ParseError;
+
 /// Errors that can occur during diffing and patching operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -15,11 +17,10 @@ pub enum Error {
 }
 
 // =============================================================================
-// sqlparser integration errors (feature-gated)
+// SQL conversion errors
 // =============================================================================
 
-/// Errors that can occur when converting sqlparser AST expressions to our Value type.
-#[cfg(feature = "sqlparser")]
+/// Errors that can occur when converting SQL expressions to our Value type.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValueConversionError {
     /// The expression type is not supported for conversion.
@@ -33,8 +34,7 @@ pub enum ValueConversionError {
     InvalidHexString(alloc::string::String),
 }
 
-/// Errors that can occur when converting a sqlparser INSERT to our Insert builder.
-#[cfg(feature = "sqlparser")]
+/// Errors that can occur when converting an INSERT statement to our Insert builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InsertConversionError {
     /// Table name in INSERT doesn't match the schema.
@@ -73,8 +73,7 @@ pub enum InsertConversionError {
     ValueConversion(#[from] ValueConversionError),
 }
 
-/// Errors that can occur when converting a sqlparser UPDATE to our Update builder.
-#[cfg(feature = "sqlparser")]
+/// Errors that can occur when converting an UPDATE statement to our Update builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UpdateConversionError {
     /// Table name in UPDATE doesn't match the schema.
@@ -108,8 +107,7 @@ pub enum UpdateConversionError {
     },
 }
 
-/// Errors that can occur when converting a sqlparser DELETE to our Delete builder.
-#[cfg(feature = "sqlparser")]
+/// Errors that can occur when converting a DELETE statement to our Delete builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DeleteConversionError {
     /// Table name in DELETE doesn't match the schema.
@@ -147,12 +145,11 @@ pub enum DeleteConversionError {
 }
 
 /// Errors that can occur when parsing SQL into a DiffSetBuilder.
-#[cfg(feature = "sqlparser")]
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DiffSetParseError {
     /// SQL parsing failed.
     #[error("SQL parse error: {0}")]
-    SqlParser(#[from] sqlparser::parser::ParserError),
+    SqlParser(#[from] ParseError),
     /// INSERT statement conversion failed.
     #[error("INSERT conversion error: {0}")]
     Insert(#[from] InsertConversionError),

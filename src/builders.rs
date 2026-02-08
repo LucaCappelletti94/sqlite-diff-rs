@@ -1,12 +1,11 @@
 //! Builder for constructing changesets and patchsets.
 
-#[cfg(feature = "sqlparser")]
-mod ast_helpers;
 mod change;
 mod delete_operation;
 mod format;
 mod insert_operation;
 mod operation;
+mod simple_table_impl;
 mod update_operation;
 
 pub use change::{ChangeSet, DiffSetBuilder, PatchSet};

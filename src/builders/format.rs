@@ -9,19 +9,19 @@ use core::fmt::Debug;
 /// The key differences:
 /// - **Changeset**: DELETE stores all column values, UPDATE stores old+new
 /// - **Patchset**: DELETE stores only PK values (data lives externally), UPDATE stores only PK+new
-pub(crate) trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
+pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static {
     /// The type representing old values in this format.
     ///
-    /// - Changeset: `MaybeValue` (Option<Value>, None = undefined/unchanged)
+    /// - Changeset: `MaybeValue<S, B>` (Option<Value<S, B>>, None = undefined/unchanged)
     /// - Patchset: `()` (old values not stored)
-    type Old: Clone + Debug + Default + PartialEq + Eq;
+    type Old: Clone + Debug + Default;
 
     /// The data stored for a DELETE operation (beyond the PK which is always
     /// stored as the `IndexMap` key in `DiffSetBuilder`).
     ///
-    /// - Changeset: `Vec<Value>` — full old-row values
+    /// - Changeset: `Vec<Value<S, B>>` — full old-row values
     /// - Patchset: `()` — only the PK matters (stored externally)
-    type DeleteData: Clone + Debug + Default + PartialEq + Eq;
+    type DeleteData: Clone + Debug + Default;
 
     /// Table header marker byte.
     /// Changesets use 'T' (0x54), patchsets use 'P' (0x50).
@@ -32,18 +32,18 @@ pub(crate) trait Format: Default + Clone + Copy + PartialEq + Eq + 'static {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ChangesetFormat;
 
-impl Format for ChangesetFormat {
+impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Format<S, B> for ChangesetFormat {
     const TABLE_MARKER: u8 = b'T';
 
-    type Old = MaybeValue;
-    type DeleteData = Vec<Value>;
+    type Old = MaybeValue<S, B>;
+    type DeleteData = Vec<Value<S, B>>;
 }
 
 /// Patchset format marker.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PatchsetFormat;
 
-impl Format for PatchsetFormat {
+impl<S, B> Format<S, B> for PatchsetFormat {
     type Old = ();
     type DeleteData = ();
 

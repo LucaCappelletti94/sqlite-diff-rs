@@ -1,65 +1,28 @@
 //! Differential testing: compare our changeset/patchset builder against rusqlite's session extension.
 //!
 //! This module provides [`run_differential_test`], which:
-//! 1. Parses a string as SQL (SQLite dialect)
+//! 1. Parses a string as SQL using our custom parser
 //! 2. Filters for CREATE TABLE, INSERT, UPDATE, DELETE
 //! 3. Executes in rusqlite with session tracking
 //! 4. Builds the same changeset/patchset with our builders
 //! 5. Compares our output with rusqlite's **byte-for-byte**
 //!
-//! This module is feature-gated behind `testing` (requires both `rusqlite` and `sqlparser`).
+//! This module is feature-gated behind `testing`.
 
 extern crate std;
 
+use crate::schema::SimpleTable;
+use crate::sql::{FormatSql, Parser, Statement};
 use crate::testing::{byte_diff_report, session_changeset_and_patchset};
 use crate::{
     ChangeDelete, ChangesetFormat, DiffSetBuilder, Insert, PatchsetFormat, SchemaWithPK, Update,
 };
 use alloc::string::String;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 use rusqlite::Connection;
 use rusqlite::session::Session;
-use sqlparser::ast::{self, CreateTable, Statement};
-use sqlparser::dialect::SQLiteDialect;
-use sqlparser::parser::Parser;
 use std::collections::HashMap;
-
-/// Extract table name from a sqlparser INSERT statement.
-fn table_name_from_insert(insert: &ast::Insert) -> Option<std::string::String> {
-    match &insert.table {
-        ast::TableObject::TableName(name) => name.0.last().map(|part| match part {
-            ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
-            ast::ObjectNamePart::Function(func) => func.name.value.clone(),
-        }),
-        ast::TableObject::TableFunction(_) => None,
-    }
-}
-
-/// Extract table name from a sqlparser UPDATE statement.
-fn table_name_from_update(update: &ast::Update) -> Option<std::string::String> {
-    match &update.table.relation {
-        ast::TableFactor::Table { name, .. } => name.0.last().map(|part| match part {
-            ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
-            ast::ObjectNamePart::Function(func) => func.name.value.clone(),
-        }),
-        _ => None,
-    }
-}
-
-/// Extract table name from a sqlparser DELETE statement.
-fn table_name_from_delete(delete: &ast::Delete) -> Option<std::string::String> {
-    match &delete.from {
-        ast::FromTable::WithFromKeyword(tables) | ast::FromTable::WithoutKeyword(tables) => {
-            tables.first().and_then(|t| match &t.relation {
-                ast::TableFactor::Table { name, .. } => name.0.last().map(|part| match part {
-                    ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
-                    ast::ObjectNamePart::Function(func) => func.name.value.clone(),
-                }),
-                _ => None,
-            })
-        }
-    }
-}
 
 /// Run a differential test comparing our builder output against rusqlite's session extension.
 ///
@@ -69,9 +32,9 @@ fn table_name_from_delete(delete: &ast::Delete) -> Option<std::string::String> {
 /// - Panic on real bugs (byte-level comparison mismatches)
 #[allow(clippy::too_many_lines)]
 pub fn run_differential_test(sql: &str) {
-    // Parse SQL with sqlparser
-    let dialect = SQLiteDialect {};
-    let Ok(statements) = Parser::parse_sql(&dialect, sql) else {
+    // Parse SQL with our custom parser
+    let mut parser = Parser::new(sql);
+    let Ok(statements) = parser.parse_all() else {
         return; // Invalid SQL is expected for random input
     };
 
@@ -80,19 +43,18 @@ pub fn run_differential_test(sql: &str) {
     }
 
     // Separate CREATE TABLE from DML statements, collect schemas
-    let mut schemas: HashMap<std::string::String, CreateTable> = HashMap::new();
+    let mut schemas: HashMap<std::string::String, SimpleTable> = HashMap::new();
     let mut dml_statements = std::vec::Vec::new();
 
     for stmt in statements {
-        match stmt {
-            Statement::CreateTable(ref create) => {
-                let name = create.name.to_string();
-                schemas.insert(name, create.clone());
+        match &stmt {
+            Statement::CreateTable(create) => {
+                let name = create.name.clone();
+                schemas.insert(name, SimpleTable::from(create.clone()));
             }
             Statement::Insert(_) | Statement::Update(_) | Statement::Delete(_) => {
                 dml_statements.push(stmt);
             }
-            _ => {}
         }
     }
 
@@ -107,8 +69,8 @@ pub fn run_differential_test(sql: &str) {
     };
 
     // Execute CREATE TABLE statements
-    for schema in schemas.values() {
-        let sql_str = Statement::CreateTable(schema.clone()).to_string();
+    for (name, schema) in &schemas {
+        let sql_str = schema.to_create_table_sql();
         if conn.execute(&sql_str, []).is_err() {
             return; // Invalid CREATE TABLE, skip
         }
@@ -123,20 +85,20 @@ pub fn run_differential_test(sql: &str) {
     }
 
     // Build our changeset and patchset incrementally
-    let mut our_changeset_builder: DiffSetBuilder<ChangesetFormat, &CreateTable> =
+    let mut our_changeset_builder: DiffSetBuilder<ChangesetFormat, SimpleTable, String, Vec<u8>> =
         DiffSetBuilder::default();
-    let mut our_patchset_builder: DiffSetBuilder<PatchsetFormat, &CreateTable> =
+    let mut our_patchset_builder: DiffSetBuilder<PatchsetFormat, SimpleTable, String, Vec<u8>> =
         DiffSetBuilder::default();
 
     // Collect SQL strings for rusqlite comparison
     let mut sql_strings = std::vec::Vec::new();
     for schema in schemas.values() {
-        sql_strings.push(Statement::CreateTable(schema.clone()).to_string());
+        sql_strings.push(schema.to_create_table_sql());
     }
 
     // Execute DML statements
     for stmt in &dml_statements {
-        let stmt_sql = stmt.to_string();
+        let stmt_sql = stmt.format_sql();
 
         // Execute in rusqlite
         if conn.execute(&stmt_sql, []).is_err() {
@@ -148,32 +110,26 @@ pub fn run_differential_test(sql: &str) {
         // Try to build the same operation with our builders
         match stmt {
             Statement::Insert(insert) => {
-                let Some(table_name) = table_name_from_insert(insert) else {
+                let Some(schema) = schemas.get(&insert.table) else {
                     continue;
                 };
-                let Some(schema) = schemas.get(&table_name) else {
-                    continue;
-                };
-                let Ok(our_insert) = Insert::try_from_ast(insert, schema) else {
+                let Ok(our_insert) = Insert::try_from_sql(insert, schema) else {
                     continue;
                 };
                 our_changeset_builder = our_changeset_builder.insert(our_insert.clone());
                 our_patchset_builder = our_patchset_builder.insert(our_insert);
             }
             Statement::Update(update) => {
-                let Some(table_name) = table_name_from_update(update) else {
-                    continue;
-                };
-                let Some(schema) = schemas.get(&table_name) else {
+                let Some(schema) = schemas.get(&update.table) else {
                     continue;
                 };
                 let Ok(cs_update) =
-                    Update::<&CreateTable, ChangesetFormat>::try_from_ast(update, schema)
+                    Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::try_from_sql(update, schema)
                 else {
                     continue;
                 };
                 let Ok(ps_update) =
-                    Update::<&CreateTable, PatchsetFormat>::try_from_ast(update, schema)
+                    Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::try_from_sql(update, schema)
                 else {
                     continue;
                 };
@@ -181,20 +137,17 @@ pub fn run_differential_test(sql: &str) {
                 our_patchset_builder = our_patchset_builder.update(ps_update);
             }
             Statement::Delete(delete) => {
-                let Some(table_name) = table_name_from_delete(delete) else {
+                let Some(schema) = schemas.get(&delete.table) else {
                     continue;
                 };
-                let Some(schema) = schemas.get(&table_name) else {
-                    continue;
-                };
-                let Ok(our_delete) = ChangeDelete::try_from_ast(delete, schema) else {
+                let Ok(our_delete) = ChangeDelete::try_from_sql(delete, schema) else {
                     continue;
                 };
                 // Extract PK values for patchset delete
                 let pk: alloc::vec::Vec<_> =
                     schema.extract_pk(our_delete.values()).into_iter().collect();
                 our_changeset_builder = our_changeset_builder.delete(our_delete);
-                our_patchset_builder = our_patchset_builder.delete(&schema, &pk);
+                our_patchset_builder = our_patchset_builder.delete(schema, &pk);
             }
             _ => {}
         }

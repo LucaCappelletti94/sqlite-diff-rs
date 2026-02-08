@@ -14,7 +14,6 @@ rusqlite = { version = "0.37", features = [
 	"bundled",
 	"session",
 ] }
-sqlparser = { workspace = true }
 
 [[bin]]
 name = "roundtrip"

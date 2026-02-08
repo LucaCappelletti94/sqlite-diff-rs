@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS messages (
 /// Columns: `[id (PK), name, created_at]`
 /// PK flags: `[1, 0, 0]` — `id` is the sole primary key column.
 #[must_use]
-pub fn users_table_schema() -> TableSchema {
+pub fn users_table_schema() -> TableSchema<String> {
     TableSchema::new(String::from("users"), 3, vec![1, 0, 0])
 }
 
@@ -55,6 +55,6 @@ pub fn users_table_schema() -> TableSchema {
 /// Columns: `[id (PK), sender_id, receiver_id, body, created_at]`
 /// PK flags: `[1, 0, 0, 0, 0]` — `id` is the sole primary key column.
 #[must_use]
-pub fn messages_table_schema() -> TableSchema {
+pub fn messages_table_schema() -> TableSchema<String> {
     TableSchema::new(String::from("messages"), 5, vec![1, 0, 0, 0, 0])
 }
