@@ -2,5 +2,6 @@
 mod dyn_table;
 mod simple_table;
 
+pub(crate) use dyn_table::IndexableValues;
 pub use dyn_table::{DynTable, SchemaWithPK};
-pub use simple_table::SimpleTable;
+pub use simple_table::{NamedColumns, SimpleTable};

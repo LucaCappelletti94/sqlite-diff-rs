@@ -8,7 +8,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rusqlite::Connection;
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangeUpdate, Insert, PatchSet, PatchUpdate, TableSchema, Value,
+    ChangeDelete, ChangeSet, ChangeUpdate, Insert, PatchSet, PatchUpdate, SimpleTable, TableSchema,
+    Value,
 };
 use std::hint::black_box;
 use std::string::String;
@@ -270,20 +271,20 @@ fn rusqlite_patchset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
 
 /// Add insert operations for all tables to the changeset builder
 fn add_inserts_to_changeset<'a>(
-    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     tags: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // User inserts
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Post inserts
@@ -292,7 +293,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Tag inserts
@@ -301,7 +302,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Post-tag inserts
@@ -310,7 +311,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Comment inserts
@@ -319,25 +320,23 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
-
-    builder
 }
 
 /// Add update operations to the changeset builder
 fn add_updates_to_changeset<'a>(
-    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
-) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // User updates
     for (old, new) in USER_UPDATES {
         let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> = ChangeUpdate::from(users.clone());
         for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
             update = update.set(i, *o, *n).unwrap();
         }
-        builder = builder.update(update);
+        builder.update(update);
     }
 
     // Post updates
@@ -346,41 +345,37 @@ fn add_updates_to_changeset<'a>(
         for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
             update = update.set(i, *o, *n).unwrap();
         }
-        builder = builder.update(update);
+        builder.update(update);
     }
-
-    builder
 }
 
 /// Add delete operations to the changeset builder
 fn add_deletes_to_changeset<'a>(
-    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // Delete comment
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(comments.clone());
     for (i, val) in COMMENT_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder = builder.delete(delete);
+    builder.delete(delete);
 
     // Delete post-tag
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(post_tags.clone());
     for (i, val) in POST_TAG_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder = builder.delete(delete);
+    builder.delete(delete);
 
     // Delete user
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(users.clone());
     for (i, val) in USER_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder = builder.delete(delete);
-
-    builder
+    builder.delete(delete);
 }
 
 /// Generate changeset using builder API (programmatic construction)
@@ -390,29 +385,29 @@ fn builder_changeset() -> Vec<u8> {
     let mut builder: ChangeSet<TableSchema<&str>, &str, &[u8]> = ChangeSet::new();
 
     // Add all operations
-    builder = add_inserts_to_changeset(builder, &users, &posts, &comments, &tags, &post_tags);
-    builder = add_updates_to_changeset(builder, &users, &posts);
-    builder = add_deletes_to_changeset(builder, &users, &comments, &post_tags);
+    add_inserts_to_changeset(&mut builder, &users, &posts, &comments, &tags, &post_tags);
+    add_updates_to_changeset(&mut builder, &users, &posts);
+    add_deletes_to_changeset(&mut builder, &users, &comments, &post_tags);
 
     builder.build()
 }
 
 /// Add insert operations for all tables to the patchset builder
 fn add_inserts_to_patchset<'a>(
-    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     tags: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // User inserts
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Post inserts
@@ -421,7 +416,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Tag inserts
@@ -430,7 +425,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Post-tag inserts
@@ -439,7 +434,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
 
     // Comment inserts
@@ -448,25 +443,23 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder = builder.insert(insert);
+        builder.insert(insert);
     }
-
-    builder
 }
 
 /// Add update operations to the patchset builder
 fn add_updates_to_patchset<'a>(
-    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
-) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // User updates
     for cols in PATCH_USER_UPDATES {
         let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(users.clone());
         for (i, val) in *cols {
             update = update.set(*i, val.clone()).unwrap();
         }
-        builder = builder.update(update);
+        builder.update(update);
     }
 
     // Post updates
@@ -475,25 +468,21 @@ fn add_updates_to_patchset<'a>(
         for (i, val) in *cols {
             update = update.set(*i, val.clone()).unwrap();
         }
-        builder = builder.update(update);
+        builder.update(update);
     }
-
-    builder
 }
 
 /// Add delete operations to the patchset builder
 fn add_deletes_to_patchset<'a>(
-    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+) {
     // Deletes for patchset (only need PK values)
-    builder = builder.delete(comments, PATCH_COMMENT_DELETE_PK);
-    builder = builder.delete(post_tags, PATCH_POST_TAG_DELETE_PK);
-    builder = builder.delete(users, PATCH_USER_DELETE_PK);
-
-    builder
+    builder.delete(comments, PATCH_COMMENT_DELETE_PK);
+    builder.delete(post_tags, PATCH_POST_TAG_DELETE_PK);
+    builder.delete(users, PATCH_USER_DELETE_PK);
 }
 
 /// Generate patchset using builder API (programmatic construction)
@@ -503,38 +492,61 @@ fn builder_patchset() -> Vec<u8> {
     let mut builder: PatchSet<TableSchema<&str>, &str, &[u8]> = PatchSet::new();
 
     // Add all operations
-    builder = add_inserts_to_patchset(builder, &users, &posts, &comments, &tags, &post_tags);
-    builder = add_updates_to_patchset(builder, &users, &posts);
-    builder = add_deletes_to_patchset(builder, &users, &comments, &post_tags);
+    add_inserts_to_patchset(&mut builder, &users, &posts, &comments, &tags, &post_tags);
+    add_updates_to_patchset(&mut builder, &users, &posts);
+    add_deletes_to_patchset(&mut builder, &users, &comments, &post_tags);
 
     builder.build()
 }
 
-/// Generate changeset using SQL parser
-fn parser_changeset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
-    // Combine schema and operations into one SQL string
-    let mut sql = String::from(schema);
-    for op in operations {
-        sql.push('\n');
-        sql.push_str(op);
-        sql.push(';');
-    }
-
-    let builder: ChangeSet<_, String, Vec<u8>> = ChangeSet::try_from(sql.as_str()).unwrap();
-    builder.build()
+/// Create SimpleTable schemas for use with the SQL parser.
+fn create_simple_table_schemas() -> (
+    SimpleTable,
+    SimpleTable,
+    SimpleTable,
+    SimpleTable,
+    SimpleTable,
+) {
+    let users = SimpleTable::new(
+        "users",
+        &["id", "username", "email", "created_at", "last_login", "is_active", "profile_data"],
+        &[0],
+    );
+    let posts = SimpleTable::new(
+        "posts",
+        &["id", "user_id", "title", "content", "created_at", "updated_at", "view_count", "is_published"],
+        &[0],
+    );
+    let comments = SimpleTable::new(
+        "comments",
+        &["id", "post_id", "user_id", "content", "created_at", "parent_id", "is_deleted"],
+        &[0],
+    );
+    let tags = SimpleTable::new("tags", &["id", "name"], &[0]);
+    let post_tags = SimpleTable::new("post_tags", &["post_id", "tag_id"], &[0, 1]);
+    (users, posts, comments, tags, post_tags)
 }
 
 /// Generate patchset using SQL parser
-fn parser_patchset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
-    // Combine schema and operations into one SQL string
-    let mut sql = String::from(schema);
+fn parser_patchset_with(operations: &[&str]) -> Vec<u8> {
+    let (users, posts, comments, tags, post_tags) = create_simple_table_schemas();
+
+    let mut builder = PatchSet::<SimpleTable, String, Vec<u8>>::new();
+    builder.add_table(&users);
+    builder.add_table(&posts);
+    builder.add_table(&comments);
+    builder.add_table(&tags);
+    builder.add_table(&post_tags);
+
+    // Combine operations into one SQL string
+    let mut sql = String::new();
     for op in operations {
-        sql.push('\n');
         sql.push_str(op);
         sql.push(';');
+        sql.push('\n');
     }
 
-    let builder: PatchSet<_, String, Vec<u8>> = PatchSet::try_from(sql.as_str()).unwrap();
+    builder.digest_sql(sql.as_str()).unwrap();
     builder.build()
 }
 
@@ -552,14 +564,6 @@ fn benchmark_changeset(c: &mut Criterion) {
 
     group.bench_function("builder_api", |b| {
         b.iter(|| black_box(builder_changeset()));
-    });
-
-    group.bench_function("sql_parser", |b| {
-        b.iter(|| {
-            let schema = black_box(SCHEMA);
-            let ops = black_box(OPERATIONS);
-            black_box(parser_changeset_with(schema, ops))
-        });
     });
 
     group.finish();
@@ -582,9 +586,8 @@ fn benchmark_patchset(c: &mut Criterion) {
 
     group.bench_function("sql_parser", |b| {
         b.iter(|| {
-            let schema = black_box(SCHEMA);
             let ops = black_box(OPERATIONS);
-            black_box(parser_patchset_with(schema, ops))
+            black_box(parser_patchset_with(ops))
         });
     });
 

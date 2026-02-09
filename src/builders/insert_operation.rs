@@ -4,18 +4,37 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use crate::{DynTable, encoding::Value};
+use crate::{DynTable, SchemaWithPK, encoding::Value};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// Builder for an insert operation.
-pub struct Insert<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
+pub struct Insert<T: DynTable, S, B> {
     /// The table being inserted into.
-    pub(crate) table: T,
+    table: T,
     /// Values for the inserted row.
-    pub(crate) values: Vec<Value<S, B>>,
+    pub(super) values: Vec<Value<S, B>>,
 }
 
-impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Insert<T, S, B> {
+impl<T: DynTable, S: Clone, B: Clone> Clone for Insert<T, S, B> {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+            values: self.values.clone(),
+        }
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone, B: Clone> Insert<T, S, B> {
+    /// Extract the primary key values from this insert's values.
+    #[inline]
+    pub fn extract_pk(&self) -> Vec<Value<S, B>> {
+        self.table.extract_pk(&self.values)
+    }
+}
+
+impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
+    for Insert<T, S, B>
+{
     fn eq(&self, other: &Self) -> bool {
         self.table == other.table && self.values == other.values
     }
@@ -23,7 +42,7 @@ impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u
 
 impl<T: DynTable + Eq, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Insert<T, S, B> {}
 
-impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u8]>> From<T> for Insert<T, S, B> {
+impl<T: DynTable, S: Clone, B: Clone> From<T> for Insert<T, S, B> {
     #[inline]
     fn from(table: T) -> Self {
         let num_cols = table.number_of_columns();
@@ -42,12 +61,6 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for Insert<T, S, B> {
 }
 
 impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Insert<T, S, B> {
-    /// Returns a reference to the values.
-    #[inline]
-    pub(crate) fn values(&self) -> &[Value<S, B>] {
-        &self.values
-    }
-
     /// Consumes self and returns the values.
     #[inline]
     pub(crate) fn into_values(self) -> Vec<Value<S, B>> {

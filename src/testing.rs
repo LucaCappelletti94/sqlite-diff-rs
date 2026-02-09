@@ -20,24 +20,9 @@ use rusqlite::Connection;
 use rusqlite::session::Session;
 use std::io::Cursor;
 
+use crate::DynTable;
 use crate::schema::SimpleTable;
-use crate::sql::{FormatSql, Parser, Statement};
-use crate::{ChangeSet, PatchSet};
-
-/// Parse a `CREATE TABLE` statement and return a `SimpleTable`.
-///
-/// # Panics
-///
-/// Panics if the SQL is not a valid `CREATE TABLE` statement.
-#[must_use]
-pub fn parse_schema(sql: &str) -> SimpleTable {
-    let mut parser = Parser::new(sql);
-    let stmts = parser.parse_all().expect("Failed to parse SQL");
-    match &stmts[0] {
-        Statement::CreateTable(ct) => SimpleTable::from(ct.clone()),
-        _ => panic!("Expected CREATE TABLE"),
-    }
-}
+use crate::PatchSet;
 
 /// Execute a sequence of SQL statements against rusqlite with session tracking
 /// and return the raw changeset and patchset bytes.
@@ -144,28 +129,61 @@ pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: &[u8], our_patc
     );
 }
 
-/// Run bit-parity test using the `FromStr` parsing path.
+/// Run bit-parity test by digesting SQL into a PatchSet via `digest_sql`,
+/// serializing to bytes, and comparing the patchset with rusqlite's output.
 ///
-/// Parses the SQL into [`ChangeSet`]/[`PatchSet`] via `str::parse()`, serializes
-/// to bytes, and compares with rusqlite's output.
+/// Note: this only tests patchset parity since SQL digestion is patchset-only.
+///
+/// The `schemas` must be pre-built [`SimpleTable`]s matching the CREATE TABLE
+/// statements in `sql_statements`. The builder is seeded with these schemas
+/// before digesting.
 ///
 /// # Panics
 ///
 /// Panics if parsing fails or if the bytes don't match.
-pub fn assert_fromstr_bit_parity(sql: &str) {
-    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().unwrap();
-    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = sql.parse().unwrap();
+pub fn assert_patchset_sql_parity(schemas: &[SimpleTable], sql_statements: &[&str]) {
+    let mut patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new();
 
-    let our_changeset: Vec<u8> = changeset.into();
-    let our_patchset: Vec<u8> = patchset.into();
+    // Build a lookup map so we can register tables on first DML reference
+    let schema_map: std::collections::HashMap<&str, &SimpleTable> = schemas
+        .iter()
+        .map(|s| (s.name(), s))
+        .collect();
 
-    // Reconstruct the statement list for rusqlite
-    let mut parser = Parser::new(sql);
-    let stmts = parser.parse_all().unwrap();
-    let sql_strings: Vec<String> = stmts.iter().map(|s| s.format_sql()).collect();
-    let sql_refs: Vec<&str> = sql_strings.iter().map(String::as_str).collect();
+    // Digest DML statements, registering each table on first touch
+    for dml in sql_statements
+        .iter()
+        .filter(|s| !s.trim().to_uppercase().starts_with("CREATE"))
+    {
+        // Extract the table name from the DML to ensure proper registration order
+        let upper = dml.trim().to_uppercase();
+        let table_name = if upper.starts_with("INSERT INTO") {
+            dml.trim()["INSERT INTO".len()..].trim().split_whitespace().next()
+        } else if upper.starts_with("UPDATE") {
+            dml.trim()["UPDATE".len()..].trim().split_whitespace().next()
+        } else if upper.starts_with("DELETE FROM") {
+            dml.trim()["DELETE FROM".len()..].trim().split_whitespace().next()
+        } else {
+            None
+        };
 
-    assert_bit_parity(&sql_refs, &our_changeset, &our_patchset);
+        if let Some(name) = table_name {
+            if let Some(schema) = schema_map.get(name) {
+                patchset.add_table(schema);
+            }
+        }
+        patchset.digest_sql(dml).unwrap();
+    }
+
+    let our_patchset: Vec<u8> = patchset.build();
+    let (_, sqlite_patchset) = session_changeset_and_patchset(sql_statements);
+
+    let ps_report = byte_diff_report("patchset", &sqlite_patchset, &our_patchset);
+    assert!(
+        sqlite_patchset == our_patchset,
+        "Patchset bit parity failure!\n\n{ps_report}\n\nSQL:\n{}",
+        sql_statements.join("\n")
+    );
 }
 
 /// Apply a changeset or patchset to a database connection.

@@ -1,25 +1,21 @@
 //! SQL lexer for tokenizing input.
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 /// A token produced by the lexer.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Token {
+pub(super) struct Token<'input> {
     /// The kind of token.
-    pub kind: TokenKind,
+    pub kind: TokenKind<'input>,
     /// The position in the input where this token starts.
     pub pos: usize,
 }
 
 /// The different kinds of tokens.
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
-    // Keywords
-    /// CREATE keyword
-    Create,
-    /// TABLE keyword
-    Table,
+pub(super) enum TokenKind<'input> {
     /// INSERT keyword
     Insert,
     /// INTO keyword
@@ -63,13 +59,13 @@ pub enum TokenKind {
     /// Real/float literal
     RealLiteral(f64),
     /// String literal (single or double quoted)
-    StringLiteral(String),
+    StringLiteral(Cow<'input, str>),
     /// Blob literal (X'...')
     BlobLiteral(Vec<u8>),
 
     // Identifiers
     /// An identifier (table name, column name, etc.)
-    Identifier(String),
+    Identifier(&'input str),
 
     // Symbols
     /// Left parenthesis
@@ -90,17 +86,95 @@ pub enum TokenKind {
     Eof,
 }
 
-/// SQL lexer that produces tokens from input.
-pub struct Lexer<'a> {
-    input: &'a str,
-    pos: usize,
-    peeked: Option<Token>,
+impl<'input> TokenKind<'input> {
+    /// Returns a `'static` descriptive name for this token kind.
+    ///
+    /// Unlike `AsRef<str>`, this never borrows from the input and is
+    /// safe to store in error types with `'static` lifetime.
+    pub(super) fn static_name(&self) -> &'static str {
+        match self {
+            TokenKind::Insert => "INSERT",
+            TokenKind::Into => "INTO",
+            TokenKind::Values => "VALUES",
+            TokenKind::Update => "UPDATE",
+            TokenKind::Set => "SET",
+            TokenKind::Delete => "DELETE",
+            TokenKind::From => "FROM",
+            TokenKind::Where => "WHERE",
+            TokenKind::And => "AND",
+            TokenKind::Primary => "PRIMARY",
+            TokenKind::Key => "KEY",
+            TokenKind::Null => "NULL",
+            TokenKind::Integer => "INTEGER",
+            TokenKind::Int => "INT",
+            TokenKind::Real => "REAL",
+            TokenKind::Text => "TEXT",
+            TokenKind::Blob => "BLOB",
+            TokenKind::Not => "NOT",
+            TokenKind::IntegerLiteral(_) => "<integer>",
+            TokenKind::RealLiteral(_) => "<real>",
+            TokenKind::StringLiteral(_) => "<string>",
+            TokenKind::BlobLiteral(_) => "<blob>",
+            TokenKind::Identifier(_) => "<identifier>",
+            TokenKind::LParen => "(",
+            TokenKind::RParen => ")",
+            TokenKind::Comma => ",",
+            TokenKind::Semicolon => ";",
+            TokenKind::Equals => "=",
+            TokenKind::Minus => "-",
+            TokenKind::Eof => "<eof>",
+        }
+    }
 }
 
-impl<'a> Lexer<'a> {
+impl<'input> AsRef<str> for TokenKind<'input> {
+    fn as_ref(&self) -> &str {
+        match self {
+            TokenKind::Insert => "INSERT",
+            TokenKind::Into => "INTO",
+            TokenKind::Values => "VALUES",
+            TokenKind::Update => "UPDATE",
+            TokenKind::Set => "SET",
+            TokenKind::Delete => "DELETE",
+            TokenKind::From => "FROM",
+            TokenKind::Where => "WHERE",
+            TokenKind::And => "AND",
+            TokenKind::Primary => "PRIMARY",
+            TokenKind::Key => "KEY",
+            TokenKind::Null => "NULL",
+            TokenKind::Integer => "INTEGER",
+            TokenKind::Int => "INT",
+            TokenKind::Real => "REAL",
+            TokenKind::Text => "TEXT",
+            TokenKind::Blob => "BLOB",
+            TokenKind::Not => "NOT",
+            TokenKind::IntegerLiteral(_) => "<integer>",
+            TokenKind::RealLiteral(_) => "<real>",
+            TokenKind::StringLiteral(s) => s.as_ref(),
+            TokenKind::BlobLiteral(_) => "<blob>",
+            TokenKind::Identifier(s) => s,
+            TokenKind::LParen => "(",
+            TokenKind::RParen => ")",
+            TokenKind::Comma => ",",
+            TokenKind::Semicolon => ";",
+            TokenKind::Equals => "=",
+            TokenKind::Minus => "-",
+            TokenKind::Eof => "<eof>",
+        }
+    }
+}
+
+/// SQL lexer that produces tokens from input.
+pub struct Lexer<'input> {
+    pub(super) input: &'input str,
+    pos: usize,
+    peeked: Option<Token<'input>>,
+}
+
+impl<'input> Lexer<'input> {
     /// Create a new lexer for the given input.
     #[must_use]
-    pub fn new(input: &'a str) -> Self {
+    pub(super) fn new(input: &'input str) -> Self {
         Self {
             input,
             pos: 0,
@@ -108,14 +182,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Get the current position in the input.
-    #[must_use]
-    pub fn position(&self) -> usize {
-        self.pos
-    }
-
     /// Peek at the next token without consuming it.
-    pub fn peek(&mut self) -> Result<&Token, LexerError> {
+    pub fn peek<'b>(&'b mut self) -> Result<&'b Token<'input>, LexerError>
+    {
         if self.peeked.is_none() {
             self.peeked = Some(self.next_token()?);
         }
@@ -123,7 +192,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Consume and return the next token.
-    pub fn next(&mut self) -> Result<Token, LexerError> {
+    pub fn next(&mut self) -> Result<Token<'input>, LexerError> {
         if let Some(token) = self.peeked.take() {
             return Ok(token);
         }
@@ -160,7 +229,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Token, LexerError> {
+    fn next_token(&mut self) -> Result<Token<'input>, LexerError> {
         self.skip_whitespace();
 
         let start_pos = self.pos;
@@ -221,28 +290,36 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn read_string(&mut self, start_pos: usize) -> Result<Token, LexerError> {
+    fn read_string(&mut self, start_pos: usize) -> Result<Token<'input>, LexerError> {
         let bytes = self.input.as_bytes();
         let quote = bytes[self.pos];
         self.pos += 1;
 
-        let mut value = String::new();
+        let start = self.pos;
+        let mut has_escape = false;
         while self.pos < bytes.len() {
             let b = bytes[self.pos];
             if b == quote {
                 // Check for escaped quote (doubled)
                 if self.pos + 1 < bytes.len() && bytes[self.pos + 1] == quote {
-                    value.push(quote as char);
+                    has_escape = true;
                     self.pos += 2;
                 } else {
+                    let raw = &self.input[start..self.pos];
                     self.pos += 1;
+                    let value = if has_escape {
+                        let q = quote as char;
+                        let doubled = alloc::format!("{q}{q}");
+                        Cow::Owned(raw.replace(&doubled, &alloc::format!("{q}")))
+                    } else {
+                        Cow::Borrowed(raw)
+                    };
                     return Ok(Token {
                         kind: TokenKind::StringLiteral(value),
                         pos: start_pos,
                     });
                 }
             } else {
-                value.push(b as char);
                 self.pos += 1;
             }
         }
@@ -250,7 +327,7 @@ impl<'a> Lexer<'a> {
         Err(LexerError::UnterminatedString { pos: start_pos })
     }
 
-    fn read_blob(&mut self, start_pos: usize) -> Result<Token, LexerError> {
+    fn read_blob(&mut self, start_pos: usize) -> Result<Token<'input>, LexerError> {
         let bytes = self.input.as_bytes();
         self.pos += 2; // Skip X'
 
@@ -294,7 +371,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_number(&mut self, start_pos: usize) -> Result<Token, LexerError> {
+    fn read_number(&mut self, start_pos: usize) -> Result<Token<'input>, LexerError> {
         let bytes = self.input.as_bytes();
         let num_start = self.pos;
 
@@ -361,7 +438,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_identifier(&mut self, start_pos: usize) -> Result<Token, LexerError> {
+    fn read_identifier(&mut self, start_pos: usize) -> Result<Token<'input>, LexerError> {
         let bytes = self.input.as_bytes();
         let ident_start = self.pos;
 
@@ -371,8 +448,6 @@ impl<'a> Lexer<'a> {
 
         let ident = &self.input[ident_start..self.pos];
         let kind = match ident.to_uppercase().as_str() {
-            "CREATE" => TokenKind::Create,
-            "TABLE" => TokenKind::Table,
             "INSERT" => TokenKind::Insert,
             "INTO" => TokenKind::Into,
             "VALUES" => TokenKind::Values,
@@ -391,7 +466,7 @@ impl<'a> Lexer<'a> {
             "TEXT" => TokenKind::Text,
             "BLOB" => TokenKind::Blob,
             "NOT" => TokenKind::Not,
-            _ => TokenKind::Identifier(ident.into()),
+            _ => TokenKind::Identifier(ident),
         };
 
         Ok(Token {
@@ -464,16 +539,6 @@ pub enum LexerError {
 mod tests {
     use super::*;
     use alloc::vec;
-
-    #[test]
-    fn test_keywords() {
-        let mut lexer = Lexer::new("CREATE TABLE INSERT INTO VALUES");
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Create);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Table);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Insert);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Into);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Values);
-    }
 
     #[test]
     fn test_identifiers() {

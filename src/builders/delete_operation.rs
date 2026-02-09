@@ -99,12 +99,6 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> ChangeDelete<T, S, B> {
         self.set(col_idx, Value::Null)
     }
 
-    /// Returns a reference to the values.
-    #[inline]
-    pub(crate) fn values(&self) -> &[Value<S, B>] {
-        &self.values
-    }
-
     /// Consumes self and returns the values.
     #[inline]
     pub(crate) fn into_values(self) -> Vec<Value<S, B>> {

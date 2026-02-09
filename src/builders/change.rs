@@ -121,7 +121,9 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
 ///
 /// This function returns indices into `rows` in the order that SQLite's
 /// changeset/patchset output would contain them.
-fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(rows: &IndexMap<Vec<Value<S, B>>, V>) -> Vec<usize> {
+fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
+    rows: &IndexMap<Vec<Value<S, B>>, V>,
+) -> Vec<usize> {
     let n = rows.len();
     if n == 0 {
         return Vec::new();
@@ -181,7 +183,7 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(rows: &IndexMap<Vec<Value
 ///
 /// Generic over the format `F` (Changeset or Patchset), table schema `T`, and value types `S`, `B`.
 #[derive(Debug, Clone)]
-pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>> {
+pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
     pub(crate) tables: IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>,
 }
 
@@ -218,42 +220,58 @@ where
     B: Eq + Hash + AsRef<[u8]>,
     F::Old: Eq,
     F::DeleteData: Eq,
-{}
-
+{
+}
 
 /// Type alias for building changesets.
 pub type ChangeSet<T, S, B> = DiffSetBuilder<ChangesetFormat, T, S, B>;
 /// Type alias for building patchsets.
 pub type PatchSet<T, S, B> = DiffSetBuilder<PatchsetFormat, T, S, B>;
 
-impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq> Default for DiffSetBuilder<F, T, S, B> {
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq>
+    Default for DiffSetBuilder<F, T, S, B>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+{
     #[inline]
     fn from(builder: &DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+{
     #[inline]
     fn from(builder: DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq> From<&DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8> {
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq>
+    From<&DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8>
+{
     #[inline]
     fn from(builder: &DiffSetBuilder<PatchsetFormat, T, S, B>) -> Self {
         builder.build()
     }
 }
 
-impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq> From<DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8> {
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq>
+    From<DiffSetBuilder<PatchsetFormat, T, S, B>> for Vec<u8>
+{
     #[inline]
     fn from(builder: DiffSetBuilder<PatchsetFormat, T, S, B>) -> Self {
         builder.build()
@@ -262,7 +280,16 @@ impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone 
 
 use crate::encoding::op_codes;
 
-impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq> DiffSetBuilder<F, T, S, B> {
+impl<F: Format<S, B>, T: SchemaWithPK, S, B> DiffSetBuilder<F, T, S, B> {
+    /// Returns the table corresponding to the given name, if it exists in the builder.
+    pub(super) fn table<'builder>(&'builder self, name: &str) -> Option<&'builder T> {
+        self.tables.keys().find(|t| t.name() == name)
+    }
+}
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq>
+    DiffSetBuilder<F, T, S, B>
+{
     /// Create a new builder.
     #[inline]
     #[must_use]
@@ -279,6 +306,16 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     #[inline]
     fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value<S, B>>, Operation<F, S, B>> {
         self.tables.entry(table.clone()).or_default()
+    }
+
+    /// Register a table schema without adding any operations.
+    ///
+    /// This is useful when you need the table present (e.g. before calling
+    /// [`DiffSetBuilder::digest_sql`]) but don't have operations yet.
+    /// If the table is already registered, this is a no-op.
+    pub fn add_table(&mut self, table: &T) -> &mut Self {
+        self.ensure_table(table);
+        self
     }
 
     /// Returns true if the builder has no operations.
@@ -323,7 +360,12 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     /// Add any operation, consolidating with existing operations on the same row.
     ///
     /// The table schema is passed separately — operations are schema-less.
-    fn add_operation(mut self, table: &T, pk: Vec<Value<S, B>>, new_op: Operation<F, S, B>) -> Self
+    pub(crate) fn add_operation(
+        &mut self,
+        table: &T,
+        pk: Vec<Value<S, B>>,
+        new_op: Operation<F, S, B>,
+    ) -> &mut Self
     where
         S: Clone,
         B: Clone,
@@ -368,62 +410,42 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 // Changeset-specific builder methods
 // ============================================================================
 
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSetBuilder<ChangesetFormat, T, S, B>
+{
     /// Add an INSERT operation.
-    #[must_use]
-    pub fn insert(self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.as_ref().extract_pk(insert.values());
+    pub fn insert(&mut self, insert: Insert<T, S, B>) -> &mut Self {
+        let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
 }
 
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
-    /// Add an INSERT operation from raw values (internal use).
-    ///
-    /// Values should all be defined (Some). Undefined values are converted to Null.
-    #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
-        // Convert MaybeValue to Value<S, B>, using Null for undefined
-        let values: Vec<Value<S, B>> = values
-            .into_iter()
-            .map(|v| v.unwrap_or(Value::Null))
-            .collect();
-        let pk = table.extract_pk(&values);
-        self.add_operation(table, pk, Operation::Insert(values))
-    }
-}
-
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSetBuilder<ChangesetFormat, T, S, B>
+{
     /// Add a DELETE operation.
-    #[must_use]
-    pub fn delete(self, delete: ChangeDelete<T, S, B>) -> Self {
-        let pk = delete.as_ref().extract_pk(delete.values());
+    pub fn delete(&mut self, delete: ChangeDelete<T, S, B>) -> &mut Self {
+        let pk = delete.as_ref().extract_pk(&delete.values);
         let table = delete.as_ref().clone();
         self.add_operation(&table, pk, Operation::Delete(delete.into_values()))
     }
 }
 
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
-    /// Add a DELETE operation from raw values (internal use).
-    ///
-    /// Values should all be defined (Some). Undefined values are converted to Null.
-    #[must_use]
-    pub(crate) fn delete_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
-        // Convert MaybeValue to Value<S, B>, using Null for undefined
-        let values: Vec<Value<S, B>> = values
-            .into_iter()
-            .map(|v| v.unwrap_or(Value::Null))
-            .collect();
-        let pk = table.extract_pk(&values);
-        self.add_operation(table, pk, Operation::Delete(values))
-    }
-}
-
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSetBuilder<ChangesetFormat, T, S, B>
+{
     /// Add an UPDATE operation.
-    #[must_use]
-    pub fn update(self, update: Update<T, ChangesetFormat, S, B>) -> Self {
+    pub fn update(&mut self, update: Update<T, ChangesetFormat, S, B>) -> &mut Self {
         // Extract PK from old values (convert None to Null for PK extraction)
         let old_values: Vec<_> = update
             .values()
@@ -437,56 +459,24 @@ impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: De
     }
 }
 
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
-    /// Add an UPDATE operation from raw values (internal use).
-    #[must_use]
-    pub(crate) fn update_raw(
-        self,
-        table: &T,
-        old_values: Vec<MaybeValue<S, B>>,
-        new_values: Vec<MaybeValue<S, B>>,
-    ) -> Self {
-        // Extract PK using concrete values (convert None to Null)
-        let pk_values: Vec<Value<S, B>> = old_values
-            .iter()
-            .map(|v| v.clone().unwrap_or(Value::Null))
-            .collect();
-        let pk = table.extract_pk(&pk_values);
-        let values: Vec<(MaybeValue<S, B>, MaybeValue<S, B>)> =
-            old_values.into_iter().zip(new_values).collect();
-        self.add_operation(table, pk, Operation::Update(values))
-    }
-}
-
 // ============================================================================
 // Patchset-specific builder methods
 // ============================================================================
 
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    DiffSetBuilder<PatchsetFormat, T, S, B>
+{
     /// Add an INSERT operation.
-    #[must_use]
-    pub fn insert(self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.as_ref().extract_pk(insert.values());
+    pub fn insert(&mut self, insert: Insert<T, S, B>) -> &mut Self {
+        let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
         self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
     }
 }
 
-impl<T: SchemaWithPK, S: Default + Clone + Hash + Eq + AsRef<str>, B: Default + Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
-    /// Add an INSERT operation from raw values (internal use).
-    ///
-    /// Values should all be defined (Some). Undefined values are converted to Null.
-    #[must_use]
-    pub(crate) fn insert_raw(self, table: &T, values: Vec<MaybeValue<S, B>>) -> Self {
-        // Convert MaybeValue to Value, using Null for undefined
-        let values: Vec<Value<S, B>> = values
-            .into_iter()
-            .map(|v| v.unwrap_or(Value::Null))
-            .collect();
-        let pk = table.extract_pk(&values);
-        self.add_operation(table, pk, Operation::Insert(values))
-    }
-
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    DiffSetBuilder<PatchsetFormat, T, S, B>
+{
     /// Add a DELETE operation by specifying the table and primary key values.
     ///
     /// The `pk` slice should contain only the primary key column values, in the order
@@ -502,10 +492,10 @@ impl<T: SchemaWithPK, S: Default + Clone + Hash + Eq + AsRef<str>, B: Default + 
     /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // Delete row where id = 1
-    /// let patchset = PatchSet::<_, String, Vec<u8>>::new().delete(&schema, &[1i64.into()]);
+    /// let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    /// patchset.delete(&schema, &[1i64.into()]);
     /// ```
-    #[must_use]
-    pub fn delete(self, table: &T, pk: &[Value<S, B>]) -> Self {
+    pub fn delete(&mut self, table: &T, pk: &[Value<S, B>]) -> &mut Self {
         self.add_operation(table, pk.to_vec(), Operation::Delete(()))
     }
 
@@ -527,33 +517,37 @@ impl<T: SchemaWithPK, S: Default + Clone + Hash + Eq + AsRef<str>, B: Default + 
     ///     .set(0, 1i64).unwrap()  // PK value
     ///     .set(1, "Bob").unwrap();
     ///
-    /// let patchset = PatchSet::<_, String, Vec<u8>>::new().update(update);
+    /// let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    /// patchset.update(update);
     /// ```
-    #[must_use]
-    pub fn update(self, update: Update<T, PatchsetFormat, S, B>) -> Self {
-        // Extract PK from new values (convert None to Null for PK extraction)
-        let new_values: Vec<Value<S, B>> = update
-            .new_values()
-            .into_iter()
-            .map(|v| v.unwrap_or(Value::Null))
-            .collect();
-        let pk = update.as_ref().extract_pk(&new_values);
+    pub fn update(&mut self, update: Update<T, PatchsetFormat, S, B>) -> &mut Self {
+        // Extract PK from new values
+        let pk = update.extract_pk();
         let table = update.as_ref().clone();
         let values: Vec<((), MaybeValue<S, B>)> = update.into();
         self.add_operation(&table, pk, Operation::Update(values))
     }
+}
 
-    /// Add an UPDATE operation from raw new values (internal use).
-    #[must_use]
-    pub(crate) fn update_raw(self, table: &T, new_values: Vec<MaybeValue<S, B>>) -> Self {
-        // Extract PK using concrete values (convert None to Null)
-        let pk_values: Vec<Value<S, B>> = new_values
-            .iter()
-            .map(|v| v.clone().unwrap_or(Value::Null))
-            .collect();
-        let pk = table.extract_pk(&pk_values);
-        let values: Vec<((), MaybeValue<S, B>)> = new_values.into_iter().map(|v| ((), v)).collect();
-        self.add_operation(table, pk, Operation::Update(values))
+impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a> From<&'a str>>
+    DiffSetBuilder<PatchsetFormat, T, S, Vec<u8>>
+{
+    /// Digest a SQL string containing INSERT, UPDATE, and DELETE statements
+    /// into this patchset builder.
+    ///
+    /// The SQL statements are parsed and their effects are directly applied
+    /// to the builder, consolidating operations by primary key as usual.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`crate::builders::sql::ParseError`] if the SQL cannot be parsed.
+    pub fn digest_sql<'input>(
+        &mut self,
+        input: &'input str,
+    ) -> Result<&mut Self, crate::builders::sql::ParseError<'input>> {
+        let mut parser = crate::builders::sql::Parser::new(input, self);
+        parser.digest_all()?;
+        Ok(self)
     }
 }
 
@@ -561,7 +555,12 @@ impl<T: SchemaWithPK, S: Default + Clone + Hash + Eq + AsRef<str>, B: Default + 
 // Unified build implementation
 // ============================================================================
 
-impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debug + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<ChangesetFormat, T, S, B> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSetBuilder<ChangesetFormat, T, S, B>
+{
     /// Build the changeset binary data.
     ///
     /// Returns the binary representation compatible with SQLite's session extension.
@@ -612,7 +611,9 @@ impl<T: SchemaWithPK, S: Clone + Debug + Hash + Eq + AsRef<str>, B: Clone + Debu
     }
 }
 
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> DiffSetBuilder<PatchsetFormat, T, S, B> {
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    DiffSetBuilder<PatchsetFormat, T, S, B>
+{
     /// Build the patchset binary data.
     ///
     /// Returns the binary representation compatible with SQLite's session extension.
@@ -705,30 +706,22 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 
 use crate::builders::operation::Reverse;
 
-impl<T: SchemaWithPK, S: Default + Clone + Debug + Hash + Eq + AsRef<str>, B: Default + Clone + Debug + Hash + Eq + AsRef<[u8]>> Reverse for DiffSetBuilder<ChangesetFormat, T, S, B> {
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> Reverse for DiffSetBuilder<ChangesetFormat, T, S, B>
+{
     type Output = DiffSetBuilder<ChangesetFormat, T, S, B>;
 
     fn reverse(self) -> Self::Output {
         let mut reversed: DiffSetBuilder<ChangesetFormat, T, S, B> = DiffSetBuilder::new();
 
         for (table, rows) in self.tables {
-            for (_pk, op) in rows {
+            for (pk, op) in rows {
                 let rev_op = op.reverse();
-                // Recompute PK for reversed operation (INSERT↔DELETE swap values)
-                let rev_pk = match &rev_op {
-                    Operation::Insert(values) | Operation::Delete(values) => {
-                        table.extract_pk(values)
-                    }
-                    Operation::Update(pairs) => {
-                        // Convert MaybeValue to Value, using Null for undefined
-                        let old_vals: Vec<_> = pairs
-                            .iter()
-                            .map(|(old, _)| old.clone().unwrap_or(Value::Null))
-                            .collect();
-                        table.extract_pk(&old_vals)
-                    }
-                };
-                reversed = reversed.add_operation(&table, rev_pk, rev_op);
+                
+                reversed.add_operation(&table, pk, rev_op);
             }
         }
 
@@ -777,12 +770,25 @@ mod tests {
     }
 
     impl crate::SchemaWithPK for TestTable {
-        fn extract_pk<S, B>(&self, values: &[Value<S, B>]) -> alloc::vec::Vec<Value<S, B>>
-        where
-            S: Clone + AsRef<str>,
-            B: Clone + AsRef<[u8]>,
-        {
-            vec![values[self.pk_column].clone()]
+        fn number_of_primary_keys(&self) -> usize {
+            1
+        }
+
+        fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+            if col_idx == self.pk_column {
+                Some(0)
+            } else {
+                None
+            }
+        }
+
+        fn extract_pk<S: Clone, B: Clone>(
+            &self,
+            values: &impl crate::IndexableValues<Text = S, Binary = B>,
+        ) -> alloc::vec::Vec<Value<S, B>> {
+            alloc::vec![values
+                .get(self.pk_column)
+                .expect("primary key column index out of bounds — values shorter than schema")]
         }
     }
 
@@ -798,7 +804,8 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert);
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
 
         assert_eq!(builder.len(), 1);
         assert!(!builder.is_empty());
@@ -820,7 +827,9 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert).delete(delete);
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
+        builder.delete(delete);
 
         assert_eq!(builder.len(), 0);
         assert!(builder.is_empty());
@@ -842,7 +851,9 @@ mod tests {
             .set(1, "alice", "bob")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert).update(update);
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
+        builder.update(update);
 
         assert_eq!(builder.len(), 1);
         // Should still be an INSERT with "bob" as the name
@@ -864,7 +875,9 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
+        let mut builder = ChangesetBuilder::new();
+        builder.delete(delete);
+        builder.insert(insert);
 
         assert_eq!(builder.len(), 0);
         assert!(builder.is_empty());
@@ -886,7 +899,9 @@ mod tests {
             .set(1, "bob")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
+        let mut builder = ChangesetBuilder::new();
+        builder.delete(delete);
+        builder.insert(insert);
 
         assert_eq!(builder.len(), 1);
         // Should be an UPDATE from alice to bob
@@ -908,7 +923,9 @@ mod tests {
             .set(1, "bob")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert1).insert(insert2);
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert1);
+        builder.insert(insert2);
 
         assert_eq!(builder.len(), 2);
     }
@@ -929,7 +946,9 @@ mod tests {
             .set(1, "bob", "charlie")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().update(update1).update(update2);
+        let mut builder = ChangesetBuilder::new();
+        builder.update(update1);
+        builder.update(update2);
 
         assert_eq!(builder.len(), 1);
         // Should be a single UPDATE from alice to charlie
@@ -946,7 +965,13 @@ mod tests {
         let reversed = op.reverse();
         assert!(matches!(reversed, Operation::Delete(_)));
         if let Operation::Delete(values) = reversed {
-            assert_eq!(values, vec![Value::<String, Vec<u8>>::Integer(1), Value::Text("alice".into())]);
+            assert_eq!(
+                values,
+                vec![
+                    Value::<String, Vec<u8>>::Integer(1),
+                    Value::Text("alice".into())
+                ]
+            );
         }
     }
 
@@ -957,7 +982,13 @@ mod tests {
         let reversed = op.reverse();
         assert!(matches!(reversed, Operation::Insert(_)));
         if let Operation::Insert(values) = reversed {
-            assert_eq!(values, vec![Value::<String, Vec<u8>>::Integer(1), Value::Text("alice".into())]);
+            assert_eq!(
+                values,
+                vec![
+                    Value::<String, Vec<u8>>::Integer(1),
+                    Value::Text("alice".into())
+                ]
+            );
         }
     }
 
@@ -997,7 +1028,8 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().insert(insert);
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1018,7 +1050,8 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().delete(delete);
+        let mut builder = ChangesetBuilder::new();
+        builder.delete(delete);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1039,7 +1072,8 @@ mod tests {
             .set(1, "alice", "bob")
             .unwrap();
 
-        let builder = ChangesetBuilder::new().update(update);
+        let mut builder = ChangesetBuilder::new();
+        builder.update(update);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1068,8 +1102,14 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let original_values = insert.values().to_vec();
-        let builder = ChangesetBuilder::new().insert(insert);
+        let original_values = insert.into_values();
+        let insert2 = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert2);
         let double_reversed = builder.reverse().reverse();
 
         assert_eq!(double_reversed.len(), 1);
@@ -1101,7 +1141,9 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let bytes = ChangesetBuilder::new().insert(insert).build();
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
+        let bytes = builder.build();
 
         // Verify the structure:
         // Table header: 'T', col_count(2), pk_flags(1,0), name("t\0")
@@ -1133,7 +1175,9 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let bytes = ChangesetBuilder::new().delete(delete).build();
+        let mut builder = ChangesetBuilder::new();
+        builder.delete(delete);
+        let bytes = builder.build();
 
         assert!(!bytes.is_empty());
         assert_eq!(bytes[0], b'T');
@@ -1150,7 +1194,9 @@ mod tests {
             .set(1, "a", "b")
             .unwrap();
 
-        let bytes = ChangesetBuilder::new().update(update).build();
+        let mut builder = ChangesetBuilder::new();
+        builder.update(update);
+        let bytes = builder.build();
 
         assert!(!bytes.is_empty());
         assert_eq!(bytes[0], b'T');
@@ -1174,10 +1220,10 @@ mod tests {
             .set(1, "b")
             .unwrap();
 
-        let bytes = ChangesetBuilder::new()
-            .insert(insert)
-            .insert(insert2)
-            .build();
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
+        builder.insert(insert2);
+        let bytes = builder.build();
 
         assert!(!bytes.is_empty());
         // Should have one table header and two insert operations
@@ -1200,13 +1246,12 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let bytes = ChangesetBuilder::new()
-            .insert(insert)
-            .delete(delete)
-            .build();
+        let mut builder = ChangesetBuilder::new();
+        builder.insert(insert);
+        builder.delete(delete);
+        let bytes = builder.build();
 
         // INSERT + DELETE with same values cancels out
         assert!(bytes.is_empty());
     }
 }
-

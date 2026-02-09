@@ -1,18 +1,23 @@
 //! Fuzz test for reverse idempotency: reverse(reverse(x)) == x
 //!
-//! This fuzzer generates random changesets from SQL and verifies that:
+//! This fuzzer parses arbitrary bytes as a binary changeset and verifies that:
 //! 1. Reversing twice yields the original changeset
-//! 2. Applying changeset + reverse yields original database state
+//! 2. Binary representations match after double reverse
 //! 3. No panics occur during reversal
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::{ChangeSet, Reverse, SimpleTable};
+use sqlite_diff_rs::{ParsedDiffSet, Reverse};
 
 fn main() {
     loop {
-        fuzz!(|data: String| {
-            // Try to parse as a changeset
-            let Ok(changeset) = data.parse::<ChangeSet<SimpleTable, String, Vec<u8>>>() else {
+        fuzz!(|data: &[u8]| {
+            // Parse arbitrary bytes as a binary changeset/patchset
+            let Ok(parsed) = ParsedDiffSet::try_from(data) else {
+                return;
+            };
+
+            // Only changesets support Reverse
+            let ParsedDiffSet::Changeset(changeset) = parsed else {
                 return;
             };
 

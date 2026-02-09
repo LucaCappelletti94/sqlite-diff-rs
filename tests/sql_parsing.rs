@@ -1,79 +1,81 @@
-//! Integration tests for SQL parsing into DiffSetBuilder.
+//! Integration tests for SQL digestion into DiffSetBuilder via `digest_sql`.
 //!
-//! These tests verify the FromStr/TryFrom implementations for
-//! DiffSetBuilder<ChangesetFormat, SimpleTable> and
-//! DiffSetBuilder<PatchsetFormat, SimpleTable>.
+//! These tests verify that `DiffSetBuilder::digest_sql` correctly parses SQL
+//! DML statements (INSERT, UPDATE, DELETE) and populates the patchset builder.
+//! Schemas are created manually via `SimpleTable::new`.
 
 #![cfg(feature = "testing")]
 
-use sqlite_diff_rs::{ChangeSet, DiffSetParseError, PatchSet, SimpleTable};
+use sqlite_diff_rs::testing::assert_patchset_sql_parity;
+use sqlite_diff_rs::{PatchSet, SimpleTable};
+
+/// Helper: create a PatchSet with tables pre-registered.
+fn patchset_with(tables: &[SimpleTable]) -> PatchSet<SimpleTable, String, Vec<u8>> {
+    let mut ps = PatchSet::new();
+    for t in tables {
+        ps.add_table(t);
+    }
+    ps
+}
 
 // =============================================================================
 // Basic parsing tests
 // =============================================================================
 
 #[test]
-fn test_parse_simple_insert() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
-    assert!(!builder.is_empty());
+fn test_digest_simple_insert() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
+    assert!(!ps.is_empty());
+    assert!(!ps.build().is_empty());
 }
 
 #[test]
-fn test_parse_simple_delete() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        DELETE FROM users WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_simple_delete() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql("DELETE FROM users WHERE id = 1;").unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
-fn test_parse_simple_update() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        UPDATE users SET name = 'Bob' WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_simple_update() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql("UPDATE users SET name = 'Bob' WHERE id = 1;")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
-fn test_parse_multiple_tables() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, content TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-        INSERT INTO posts (id, user_id, content) VALUES (1, 1, 'Hello World');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 2);
+fn test_digest_multiple_tables() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let posts = SimpleTable::new("posts", &["id", "user_id", "content"], &[0]);
+    let mut ps = patchset_with(&[users, posts]);
+    ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
+        .unwrap();
+    ps.digest_sql("INSERT INTO posts (id, user_id, content) VALUES (1, 1, 'Hello World');")
+        .unwrap();
+    assert_eq!(ps.len(), 2);
 }
 
 #[test]
-fn test_parse_mixed_operations() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER);
-        INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30);
-        INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);
-        UPDATE users SET age = 31 WHERE id = 1;
-        DELETE FROM users WHERE id = 2;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
+fn test_digest_mixed_operations() {
+    let users = SimpleTable::new("users", &["id", "name", "age"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql(
+        "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30);\
+         INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);\
+         UPDATE users SET age = 31 WHERE id = 1;\
+         DELETE FROM users WHERE id = 2;",
+    )
+    .unwrap();
     // INSERT(1) + UPDATE(1) = INSERT(1) with updated values
     // INSERT(2) + DELETE(2) = cancelled out
-    // So we should have 1 operation
-    assert_eq!(builder.len(), 1);
+    assert_eq!(ps.len(), 1);
 }
 
 // =============================================================================
@@ -81,170 +83,33 @@ fn test_parse_mixed_operations() {
 // =============================================================================
 
 #[test]
-fn test_table_not_found_error() {
-    let sql = "
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let result: Result<ChangeSet<SimpleTable, String, Vec<u8>>, _> = sql.parse();
-    assert!(matches!(result, Err(DiffSetParseError::TableNotFound(_))));
-}
-
-#[test]
-fn test_table_must_come_before_operations() {
-    let sql = "
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-    ";
-
-    let result: Result<ChangeSet<SimpleTable, String, Vec<u8>>, _> = sql.parse();
-    assert!(matches!(result, Err(DiffSetParseError::TableNotFound(_))));
+fn test_table_not_registered_error() {
+    let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+    let result = ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');");
+    assert!(result.is_err());
 }
 
 #[test]
 fn test_invalid_sql_error() {
-    let sql = "THIS IS NOT VALID SQL";
-
-    let result: Result<ChangeSet<SimpleTable, String, Vec<u8>>, _> = sql.parse();
-    assert!(matches!(result, Err(DiffSetParseError::SqlParser(_))));
-}
-
-// =============================================================================
-// Patchset parsing tests
-// =============================================================================
-
-#[test]
-fn test_parse_patchset_insert() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: PatchSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    let result = ps.digest_sql("THIS IS NOT VALID SQL");
+    assert!(result.is_err());
 }
 
 #[test]
-fn test_parse_patchset_update() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        UPDATE users SET name = 'Bob' WHERE id = 1;
-    ";
-
-    let builder: PatchSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_create_table_rejected() {
+    let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+    let result = ps.digest_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    assert!(result.is_err());
 }
 
 #[test]
-fn test_parse_patchset_delete() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        DELETE FROM users WHERE id = 1;
-    ";
-
-    let builder: PatchSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
-}
-
-// =============================================================================
-// TryFrom implementations tests
-// =============================================================================
-
-#[test]
-fn test_try_from_str() {
-    let sql = "CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t (id) VALUES (1);";
-    let builder = ChangeSet::<SimpleTable, String, Vec<u8>>::try_from(sql).expect("Failed to parse");
-    assert_eq!(builder.len(), 1);
-}
-
-#[test]
-fn test_try_from_string() {
-    let sql =
-        String::from("CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t (id) VALUES (1);");
-    let builder = ChangeSet::<SimpleTable, String, Vec<u8>>::try_from(sql).expect("Failed to parse");
-    assert_eq!(builder.len(), 1);
-}
-
-#[test]
-fn test_try_from_statements() {
-    use sqlite_diff_rs::sql::Parser;
-
-    let sql = "CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t (id) VALUES (1);";
-    let statements = Parser::new(sql).parse_all().expect("Failed to parse SQL");
-
-    let builder =
-        ChangeSet::<SimpleTable, String, Vec<u8>>::try_from(statements.as_slice()).expect("Failed to convert");
-    assert_eq!(builder.len(), 1);
-}
-
-// =============================================================================
-// Display / Roundtrip tests (ChangeSet only)
-// =============================================================================
-
-#[test]
-fn test_display_simple_insert() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let output = builder.to_string();
-
-    // The output should contain CREATE TABLE and INSERT
-    assert!(output.contains("CREATE TABLE"));
-    assert!(output.contains("INSERT INTO"));
-    assert!(output.contains("users"));
-}
-
-#[test]
-fn test_display_roundtrip_insert() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let output = builder.to_string();
-
-    // Parse the output back
-    let reparsed: ChangeSet<SimpleTable, String, Vec<u8>> = output.parse().expect("Failed to re-parse SQL");
-
-    // The reparsed builder should be equivalent
-    assert_eq!(builder.len(), reparsed.len());
-}
-
-#[test]
-fn test_display_roundtrip_delete() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-        DELETE FROM users WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    // INSERT + DELETE with potentially different values = might not cancel out
-    // But if they do cancel, we get empty builder
-    if !builder.is_empty() {
-        let output = builder.to_string();
-        let reparsed: ChangeSet<SimpleTable, String, Vec<u8>> = output.parse().expect("Failed to re-parse SQL");
-        assert_eq!(builder.len(), reparsed.len());
-    }
-}
-
-#[test]
-fn test_display_roundtrip_mixed() {
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-        INSERT INTO users (id, name) VALUES (2, 'Bob');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let output = builder.to_string();
-
-    let reparsed: ChangeSet<SimpleTable, String, Vec<u8>> = output.parse().expect("Failed to re-parse SQL");
-    assert_eq!(builder.len(), reparsed.len());
+fn test_unknown_column_error() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    let result = ps.digest_sql("INSERT INTO users (id, nonexistent) VALUES (1, 'Alice');");
+    assert!(result.is_err());
 }
 
 // =============================================================================
@@ -252,63 +117,59 @@ fn test_display_roundtrip_mixed() {
 // =============================================================================
 
 #[test]
-fn test_parse_integer_values() {
-    let sql = "
-        CREATE TABLE numbers (id INTEGER PRIMARY KEY, value INTEGER);
-        INSERT INTO numbers (id, value) VALUES (1, 42);
-        INSERT INTO numbers (id, value) VALUES (2, -100);
-        INSERT INTO numbers (id, value) VALUES (3, 0);
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 3);
+fn test_digest_integer_values() {
+    let numbers = SimpleTable::new("numbers", &["id", "value"], &[0]);
+    let mut ps = patchset_with(&[numbers]);
+    ps.digest_sql(
+        "INSERT INTO numbers (id, value) VALUES (1, 42);\
+         INSERT INTO numbers (id, value) VALUES (2, -100);\
+         INSERT INTO numbers (id, value) VALUES (3, 0);",
+    )
+    .unwrap();
+    assert_eq!(ps.len(), 3);
 }
 
 #[test]
-fn test_parse_real_values() {
-    let sql = "
-        CREATE TABLE floats (id INTEGER PRIMARY KEY, value REAL);
-        INSERT INTO floats (id, value) VALUES (1, 3.14);
-        INSERT INTO floats (id, value) VALUES (2, -2.5);
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 2);
+fn test_digest_real_values() {
+    let floats = SimpleTable::new("floats", &["id", "value"], &[0]);
+    let mut ps = patchset_with(&[floats]);
+    ps.digest_sql(
+        "INSERT INTO floats (id, value) VALUES (1, 3.14);\
+         INSERT INTO floats (id, value) VALUES (2, -2.5);",
+    )
+    .unwrap();
+    assert_eq!(ps.len(), 2);
 }
 
 #[test]
-fn test_parse_text_values() {
-    let sql = "
-        CREATE TABLE texts (id INTEGER PRIMARY KEY, value TEXT);
-        INSERT INTO texts (id, value) VALUES (1, 'hello');
-        INSERT INTO texts (id, value) VALUES (2, 'world');
-        INSERT INTO texts (id, value) VALUES (3, '');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 3);
+fn test_digest_text_values() {
+    let texts = SimpleTable::new("texts", &["id", "value"], &[0]);
+    let mut ps = patchset_with(&[texts]);
+    ps.digest_sql(
+        "INSERT INTO texts (id, value) VALUES (1, 'hello');\
+         INSERT INTO texts (id, value) VALUES (2, 'world');\
+         INSERT INTO texts (id, value) VALUES (3, '');",
+    )
+    .unwrap();
+    assert_eq!(ps.len(), 3);
 }
 
 #[test]
-fn test_parse_null_values() {
-    let sql = "
-        CREATE TABLE nullable (id INTEGER PRIMARY KEY, value TEXT);
-        INSERT INTO nullable (id, value) VALUES (1, NULL);
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_null_values() {
+    let nullable = SimpleTable::new("nullable", &["id", "value"], &[0]);
+    let mut ps = patchset_with(&[nullable]);
+    ps.digest_sql("INSERT INTO nullable (id, value) VALUES (1, NULL);")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
-fn test_parse_blob_values() {
-    let sql = "
-        CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB);
-        INSERT INTO blobs (id, data) VALUES (1, X'DEADBEEF');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_blob_values() {
+    let blobs = SimpleTable::new("blobs", &["id", "data"], &[0]);
+    let mut ps = patchset_with(&[blobs]);
+    ps.digest_sql("INSERT INTO blobs (id, data) VALUES (1, X'DEADBEEF');")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 // =============================================================================
@@ -316,36 +177,30 @@ fn test_parse_blob_values() {
 // =============================================================================
 
 #[test]
-fn test_parse_composite_pk() {
-    let sql = "
-        CREATE TABLE composite (a INTEGER, b INTEGER, value TEXT, PRIMARY KEY (a, b));
-        INSERT INTO composite (a, b, value) VALUES (1, 2, 'test');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_composite_pk_insert() {
+    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let mut ps = patchset_with(&[composite]);
+    ps.digest_sql("INSERT INTO composite (a, b, value) VALUES (1, 2, 'test');")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
-fn test_parse_composite_pk_delete() {
-    let sql = "
-        CREATE TABLE composite (a INTEGER, b INTEGER, value TEXT, PRIMARY KEY (a, b));
-        DELETE FROM composite WHERE a = 1 AND b = 2;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_composite_pk_delete() {
+    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let mut ps = patchset_with(&[composite]);
+    ps.digest_sql("DELETE FROM composite WHERE a = 1 AND b = 2;")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
-fn test_parse_composite_pk_update() {
-    let sql = "
-        CREATE TABLE composite (a INTEGER, b INTEGER, value TEXT, PRIMARY KEY (a, b));
-        UPDATE composite SET value = 'updated' WHERE a = 1 AND b = 2;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert_eq!(builder.len(), 1);
+fn test_digest_composite_pk_update() {
+    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let mut ps = patchset_with(&[composite]);
+    ps.digest_sql("UPDATE composite SET value = 'updated' WHERE a = 1 AND b = 2;")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 // =============================================================================
@@ -353,44 +208,42 @@ fn test_parse_composite_pk_update() {
 // =============================================================================
 
 #[test]
-fn test_insert_then_delete_same_values_cancels() {
-    let sql = "
-        CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);
-        INSERT INTO t (id, v) VALUES (1, 'a');
-        DELETE FROM t WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    // Note: DELETE only contains PK from WHERE clause, non-PK values are Null
-    // So INSERT(1, 'a') + DELETE(1, Null) won't cancel because values differ
-    // This is a limitation of SQL-based construction
-    assert!(builder.len() <= 1);
+fn test_insert_then_delete_cancels() {
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql(
+        "INSERT INTO t (id, v) VALUES (1, 'a');\
+         DELETE FROM t WHERE id = 1;",
+    )
+    .unwrap();
+    // INSERT + DELETE on same PK should cancel out
+    assert_eq!(ps.len(), 0);
 }
 
 #[test]
 fn test_insert_then_update_becomes_insert() {
-    let sql = "
-        CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);
-        INSERT INTO t (id, v) VALUES (1, 'a');
-        UPDATE t SET v = 'b' WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql(
+        "INSERT INTO t (id, v) VALUES (1, 'a');\
+         UPDATE t SET v = 'b' WHERE id = 1;",
+    )
+    .unwrap();
     // INSERT + UPDATE = INSERT with updated values
-    assert_eq!(builder.len(), 1);
+    assert_eq!(ps.len(), 1);
 }
 
 #[test]
 fn test_update_then_update_consolidates() {
-    let sql = "
-        CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);
-        UPDATE t SET v = 'a' WHERE id = 1;
-        UPDATE t SET v = 'b' WHERE id = 1;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql(
+        "UPDATE t SET v = 'a' WHERE id = 1;\
+         UPDATE t SET v = 'b' WHERE id = 1;",
+    )
+    .unwrap();
     // UPDATE + UPDATE = single UPDATE
-    assert_eq!(builder.len(), 1);
+    assert_eq!(ps.len(), 1);
 }
 
 // =============================================================================
@@ -399,117 +252,102 @@ fn test_update_then_update_consolidates() {
 
 #[test]
 fn test_empty_sql() {
-    let sql = "";
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert!(builder.is_empty());
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql("").unwrap();
+    assert!(ps.is_empty());
 }
 
 #[test]
-fn test_only_create_table() {
-    let sql = "CREATE TABLE t (id INTEGER PRIMARY KEY);";
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert!(builder.is_empty());
+fn test_semicolons_only() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql(";;;").unwrap();
+    assert!(ps.is_empty());
 }
 
 #[test]
-fn test_multiple_create_tables_no_ops() {
-    let sql = "
-        CREATE TABLE a (id INTEGER PRIMARY KEY);
-        CREATE TABLE b (id INTEGER PRIMARY KEY);
-        CREATE TABLE c (id INTEGER PRIMARY KEY);
-    ";
+fn test_multiple_digest_calls() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
+        .unwrap();
+    ps.digest_sql("INSERT INTO users (id, name) VALUES (2, 'Bob');")
+        .unwrap();
+    assert_eq!(ps.len(), 2);
+}
 
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    assert!(builder.is_empty());
+#[test]
+fn test_delete_rejects_non_pk_in_where() {
+    let users = SimpleTable::new("users", &["id", "name", "status"], &[0]);
+    let mut ps = patchset_with(&[users]);
+    let result = ps.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_negative_numbers() {
+    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql("INSERT INTO t (a, b) VALUES (-42, -3.14);")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
 }
 
 // =============================================================================
-// From<ChangeSet> for Vec<Statement> tests
+// Bit-parity tests against rusqlite (patchset only)
 // =============================================================================
 
 #[test]
-fn test_into_vec_statement_insert() {
-    use sqlite_diff_rs::sql::Statement;
-
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let statements: Vec<Statement> = builder.into();
-
-    // Should have 1 CREATE TABLE + 1 INSERT
-    assert_eq!(statements.len(), 2);
-    assert!(matches!(&statements[0], Statement::CreateTable(_)));
-    assert!(matches!(&statements[1], Statement::Insert(_)));
+fn parity_single_insert() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    assert_patchset_sql_parity(
+        &[users],
+        &[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice')",
+        ],
+    );
 }
 
 #[test]
-fn test_into_vec_statement_mixed() {
-    use sqlite_diff_rs::sql::Statement;
-
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-        INSERT INTO users (id, name) VALUES (2, 'Bob');
-        DELETE FROM users WHERE id = 3;
-        UPDATE users SET name = 'Charlie' WHERE id = 4;
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let statements: Vec<Statement> = builder.clone().into();
-
-    // Should have 1 CREATE TABLE + 4 operations
-    assert_eq!(statements.len(), 5);
-    assert!(matches!(&statements[0], Statement::CreateTable(_)));
+fn parity_insert_and_update() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    assert_patchset_sql_parity(
+        &[users],
+        &[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice')",
+            "UPDATE users SET name = 'Alicia' WHERE id = 1",
+        ],
+    );
 }
 
 #[test]
-fn test_into_vec_statement_roundtrip() {
-    use sqlite_diff_rs::sql::Statement;
-
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let statements: Vec<Statement> = builder.clone().into();
-
-    // Re-parse from statements
-    let reparsed = ChangeSet::try_from(statements.as_slice()).expect("Failed to parse statements");
-
-    assert_eq!(builder.len(), reparsed.len());
+fn parity_multi_table() {
+    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let posts = SimpleTable::new("posts", &["id", "title"], &[0]);
+    assert_patchset_sql_parity(
+        &[users, posts],
+        &[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice')",
+            "INSERT INTO posts (id, title) VALUES (1, 'Hello')",
+        ],
+    );
 }
 
 #[test]
-fn test_into_vec_statement_empty() {
-    use sqlite_diff_rs::sql::Statement;
-
-    let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY);";
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-    let statements: Vec<Statement> = builder.into();
-
-    // Empty builder produces no statements (CREATE TABLE is skipped for empty tables)
-    assert!(statements.is_empty());
-}
-
-#[test]
-fn test_from_ref_changeset_for_vec_statement() {
-    use sqlite_diff_rs::sql::Statement;
-
-    let sql = "
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users (id, name) VALUES (1, 'Alice');
-    ";
-
-    let builder: ChangeSet<SimpleTable, String, Vec<u8>> = sql.parse().expect("Failed to parse SQL");
-
-    // Test From<&ChangeSet> for Vec<Statement>
-    let statements: Vec<Statement> = (&builder).into();
-    assert_eq!(statements.len(), 2);
-
-    // Verify builder is still usable (not moved)
-    assert_eq!(builder.len(), 1);
+fn parity_composite_pk() {
+    let order_items =
+        SimpleTable::new("order_items", &["order_id", "item_id", "quantity"], &[0, 1]);
+    assert_patchset_sql_parity(
+        &[order_items],
+        &[
+            "CREATE TABLE order_items (order_id INTEGER, item_id INTEGER, quantity INTEGER, PRIMARY KEY (order_id, item_id))",
+            "INSERT INTO order_items (order_id, item_id, quantity) VALUES (1, 100, 5)",
+            "INSERT INTO order_items (order_id, item_id, quantity) VALUES (1, 101, 3)",
+        ],
+    );
 }

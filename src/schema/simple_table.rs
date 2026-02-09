@@ -4,35 +4,31 @@
 //! SQL `CREATE TABLE` statements and used for generating SQL INSERT, UPDATE,
 //! and DELETE statements.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 
-use crate::encoding::Value;
+use crate::{encoding::Value, schema::dyn_table::IndexableValues};
 use crate::parser::TableSchema;
-use crate::sql::{CreateTable, FormatSql};
 
 use super::{DynTable, SchemaWithPK};
 
 /// A simple table schema with column names for SQL generation.
 ///
 /// This type wraps [`TableSchema`] and adds column names, allowing it to be
-/// used for both binary encoding/decoding and SQL statement generation.
+/// used for both binary encoding/decoding and SQL statement digestion.
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use sqlite_diff_rs::schema::SimpleTable;
-/// use sqlite_diff_rs::sql::Parser;
+/// ```rust
+/// use sqlite_diff_rs::SimpleTable;
+/// use sqlite_diff_rs::{PatchSet, DiffSetBuilder};
 ///
-/// let mut parser = Parser::new("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-/// let stmts = parser.parse_all().unwrap();
-/// if let Statement::CreateTable(ct) = &stmts[0] {
-///     let table = SimpleTable::from(ct.clone());
-///     assert_eq!(table.name(), "users");
-///     assert_eq!(table.column_names(), vec!["id", "name"]);
-/// }
+/// let table = SimpleTable::new("users", &["id", "name"], &[0]);
+/// let mut patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new();
+/// patchset.add_table(&table);
+/// patchset.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')").unwrap();
 /// ```
 #[derive(Debug, Clone, Eq)]
 pub struct SimpleTable {
@@ -55,8 +51,9 @@ impl SimpleTable {
     ///
     /// Panics if any `pk_indices` value is out of bounds.
     #[must_use]
-    pub fn new(name: impl Into<String>, columns: Vec<String>, pk_indices: Vec<usize>) -> Self {
+    pub fn new(name: impl Into<String>, columns: &[&str], pk_indices: &[usize]) -> Self {
         let name = name.into();
+        let columns: Vec<String> = columns.iter().map(|&c| String::from(c)).collect();
         let column_count = columns.len();
 
         // Convert pk_indices to pk_flags
@@ -101,30 +98,6 @@ impl SimpleTable {
     pub fn inner(&self) -> &TableSchema<String> {
         &self.schema
     }
-
-    /// Format as a CREATE TABLE SQL statement.
-    #[must_use]
-    pub fn to_create_table_sql(&self) -> String {
-        let pk_indices = self.pk_indices();
-        let use_column_pk = pk_indices.len() == 1;
-
-        let ct = CreateTable {
-            name: self.schema.name().to_string(),
-            columns: self
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(i, name)| crate::sql::ColumnDef {
-                    name: name.clone(),
-                    type_name: None,
-                    is_primary_key: use_column_pk && pk_indices.contains(&i),
-                })
-                .collect(),
-            table_pk_columns: if use_column_pk { vec![] } else { pk_indices },
-        };
-
-        ct.format_sql()
-    }
 }
 
 impl PartialEq for SimpleTable {
@@ -158,109 +131,45 @@ impl DynTable for SimpleTable {
 }
 
 impl SchemaWithPK for SimpleTable {
-    fn extract_pk<S, B>(&self, values: &[Value<S, B>]) -> Vec<Value<S, B>>
+    fn number_of_primary_keys(&self) -> usize {
+        self.schema.number_of_primary_keys()
+    }
+
+    fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+        self.schema.primary_key_index(col_idx)
+    }
+
+    fn extract_pk<S, B>(
+        &self,
+        values: &impl IndexableValues<Text = S, Binary = B>,
+    ) -> alloc::vec::Vec<Value<S, B>>
     where
-        S: Clone + AsRef<str>,
-        B: Clone + AsRef<[u8]>,
+        S: Clone,
+        B: Clone,
     {
         self.schema.extract_pk(values)
     }
 }
 
-impl From<CreateTable> for SimpleTable {
-    fn from(ct: CreateTable) -> Self {
-        let pk_indices = ct.pk_indices();
-        let columns: Vec<String> = ct.columns.into_iter().map(|c| c.name).collect();
-        Self::new(ct.name, columns, pk_indices)
+/// Defines a schema in which the mapping of column names to
+/// column positions is known at runtime.
+pub trait NamedColumns: SchemaWithPK {
+    /// Get the column index for a given column name.
+    ///
+    /// Returns `Some(index)` if the column exists, or `None` if it doesn't.
+    fn column_index(&self, column_name: &str) -> Option<usize>;
+}
+
+impl NamedColumns for SimpleTable {
+    #[inline]
+    fn column_index(&self, column_name: &str) -> Option<usize> {
+        self.column_index(column_name)
     }
 }
 
-impl From<&CreateTable> for SimpleTable {
-    fn from(ct: &CreateTable) -> Self {
-        let pk_indices = ct.pk_indices();
-        let columns: Vec<String> = ct.columns.iter().map(|c| c.name.clone()).collect();
-        Self::new(ct.name.clone(), columns, pk_indices)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sql::{Parser, Statement};
-
-    fn parse_simple_table(sql: &str) -> SimpleTable {
-        let mut parser = Parser::new(sql);
-        let stmts = parser.parse_all().unwrap();
-        match &stmts[0] {
-            Statement::CreateTable(ct) => SimpleTable::from(ct.clone()),
-            _ => panic!("Expected CreateTable"),
-        }
-    }
-
-    #[test]
-    fn test_simple_table_from_sql() {
-        let table = parse_simple_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-        assert_eq!(table.name(), "users");
-        assert_eq!(table.column_names(), &["id", "name"]);
-        assert_eq!(table.pk_indices(), vec![0]);
-    }
-
-    #[test]
-    fn test_simple_table_composite_pk() {
-        let table = parse_simple_table("CREATE TABLE t (a INT, b INT, c TEXT, PRIMARY KEY (a, b))");
-        assert_eq!(table.name(), "t");
-        assert_eq!(table.column_names(), &["a", "b", "c"]);
-        assert_eq!(table.pk_indices(), vec![0, 1]);
-    }
-
-    #[test]
-    fn test_simple_table_column_lookup() {
-        let table = parse_simple_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-        assert_eq!(table.column_index("id"), Some(0));
-        assert_eq!(table.column_index("name"), Some(1));
-        assert_eq!(table.column_index("unknown"), None);
-        assert_eq!(table.column_name(0), Some("id"));
-        assert_eq!(table.column_name(1), Some("name"));
-        assert_eq!(table.column_name(2), None);
-    }
-
-    #[test]
-    fn test_simple_table_manual_construction() {
-        let table = SimpleTable::new(
-            "users",
-            vec!["id".into(), "name".into()],
-            vec![0],
-        );
-        assert_eq!(table.name(), "users");
-        assert_eq!(table.number_of_columns(), 2);
-        assert_eq!(table.pk_indices(), vec![0]);
-    }
-
-    #[test]
-    fn test_dyn_table_impl() {
-        let table = parse_simple_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-        assert_eq!(table.number_of_columns(), 2);
-        let mut buf = vec![0u8; 2];
-        table.write_pk_flags(&mut buf);
-        assert_eq!(buf, vec![1, 0]); // id is first PK column, name is not PK
-    }
-
-    #[test]
-    fn test_schema_with_pk_impl() {
-        let table = parse_simple_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-        let values: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Text("Alice".to_string())];
-        let pk = table.extract_pk(&values);
-        assert_eq!(pk, vec![Value::<String, Vec<u8>>::Integer(1)]);
-    }
-
-    #[test]
-    fn test_to_create_table_sql() {
-        let table = SimpleTable::new(
-            "users",
-            vec!["id".into(), "name".into()],
-            vec![0],
-        );
-        let sql = table.to_create_table_sql();
-        assert_eq!(sql, "CREATE TABLE users (id PRIMARY KEY, name)");
+impl<T: NamedColumns> NamedColumns for &T {
+    #[inline]
+    fn column_index(&self, column_name: &str) -> Option<usize> {
+        T::column_index(self, column_name)
     }
 }

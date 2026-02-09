@@ -5,22 +5,25 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use crate::{
-    DynTable,
-    builders::{ChangesetFormat, PatchsetFormat, format::Format},
-    encoding::{MaybeValue, Value},
+    DynTable, SchemaWithPK, builders::{ChangesetFormat, PatchsetFormat, format::Format}, encoding::{MaybeValue, Value}
 };
 
 #[derive(Debug, Clone)]
 /// Builder for an update operation, parameterized by the format type `F` and value types `S`, `B`.
-pub struct Update<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> {
+pub struct Update<T, F: Format<S, B>, S, B> {
     /// The table being updated.
-    pub(crate) table: T,
+    table: T,
     /// Values for the updated row, stored as pairs of (old, new) values.
     /// New values use `MaybeValue<S, B>` (Option<Value<S, B>>) where `None` = undefined/unchanged.
-    pub(crate) values: Vec<(F::Old, MaybeValue<S, B>)>,
+    pub(super) values: Vec<(F::Old, MaybeValue<S, B>)>,
 }
 
-impl<T: DynTable + PartialEq, F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Update<T, F, S, B>
+impl<
+    T: DynTable + PartialEq,
+    F: Format<S, B>,
+    S: PartialEq + AsRef<str>,
+    B: PartialEq + AsRef<[u8]>,
+> PartialEq for Update<T, F, S, B>
 where
     F::Old: PartialEq,
 {
@@ -29,34 +32,48 @@ where
     }
 }
 
-impl<T: DynTable + Eq, F: Format<S, B>, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Update<T, F, S, B>
+impl<T: DynTable + Eq, F: Format<S, B>, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq
+    for Update<T, F, S, B>
 where
     F::Old: Eq,
-{}
+{
+}
 
-impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> From<Update<T, F, S, B>> for Vec<(F::Old, MaybeValue<S, B>)> {
+impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> From<Update<T, F, S, B>>
+    for Vec<(F::Old, MaybeValue<S, B>)>
+{
     #[inline]
     fn from(update: Update<T, F, S, B>) -> Self {
         update.values
     }
 }
 
-impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for Update<T, F, S, B> {
+impl<T, F: Format<S, B>, S, B> AsRef<T> for Update<T, F, S, B> {
     #[inline]
     fn as_ref(&self) -> &T {
         &self.table
     }
 }
 
-impl<T: DynTable, F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> Update<T, F, S, B> {
+impl<T, F: Format<S, B>, S: Clone, B: Clone> Update<T, F, S, B> {
     /// Returns a reference to the (old, new) value pairs.
     #[inline]
     pub fn values(&self) -> &[(F::Old, MaybeValue<S, B>)] {
         &self.values
     }
+
+    #[inline]
+    /// Extract the primary key values from this update's values.
+    pub fn extract_pk(&self) -> Vec<Value<S, B>>
+    where
+        T: SchemaWithPK,
+    {
+        self.table.extract_pk(&self.values)
+    }
 }
 
-impl<T: DynTable, F: Format<S, B>, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>> From<T> for Update<T, F, S, B>
+impl<T: DynTable, F: Format<S, B>, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>> From<T>
+    for Update<T, F, S, B>
 where
     F::Old: Clone,
 {
@@ -70,7 +87,9 @@ where
     }
 }
 
-impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Update<T, ChangesetFormat, S, B> {
+impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
+    Update<T, ChangesetFormat, S, B>
+{
     /// Sets the value for a specific column by index.
     ///
     /// # Arguments
@@ -181,19 +200,6 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
 }
 
 impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Update<T, PatchsetFormat, S, B> {
-    /// Returns the new values.
-    ///
-    /// This is useful for extracting the primary key values for patchset operations,
-    /// where the PK values are stored in the new values.
-    #[inline]
-    pub(crate) fn new_values(&self) -> Vec<MaybeValue<S, B>>
-    where
-        S: Clone,
-        B: Clone,
-    {
-        self.values.iter().map(|((), new)| new.clone()).collect()
-    }
-
     /// Sets the value for a specific column by index.
     ///
     /// # Implementation Note
@@ -253,4 +259,3 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Update<T, PatchsetFormat, S, B>
         self.set(col_idx, Value::Null)
     }
 }
-

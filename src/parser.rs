@@ -27,7 +27,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::Hash;
 
-use crate::builders::{ChangesetFormat, DiffSetBuilder, PatchsetFormat};
+use crate::IndexableValues;
+use crate::builders::{ChangesetFormat, DiffSetBuilder, Operation, PatchsetFormat};
 use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
@@ -158,15 +159,38 @@ impl<S: AsRef<str> + Clone + Eq + core::fmt::Debug> DynTable for TableSchema<S> 
     }
 }
 
-impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWithPK for TableSchema<N> {
-    fn extract_pk<S, B>(&self, values: &[Value<S, B>]) -> Vec<Value<S, B>>
+impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWithPK
+    for TableSchema<N>
+{
+    fn number_of_primary_keys(&self) -> usize {
+        self.pk_flags.iter().filter(|&&b| b > 0).count()
+    }
+
+    fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+        self.pk_flags.get(col_idx).and_then(|&pk_ordinal| {
+            if pk_ordinal > 0 {
+                Some(usize::from(pk_ordinal - 1))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn extract_pk<S, B>(
+        &self,
+        values: &impl IndexableValues<Text = S, Binary = B>,
+    ) -> alloc::vec::Vec<Value<S, B>>
     where
-        S: Clone + AsRef<str>,
-        B: Clone + AsRef<[u8]>,
+        S: Clone,
+        B: Clone,
     {
         self.pk_indices()
             .into_iter()
-            .map(|i| values[i].clone())
+            .map(|i| {
+                values.get(i).expect(
+                    "primary key column index out of bounds — values shorter than schema",
+                )
+            })
             .collect()
     }
 }
@@ -398,12 +422,22 @@ fn parse_changeset_operation(
         op_codes::INSERT => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).insert_raw(schema, values);
+            let values: Vec<Value<String, Vec<u8>>> = values
+                .into_iter()
+                .map(|v| v.unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&values);
+            builder.add_operation(schema, pk, Operation::Insert(values));
         }
         op_codes::DELETE => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).delete_raw(schema, values);
+            let values: Vec<Value<String, Vec<u8>>> = values
+                .into_iter()
+                .map(|v| v.unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&values);
+            builder.add_operation(schema, pk, Operation::Delete(values));
         }
         op_codes::UPDATE => {
             let (old_values, old_len) =
@@ -412,7 +446,15 @@ fn parse_changeset_operation(
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            *builder = core::mem::take(builder).update_raw(schema, old_values, new_values);
+            // Extract PK using old values (convert None to Null)
+            let pk_values: Vec<Value<String, Vec<u8>>> = old_values
+                .iter()
+                .map(|v| v.clone().unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&pk_values);
+            let values: Vec<(MaybeValue<String, Vec<u8>>, MaybeValue<String, Vec<u8>>)> =
+                old_values.into_iter().zip(new_values).collect();
+            builder.add_operation(schema, pk, Operation::Update(values));
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }
@@ -433,7 +475,12 @@ fn parse_patchset_operation(
         op_codes::INSERT => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            *builder = core::mem::take(builder).insert_raw(schema, values);
+            let values: Vec<Value<String, Vec<u8>>> = values
+                .into_iter()
+                .map(|v| v.unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&values);
+            builder.add_operation(schema, pk, Operation::Insert(values));
         }
         op_codes::DELETE => {
             // Patchset DELETE: only PK values in column order
@@ -450,7 +497,7 @@ fn parse_patchset_operation(
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&full_values_concrete);
-            *builder = core::mem::take(builder).delete(schema, &pk);
+            builder.add_operation(schema, pk, Operation::Delete(()));
         }
         op_codes::UPDATE => {
             // Note: old_values are parsed but ignored for patchsets since PK is in new_values
@@ -460,7 +507,14 @@ fn parse_patchset_operation(
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            *builder = core::mem::take(builder).update_raw(schema, new_values);
+            // Extract PK using new values (convert None to Null)
+            let pk_values: Vec<Value<String, Vec<u8>>> = new_values
+                .iter()
+                .map(|v| v.clone().unwrap_or(Value::Null))
+                .collect();
+            let pk = schema.extract_pk(&pk_values);
+            let values: Vec<((), MaybeValue<String, Vec<u8>>)> = new_values.into_iter().map(|v| ((), v)).collect();
+            builder.add_operation(schema, pk, Operation::Update(values));
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }
@@ -507,7 +561,6 @@ fn parse_values(
 
     Ok((values, pos))
 }
-
 
 #[cfg(test)]
 mod tests {

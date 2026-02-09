@@ -17,7 +17,7 @@ use crate::{
 /// The table schema `T` is NOT stored here — it lives as the key in
 /// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>`.
 #[derive(Debug, Clone)]
-pub(crate) enum Operation<F: Format<S, B>, S: AsRef<str>, B: AsRef<[u8]>> {
+pub(crate) enum Operation<F: Format<S, B>, S, B> {
     /// A row was inserted. Stores all column values.
     Insert(Vec<Value<S, B>>),
     /// A row was deleted. Stores format-specific delete data:

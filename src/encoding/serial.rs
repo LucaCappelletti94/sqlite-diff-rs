@@ -20,8 +20,8 @@ use core::hash::{Hash, Hasher};
 use super::varint::encode_varint_simple;
 
 /// A value that can be encoded in SQLite changeset format.
-#[derive(Debug, Clone, Copy)]
-pub enum Value<S: AsRef<str>, B: AsRef<[u8]>> {
+#[derive(Debug, Copy)]
+pub enum Value<S, B> {
     /// SQL NULL
     Null,
     /// 64-bit signed integer (always encoded as 8 bytes big-endian)
@@ -32,6 +32,18 @@ pub enum Value<S: AsRef<str>, B: AsRef<[u8]>> {
     Text(S),
     /// Binary blob (varint length + bytes)
     Blob(B),
+}
+
+impl<S: Clone, B: Clone> Clone for Value<S, B> {
+    fn clone(&self) -> Self {
+        match self {
+            Value::Null => Value::Null,
+            Value::Integer(v) => Value::Integer(*v),
+            Value::Real(v) => Value::Real(*v),
+            Value::Text(s) => Value::Text(s.clone()),
+            Value::Blob(b) => Value::Blob(b.clone()),
+        }
+    }
 }
 
 /// Internal type for representing values in changesets, where `None` means "undefined"
@@ -149,8 +161,6 @@ impl<S: AsRef<str>, B: AsRef<[u8]>> Value<S, B> {
 }
 
 mod display;
-
-pub mod simple_sql;
 
 /// Encode the "undefined" marker (type 0) into the changeset binary format.
 ///

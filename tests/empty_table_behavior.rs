@@ -416,7 +416,7 @@ fn test_our_builder_empty_after_cancel() {
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert};
     use sqlite_diff_rs::SimpleTable;
 
-    let schema = parse_create_table("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
 
     // Changeset: INSERT + DELETE should produce empty output
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
@@ -430,8 +430,10 @@ fn test_our_builder_empty_after_cancel() {
         .set(1, "Alice")
         .unwrap();
 
-    let changeset_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert).delete(delete);
-    let changeset_bytes: Vec<u8> = changeset_builder.into();
+    let mut changeset_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+    changeset_builder.insert(insert);
+    changeset_builder.delete(delete);
+    let changeset_bytes: Vec<u8> = changeset_builder.build();
 
     // Should match SQLite: empty bytes
     let (sqlite_changeset, _) = session_changeset_and_patchset(&[
@@ -452,8 +454,8 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert, ParsedDiffSet};
     use sqlite_diff_rs::SimpleTable;
 
-    let schema_a = parse_create_table("CREATE TABLE table_a (id INTEGER PRIMARY KEY, val TEXT)");
-    let schema_b = parse_create_table("CREATE TABLE table_b (id INTEGER PRIMARY KEY, val TEXT)");
+    let schema_a = SimpleTable::new("table_a", &["id", "val"], &[0]);
+    let schema_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
 
     // Build: insert A, insert B, delete A, insert A again
     let insert_a = Insert::<_, String, Vec<u8>>::from(schema_a.clone())
@@ -477,12 +479,12 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
         .set(1, "a2")
         .unwrap();
 
-    let our_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
-        .insert(insert_a)
-        .insert(insert_b)
-        .delete(delete_a1)
-        .insert(insert_a2);
-    let our_bytes: Vec<u8> = our_builder.into();
+    let mut our_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+    our_builder.insert(insert_a);
+    our_builder.insert(insert_b);
+    our_builder.delete(delete_a1);
+    our_builder.insert(insert_a2);
+    let our_bytes: Vec<u8> = our_builder.build();
 
     // Get SQLite's version
     let (sqlite_bytes, _) = session_changeset_and_patchset(&[
@@ -588,13 +590,3 @@ fn test_sqlite_update_revert_to_original() {
 // =============================================================================
 // Helper
 // =============================================================================
-
-fn parse_create_table(sql: &str) -> sqlite_diff_rs::SimpleTable {
-    use sqlite_diff_rs::sql::{Parser, Statement};
-
-    let stmts = Parser::new(sql).parse_all().expect("Failed to parse SQL");
-    match &stmts[0] {
-        Statement::CreateTable(ct) => ct.clone().into(),
-        _ => panic!("Expected CREATE TABLE"),
-    }
-}

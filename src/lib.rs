@@ -12,7 +12,6 @@ pub(crate) mod encoding;
 pub mod errors;
 pub mod parser;
 pub mod schema;
-pub mod sql;
 #[cfg(feature = "testing")]
 pub mod testing;
 
@@ -24,6 +23,7 @@ pub use builders::{
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub use schema::{DynTable, SchemaWithPK, SimpleTable};
+pub(crate) use schema::IndexableValues;
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.
@@ -38,7 +38,3 @@ pub type PatchUpdate<T, S, B> = Update<T, PatchsetFormat, S, B>;
 
 // Re-export errors
 pub use errors::Error;
-pub use errors::{
-    DeleteConversionError, DiffSetParseError, InsertConversionError, UpdateConversionError,
-    ValueConversionError,
-};

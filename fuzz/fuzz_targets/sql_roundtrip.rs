@@ -1,74 +1,52 @@
-//! SQL round-trip fuzzer for DiffSetBuilder parsing.
+//! SQL digest fuzzer for DiffSetBuilder.
 //!
-//! This fuzzer tests:
-//! 1. ChangeSet: Parse arbitrary SQL, convert to Vec<Statement>, convert back to SQL, re-parse
-//! 2. PatchSet: Parse arbitrary SQL without crashing (no roundtrip since PatchSet has no Display)
+//! Pre-registers a fixed set of table schemas, then feeds arbitrary strings
+//! through `digest_sql`. If digestion succeeds, verifies the resulting patchset
+//! can be serialized and re-parsed as a valid binary patchset.
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::{ChangeSet, DiffSetParseError, PatchSet, SimpleTable};
-use sqlite_diff_rs::sql::Statement;
+use sqlite_diff_rs::{ParsedDiffSet, PatchSet, SimpleTable};
+
+/// Fixed schemas the fuzzer knows about.
+fn schemas() -> Vec<SimpleTable> {
+    vec![
+        SimpleTable::new("users", &["id", "name", "email"], &[0]),
+        SimpleTable::new("posts", &["id", "user_id", "title", "content"], &[0]),
+        SimpleTable::new("tags", &["id", "name"], &[0]),
+        SimpleTable::new("post_tags", &["post_id", "tag_id"], &[0, 1]),
+    ]
+}
 
 fn main() {
     loop {
         fuzz!(|sql: String| {
-            // Test PatchSet parsing - just ensure it doesn't crash
-            // PatchSet has no Display, so no roundtrip check
-            let _patchset: Result<PatchSet<SimpleTable, String, Vec<u8>>, DiffSetParseError> = sql.parse();
+            let tables = schemas();
+            let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+            for t in &tables {
+                builder.add_table(t);
+            }
 
-            // Test ChangeSet parsing with full roundtrip
-            let Ok(builder): Result<ChangeSet<SimpleTable, String, Vec<u8>>, DiffSetParseError> = sql.parse() else {
-                return; // Skip unparseable inputs for roundtrip test
-            };
+            // Try to digest — most fuzz inputs will fail, that's fine
+            if builder.digest_sql(&sql).is_err() {
+                return;
+            }
 
-            // Skip empty builders (nothing to roundtrip)
             if builder.is_empty() {
                 return;
             }
 
-            // Convert to Vec<Statement>
-            let statements: Vec<Statement> = builder.clone().into();
+            // Serialize to binary
+            let bytes = builder.build();
 
-            // Verify we have statements
-            assert!(
-                !statements.is_empty(),
-                "Non-empty builder should produce non-empty statements"
-            );
+            // Re-parse from binary
+            let reparsed = ParsedDiffSet::try_from(bytes.as_slice())
+                .expect("Serialized patchset should be re-parseable");
 
-            // Convert back to SQL string via Display
-            let output = builder.to_string();
-
-            // Re-parse the generated SQL
-            let reparsed: ChangeSet<SimpleTable, String, Vec<u8>> = output
-                .parse()
-                .expect("Re-parsing generated SQL should succeed");
-
-            // Verify equivalence
-            // Note: We compare lengths since the internal state may differ
-            // (e.g., due to operation consolidation during parsing)
+            // Verify round-trip
+            let reparsed_bytes: Vec<u8> = reparsed.into();
             assert_eq!(
-                builder.len(),
-                reparsed.len(),
-                "Round-trip operation count mismatch.\nOriginal SQL:\n{}\nGenerated SQL:\n{}",
-                sql,
-                output
-            );
-
-            // Verify Vec<Statement> conversion is consistent
-            let reparsed_statements: Vec<Statement> = reparsed.clone().into();
-            assert_eq!(
-                statements.len(),
-                reparsed_statements.len(),
-                "Statement count mismatch after roundtrip"
-            );
-
-            // Also verify the reparsed builder can be serialized again
-            let output2 = reparsed.to_string();
-            let reparsed2: ChangeSet<SimpleTable, String, Vec<u8>> =
-                output2.parse().expect("Second re-parse should succeed");
-            assert_eq!(
-                reparsed.len(),
-                reparsed2.len(),
-                "Second round-trip mismatch"
+                bytes, reparsed_bytes,
+                "Binary round-trip mismatch after SQL digest"
             );
         });
     }

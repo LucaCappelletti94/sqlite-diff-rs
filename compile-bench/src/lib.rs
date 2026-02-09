@@ -5,7 +5,6 @@
 //!
 //! - **`rusqlite`** feature: Uses rusqlite's native session extension API.
 //! - **`builder`** feature: Uses sqlite-diff-rs's programmatic builder API.
-//! - **`sqlparser`** feature: Uses sqlite-diff-rs's SQL parser integration.
 //!
 //! Each feature gate exposes a module with `changeset() -> Vec<u8>` and
 //! `patchset() -> Vec<u8>` functions that produce identical output using the
@@ -327,13 +326,13 @@ pub mod builder_approach {
     }
 
     fn add_inserts(
-        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
         comments: &Schema,
         tags: &Schema,
         post_tags: &Schema,
-    ) -> ChangeSet<Schema, String, Vec<u8>> {
+    ) {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -346,17 +345,16 @@ pub mod builder_approach {
                 for (i, val) in row.iter().enumerate() {
                     insert = insert.set(i, val.clone()).unwrap();
                 }
-                builder = builder.insert(insert);
+                builder.insert(insert);
             }
         }
-        builder
     }
 
     fn add_changeset_updates(
-        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
-    ) -> ChangeSet<Schema, String, Vec<u8>> {
+    ) {
         let user_updates: &[(&[Val], &[Val])] = &[
             (
                 &[
@@ -404,7 +402,7 @@ pub mod builder_approach {
             for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
                 update = update.set(i, o.clone(), n.clone()).unwrap();
             }
-            builder = builder.update(update);
+            builder.update(update);
         }
 
         let post_updates: &[(&[Val], &[Val])] = &[
@@ -480,18 +478,16 @@ pub mod builder_approach {
             for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
                 update = update.set(i, o.clone(), n.clone()).unwrap();
             }
-            builder = builder.update(update);
+            builder.update(update);
         }
-
-        builder
     }
 
     fn add_changeset_deletes(
-        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         comments: &Schema,
         post_tags: &Schema,
-    ) -> ChangeSet<Schema, String, Vec<u8>> {
+    ) {
         // Delete comment 5
         let mut delete = ChangeDelete::from(comments.clone());
         for (i, val) in [
@@ -508,14 +504,14 @@ pub mod builder_approach {
         {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder = builder.delete(delete);
+        builder.delete(delete);
 
         // Delete post_tag (3, 5)
         let mut delete = ChangeDelete::from(post_tags.clone());
         for (i, val) in [Value::from(3i64), Value::from(5i64)].iter().enumerate() {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder = builder.delete(delete);
+        builder.delete(delete);
 
         // Delete user 4
         let mut delete = ChangeDelete::from(users.clone());
@@ -533,29 +529,27 @@ pub mod builder_approach {
         {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder = builder.delete(delete);
-
-        builder
+        builder.delete(delete);
     }
 
     /// Generate a changeset using the builder API.
     pub fn changeset() -> Vec<u8> {
         let (users, posts, comments, tags, post_tags) = create_schemas();
         let mut builder = ChangeSet::new();
-        builder = add_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
-        builder = add_changeset_updates(builder, &users, &posts);
-        builder = add_changeset_deletes(builder, &users, &comments, &post_tags);
+        add_inserts(&mut builder, &users, &posts, &comments, &tags, &post_tags);
+        add_changeset_updates(&mut builder, &users, &posts);
+        add_changeset_deletes(&mut builder, &users, &comments, &post_tags);
         builder.build()
     }
 
     fn add_patchset_inserts(
-        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        builder: &mut PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
         comments: &Schema,
         tags: &Schema,
         post_tags: &Schema,
-    ) -> PatchSet<Schema, String, Vec<u8>> {
+    ) {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -568,17 +562,16 @@ pub mod builder_approach {
                 for (i, val) in row.iter().enumerate() {
                     insert = insert.set(i, val.clone()).unwrap();
                 }
-                builder = builder.insert(insert);
+                builder.insert(insert);
             }
         }
-        builder
     }
 
     fn add_patchset_updates(
-        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        builder: &mut PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
-    ) -> PatchSet<Schema, String, Vec<u8>> {
+    ) {
         let user_updates: &[&[(usize, Val)]] = &[
             &[(0, 1i64.into()), (4, 1002000i64.into())],
             &[(0, 2i64.into()), (4, 1002100i64.into())],
@@ -588,7 +581,7 @@ pub mod builder_approach {
             for (i, val) in *cols {
                 update = update.set(*i, val.clone()).unwrap();
             }
-            builder = builder.update(update);
+            builder.update(update);
         }
 
         let post_updates: &[&[(usize, Val)]] = &[
@@ -605,145 +598,28 @@ pub mod builder_approach {
             for (i, val) in *cols {
                 update = update.set(*i, val.clone()).unwrap();
             }
-            builder = builder.update(update);
+            builder.update(update);
         }
-
-        builder
     }
 
     fn add_patchset_deletes(
-        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        builder: &mut PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         comments: &Schema,
         post_tags: &Schema,
-    ) -> PatchSet<Schema, String, Vec<u8>> {
-        builder = builder.delete(comments, &[5i64.into()]);
-        builder = builder.delete(post_tags, &[3i64.into(), 5i64.into()]);
-        builder = builder.delete(users, &[4i64.into()]);
-        builder
+    ) {
+        builder.delete(comments, &[5i64.into()]);
+        builder.delete(post_tags, &[3i64.into(), 5i64.into()]);
+        builder.delete(users, &[4i64.into()]);
     }
 
     /// Generate a patchset using the builder API.
     pub fn patchset() -> Vec<u8> {
         let (users, posts, comments, tags, post_tags) = create_schemas();
         let mut builder = PatchSet::new();
-        builder = add_patchset_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
-        builder = add_patchset_updates(builder, &users, &posts);
-        builder = add_patchset_deletes(builder, &users, &comments, &post_tags);
-        builder.build()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Feature: sqlparser
-// ---------------------------------------------------------------------------
-#[cfg(feature = "sqlparser")]
-pub mod sqlparser_approach {
-    use sqlite_diff_rs::{ChangeSet, PatchSet};
-
-    const SCHEMA: &str = "
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL,
-    email TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_login INTEGER,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    profile_data BLOB
-);
-CREATE TABLE posts (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER,
-    view_count INTEGER NOT NULL DEFAULT 0,
-    is_published INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-);
-CREATE TABLE comments (
-    id INTEGER PRIMARY KEY,
-    post_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    parent_id INTEGER,
-    is_deleted INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (post_id) REFERENCES posts(id),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (parent_id) REFERENCES comments(id)
-);
-CREATE TABLE tags (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
-);
-CREATE TABLE post_tags (
-    post_id INTEGER NOT NULL,
-    tag_id INTEGER NOT NULL,
-    PRIMARY KEY (post_id, tag_id),
-    FOREIGN KEY (post_id) REFERENCES posts(id),
-    FOREIGN KEY (tag_id) REFERENCES tags(id)
-);
-";
-
-    const OPERATIONS: &[&str] = &[
-        "INSERT INTO users (id, username, email, created_at, is_active) VALUES (1, 'alice', 'alice@example.com', 1000000, 1)",
-        "INSERT INTO users (id, username, email, created_at, is_active) VALUES (2, 'bob', 'bob@example.com', 1000100, 1)",
-        "INSERT INTO users (id, username, email, created_at, is_active) VALUES (3, 'charlie', 'charlie@example.com', 1000200, 1)",
-        "INSERT INTO users (id, username, email, created_at, is_active) VALUES (4, 'diana', 'diana@example.com', 1000300, 0)",
-        "INSERT INTO users (id, username, email, created_at, is_active) VALUES (5, 'eve', 'eve@example.com', 1000400, 1)",
-        "INSERT INTO posts (id, user_id, title, content, created_at, is_published) VALUES (1, 1, 'First Post', 'Hello World!', 1000500, 1)",
-        "INSERT INTO posts (id, user_id, title, content, created_at, is_published) VALUES (2, 1, 'Second Post', 'More content', 1000600, 1)",
-        "INSERT INTO posts (id, user_id, title, content, created_at, is_published) VALUES (3, 2, 'Bob''s Post', 'My thoughts', 1000700, 1)",
-        "INSERT INTO posts (id, user_id, title, content, created_at, is_published) VALUES (4, 3, 'Draft', 'Work in progress', 1000800, 0)",
-        "INSERT INTO posts (id, user_id, title, content, created_at, is_published) VALUES (5, 5, 'Eve''s Post', 'Latest news', 1000900, 1)",
-        "INSERT INTO tags (id, name) VALUES (1, 'rust')",
-        "INSERT INTO tags (id, name) VALUES (2, 'database')",
-        "INSERT INTO tags (id, name) VALUES (3, 'tutorial')",
-        "INSERT INTO tags (id, name) VALUES (4, 'news')",
-        "INSERT INTO tags (id, name) VALUES (5, 'discussion')",
-        "INSERT INTO post_tags (post_id, tag_id) VALUES (1, 1)",
-        "INSERT INTO post_tags (post_id, tag_id) VALUES (1, 3)",
-        "INSERT INTO post_tags (post_id, tag_id) VALUES (2, 1)",
-        "INSERT INTO post_tags (post_id, tag_id) VALUES (3, 5)",
-        "INSERT INTO post_tags (post_id, tag_id) VALUES (5, 4)",
-        "INSERT INTO comments (id, post_id, user_id, content, created_at) VALUES (1, 1, 2, 'Great post!', 1001000)",
-        "INSERT INTO comments (id, post_id, user_id, content, created_at) VALUES (2, 1, 3, 'Thanks for sharing', 1001100)",
-        "INSERT INTO comments (id, post_id, user_id, content, created_at) VALUES (3, 2, 2, 'Interesting', 1001200)",
-        "INSERT INTO comments (id, post_id, user_id, content, created_at) VALUES (4, 3, 1, 'Nice work', 1001300)",
-        "INSERT INTO comments (id, post_id, user_id, content, created_at) VALUES (5, 1, 5, 'Reply to comment 1', 1001400)",
-        "UPDATE users SET last_login = 1002000 WHERE id = 1",
-        "UPDATE users SET last_login = 1002100 WHERE id = 2",
-        "UPDATE posts SET view_count = 10 WHERE id = 1",
-        "UPDATE posts SET view_count = 5 WHERE id = 2",
-        "UPDATE posts SET updated_at = 1002200, content = 'Updated content' WHERE id = 2",
-        "DELETE FROM comments WHERE id = 5",
-        "DELETE FROM post_tags WHERE post_id = 3 AND tag_id = 5",
-        "DELETE FROM users WHERE id = 4",
-    ];
-
-    fn build_sql() -> String {
-        let mut sql = String::from(SCHEMA);
-        for op in OPERATIONS {
-            sql.push('\n');
-            sql.push_str(op);
-            sql.push(';');
-        }
-        sql
-    }
-
-    /// Generate a changeset using the SQL parser.
-    pub fn changeset() -> Vec<u8> {
-        let sql = build_sql();
-        let builder = ChangeSet::try_from(sql.as_str()).unwrap();
-        builder.build()
-    }
-
-    /// Generate a patchset using the SQL parser.
-    pub fn patchset() -> Vec<u8> {
-        let sql = build_sql();
-        let builder = PatchSet::try_from(sql.as_str()).unwrap();
+        add_patchset_inserts(&mut builder, &users, &posts, &comments, &tags, &post_tags);
+        add_patchset_updates(&mut builder, &users, &posts);
+        add_patchset_deletes(&mut builder, &users, &comments, &post_tags);
         builder.build()
     }
 }
@@ -781,20 +657,5 @@ mod builder_exports {
     #[unsafe(no_mangle)]
     pub extern "C" fn builder_patchset_len() -> usize {
         builder_approach::patchset().len()
-    }
-}
-
-#[cfg(feature = "sqlparser")]
-mod sqlparser_exports {
-    use super::sqlparser_approach;
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn sqlparser_changeset_len() -> usize {
-        sqlparser_approach::changeset().len()
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn sqlparser_patchset_len() -> usize {
-        sqlparser_approach::patchset().len()
     }
 }
