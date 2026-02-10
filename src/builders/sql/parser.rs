@@ -127,8 +127,8 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
     /// Parse an INSERT statement.
     fn digest_insert(&mut self) -> Result<(), ParseError<'input>> {
-        self.expect(TokenKind::Insert)?;
-        self.expect(TokenKind::Into)?;
+        self.expect(&TokenKind::Insert)?;
+        self.expect(&TokenKind::Into)?;
 
         let table = self.expect_table()?;
 
@@ -150,24 +150,24 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 self.lexer.next()?;
             }
 
-            self.expect(TokenKind::RParen)?;
+            self.expect(&TokenKind::RParen)?;
         }
 
-        self.expect(TokenKind::Values)?;
-        self.expect(TokenKind::LParen)?;
+        self.expect(&TokenKind::Values)?;
+        self.expect(&TokenKind::LParen)?;
 
         let mut values = vec![Value::Null; table.number_of_columns()];
         let mut pks = vec![Value::Null; table.number_of_primary_keys()];
 
         if column_identifiers.is_empty() {
             // No explicit column list: values map to all columns in order
-            for col_idx in 0..table.number_of_columns() {
+            for (col_idx, value_ref) in values.iter_mut().enumerate() {
                 if col_idx > 0 {
-                    self.expect(TokenKind::Comma)?;
+                    self.expect(&TokenKind::Comma)?;
                 }
-                values[col_idx] = self.parse_value()?;
+                *value_ref = self.parse_value()?;
                 if let Some(pk_idx) = table.primary_key_index(col_idx) {
-                    pks[pk_idx] = values[col_idx].clone();
+                    pks[pk_idx] = (*value_ref).clone();
                 }
             }
         } else {
@@ -176,7 +176,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 if let Some(primary_key_index) = table.primary_key_index(usize::from(column_index))
                 {
                     pks[primary_key_index] = values[usize::from(column_index)].clone();
-                };
+                }
                 if self.lexer.peek()?.kind != TokenKind::Comma {
                     break;
                 }
@@ -184,7 +184,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }
         }
 
-        self.expect(TokenKind::RParen)?;
+        self.expect(&TokenKind::RParen)?;
 
         self.builder
             .add_operation(&table, pks, Operation::Insert(values));
@@ -194,17 +194,17 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
     /// Parse an UPDATE statement.
     fn digest_update(&mut self) -> Result<(), ParseError<'input>> {
-        self.expect(TokenKind::Update)?;
+        self.expect(&TokenKind::Update)?;
 
         let table = self.expect_table()?;
-        self.expect(TokenKind::Set)?;
+        self.expect(&TokenKind::Set)?;
 
         let mut new_values = vec![((), None); table.number_of_columns()];
 
         // Parse SET assignments
         loop {
             let (col_idx, _) = self.expect_column(&table)?;
-            self.expect(TokenKind::Equals)?;
+            self.expect(&TokenKind::Equals)?;
             let val = self.parse_value()?;
             new_values[usize::from(col_idx)] = ((), Some(val));
 
@@ -240,8 +240,8 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
     /// Parse a DELETE statement.
     fn digest_delete(&mut self) -> Result<(), ParseError<'input>> {
-        self.expect(TokenKind::Delete)?;
-        self.expect(TokenKind::From)?;
+        self.expect(&TokenKind::Delete)?;
+        self.expect(&TokenKind::From)?;
 
         let table = self.expect_table()?;
         let mut pks = vec![Value::Null; table.number_of_primary_keys()];
@@ -272,11 +272,11 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     where
         D: FnMut(u16, &'input str, Value<S, Vec<u8>>) -> Result<(), ParseError<'input>>,
     {
-        self.expect(TokenKind::Where)?;
+        self.expect(&TokenKind::Where)?;
 
         loop {
             let (col_idx, col_name) = self.expect_column(table)?;
-            self.expect(TokenKind::Equals)?;
+            self.expect(&TokenKind::Equals)?;
             let val = self.parse_value()?;
             digestor(col_idx, col_name, val)?;
 
@@ -314,7 +314,11 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                         // This handles the i64::MIN case: 9223372036854775808 overflows
                         // i64 in the lexer (positive), but -9223372036854775808 is valid.
                         let neg = -v;
-                        #[allow(clippy::cast_possible_truncation)]
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            clippy::float_cmp,
+                            clippy::cast_possible_truncation
+                        )]
                         if neg >= i64::MIN as f64
                             && neg <= i64::MAX as f64
                             && neg == (neg as i64 as f64)
@@ -340,9 +344,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     }
 
     /// Expect a specific token kind.
-    fn expect(&mut self, expected: TokenKind<'input>) -> Result<Token<'input>, ParseError<'input>> {
+    fn expect(
+        &mut self,
+        expected: &TokenKind<'input>,
+    ) -> Result<Token<'input>, ParseError<'input>> {
         let token = self.lexer.next()?;
-        if core::mem::discriminant(&token.kind) == core::mem::discriminant(&expected) {
+        if core::mem::discriminant(&token.kind) == core::mem::discriminant(expected) {
             Ok(token)
         } else {
             Err(ParseError::UnexpectedToken {
@@ -356,6 +363,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     /// Expects a column identifier and returns the corresponding column index in the table schema.
     fn expect_column(&mut self, table: &T) -> Result<(u16, &'input str), ParseError<'input>> {
         let column_name = self.expect_identifier()?;
+        #[allow(clippy::cast_possible_truncation)]
         table
             .column_index(column_name)
             .map(|idx| (idx as u16, column_name))

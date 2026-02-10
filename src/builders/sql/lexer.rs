@@ -86,7 +86,7 @@ pub(super) enum TokenKind<'input> {
     Eof,
 }
 
-impl<'input> TokenKind<'input> {
+impl TokenKind<'_> {
     /// Returns a `'static` descriptive name for this token kind.
     ///
     /// Unlike `AsRef<str>`, this never borrows from the input and is
@@ -127,7 +127,7 @@ impl<'input> TokenKind<'input> {
     }
 }
 
-impl<'input> AsRef<str> for TokenKind<'input> {
+impl AsRef<str> for TokenKind<'_> {
     fn as_ref(&self) -> &str {
         match self {
             TokenKind::Insert => "INSERT",
@@ -274,7 +274,7 @@ impl<'input> Lexer<'input> {
                 return self.read_blob(start_pos);
             }
             _ if b.is_ascii_digit() => return self.read_number(start_pos),
-            _ if is_ident_start(b) => return self.read_identifier(start_pos),
+            _ if is_ident_start(b) => return Ok(self.read_identifier(start_pos)),
             _ => {
                 return Err(LexerError::UnexpectedChar {
                     char: b as char,
@@ -437,7 +437,7 @@ impl<'input> Lexer<'input> {
         }
     }
 
-    fn read_identifier(&mut self, start_pos: usize) -> Result<Token<'input>, LexerError> {
+    fn read_identifier(&mut self, start_pos: usize) -> Token<'input> {
         let bytes = self.input.as_bytes();
         let ident_start = self.pos;
 
@@ -468,10 +468,10 @@ impl<'input> Lexer<'input> {
             _ => TokenKind::Identifier(ident),
         };
 
-        Ok(Token {
+        Token {
             kind,
             pos: start_pos,
-        })
+        }
     }
 }
 

@@ -104,11 +104,11 @@ impl<S: Clone, B: Clone> IndexableValues for &[Option<Value<S, B>>] {
 
     #[inline]
     fn get(&self, col_idx: usize) -> Option<Value<Self::Text, Self::Binary>> {
-        <[Option<Value<S, B>>]>::get(self, col_idx).and_then(|v| {
+        <[Option<Value<S, B>>]>::get(self, col_idx).map(|v| {
             if let Some(value) = v {
-                Some(value.clone())
+                value.clone()
             } else {
-                Some(Value::Null)
+                Value::Null
             }
         })
     }
@@ -130,11 +130,11 @@ impl<O, S: Clone, B: Clone> IndexableValues for &[(O, Option<Value<S, B>>)] {
 
     #[inline]
     fn get(&self, col_idx: usize) -> Option<Value<Self::Text, Self::Binary>> {
-        <[(O, Option<Value<S, B>>)]>::get(self, col_idx).and_then(|(_old, new)| {
+        <[(O, Option<Value<S, B>>)]>::get(self, col_idx).map(|(_old, new)| {
             if let Some(value) = new {
-                Some(value.clone())
+                value.clone()
             } else {
-                Some(Value::Null)
+                Value::Null
             }
         })
     }

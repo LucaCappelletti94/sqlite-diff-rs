@@ -48,6 +48,18 @@ use crate::{
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
 type IndexMap<K, V> = IndexMapRaw<K, V, hashbrown::DefaultHashBuilder>;
 
+/// Type alias for the row map in a table.
+type RowMap<F, S, B> = IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>;
+
+/// Type alias for the table map.
+type TableMap<F, T, S, B> = IndexMap<T, RowMap<F, S, B>>;
+
+/// Type alias for a vector of rows in a table.
+type RowVec<F, S, B> = Vec<(Vec<Value<S, B>>, Operation<F, S, B>)>;
+
+/// Type alias for a vector of tables with their rows.
+type TableVec<F, T, S, B> = Vec<(T, RowVec<F, S, B>)>;
+
 // ============================================================================
 // SQLite session extension hash simulation
 // ============================================================================
@@ -246,7 +258,7 @@ fn patchset_pk_mapping<T: SchemaWithPK>(table: &T) -> (Vec<u8>, Vec<Option<usize
 /// Generic over the format `F` (Changeset or Patchset), table schema `T`, and value types `S`, `B`.
 #[derive(Debug, Clone)]
 pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
-    pub(crate) tables: IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>,
+    pub(crate) tables: TableMap<F, T, S, B>,
 }
 
 /// Custom PartialEq that ignores tables with empty operations.
@@ -364,7 +376,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     /// If the table doesn't exist yet, it's inserted at the end of the
     /// `IndexMap`, preserving first-touch ordering.
     #[inline]
-    fn ensure_table(&mut self, table: &T) -> &mut IndexMap<Vec<Value<S, B>>, Operation<F, S, B>> {
+    fn ensure_table(&mut self, table: &T) -> &mut RowMap<F, S, B> {
         self.tables.entry(table.clone()).or_default()
     }
 
@@ -682,14 +694,14 @@ impl<
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Delete(values) => {
                         out.push(op_codes::DELETE);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Update(values) => {
@@ -697,10 +709,10 @@ impl<
                         out.push(0);
                         // Write old values, then new values
                         for (old, _new) in values {
-                            encode_value(&mut out, old);
+                            encode_value(&mut out, old.as_ref());
                         }
                         for (_old, new) in values {
-                            encode_value(&mut out, new);
+                            encode_value(&mut out, new.as_ref());
                         }
                     }
                 }
@@ -737,7 +749,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Delete(()) => {
@@ -747,9 +759,9 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                         for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
                             if pk_flag > 0 {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
+                                    encode_value(&mut out, Some(&pk[pk_pos]));
                                 } else {
-                                    encode_value::<S, B>(&mut out, &None);
+                                    encode_value::<S, B>(&mut out, None);
                                 }
                             }
                         }
@@ -772,7 +784,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                         }
                         // Write new values
                         for ((), new) in values {
-                            encode_value(&mut out, new);
+                            encode_value(&mut out, new.as_ref());
                         }
                     }
                 }
@@ -832,7 +844,7 @@ impl<
 #[derive(Debug, Clone)]
 pub struct DiffSet<F: Format<S, B>, T: SchemaWithPK, S, B> {
     /// Tables and their rows, stored in order.  Each row is a `(pk, operation)` pair.
-    pub(crate) tables: Vec<(T, Vec<(Vec<Value<S, B>>, Operation<F, S, B>)>)>,
+    pub(crate) tables: TableVec<F, T, S, B>,
 }
 
 /// Custom `PartialEq` that ignores tables with no operations (same semantics
@@ -915,24 +927,24 @@ impl<
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Delete(values) => {
                         out.push(op_codes::DELETE);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Update(values) => {
                         out.push(op_codes::UPDATE);
                         out.push(0);
                         for (old, _new) in values {
-                            encode_value(&mut out, old);
+                            encode_value(&mut out, old.as_ref());
                         }
                         for (_old, new) in values {
-                            encode_value(&mut out, new);
+                            encode_value(&mut out, new.as_ref());
                         }
                     }
                 }
@@ -970,7 +982,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                         out.push(op_codes::INSERT);
                         out.push(0);
                         for value in values {
-                            encode_value(&mut out, &Some(value.clone()));
+                            encode_value(&mut out, Some(value));
                         }
                     }
                     Operation::Delete(()) => {
@@ -979,9 +991,9 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                         for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
                             if pk_flag > 0 {
                                 if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
+                                    encode_value(&mut out, Some(&pk[pk_pos]));
                                 } else {
-                                    encode_value::<S, B>(&mut out, &None);
+                                    encode_value::<S, B>(&mut out, None);
                                 }
                             }
                         }
@@ -1001,7 +1013,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                             }
                         }
                         for ((), new) in values {
-                            encode_value(&mut out, new);
+                            encode_value(&mut out, new.as_ref());
                         }
                     }
                 }
@@ -1094,8 +1106,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: Hash + Eq + AsRef<str>, B: Hash + Eq +
                 .tables
                 .into_iter()
                 .map(|(table, rows)| {
-                    let ordered_rows: Vec<(Vec<Value<S, B>>, Operation<F, S, B>)> =
-                        rows.into_iter().collect();
+                    let ordered_rows: RowVec<F, S, B> = rows.into_iter().collect();
                     (table, ordered_rows)
                 })
                 .collect(),

@@ -28,6 +28,12 @@ use alloc::vec::Vec;
 use core::hash::Hash;
 
 use crate::IndexableValues;
+
+/// Type alias for update operation values.
+type UpdateValues = Vec<(MaybeValue<String, Vec<u8>>, MaybeValue<String, Vec<u8>>)>;
+
+/// Type alias for parsed values result.
+type ParsedValues = (Vec<MaybeValue<String, Vec<u8>>>, usize);
 use crate::builders::{ChangesetFormat, DiffSet, DiffSetBuilder, Operation, PatchsetFormat};
 use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
@@ -474,8 +480,7 @@ fn parse_changeset_operation(
                 .map(|v| v.clone().unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&pk_values);
-            let values: Vec<(MaybeValue<String, Vec<u8>>, MaybeValue<String, Vec<u8>>)> =
-                old_values.into_iter().zip(new_values).collect();
+            let values: UpdateValues = old_values.into_iter().zip(new_values).collect();
             builder.add_operation(schema, pk, Operation::Update(values));
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
@@ -568,11 +573,7 @@ fn expand_pk_values(
 }
 
 /// Parse a sequence of values.
-fn parse_values(
-    data: &[u8],
-    base_pos: usize,
-    count: usize,
-) -> Result<(Vec<MaybeValue<String, Vec<u8>>>, usize), ParseError> {
+fn parse_values(data: &[u8], base_pos: usize, count: usize) -> Result<ParsedValues, ParseError> {
     let mut values = Vec::with_capacity(count);
     let mut pos = 0;
 

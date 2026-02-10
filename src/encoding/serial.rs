@@ -20,7 +20,7 @@ use core::hash::{Hash, Hasher};
 use super::varint::encode_varint_simple;
 
 /// A value that can be encoded in SQLite changeset format.
-#[derive(Debug, Copy)]
+#[derive(Debug)]
 pub enum Value<S, B> {
     /// SQL NULL
     Null,
@@ -183,7 +183,7 @@ pub(crate) fn encode_undefined(out: &mut Vec<u8>) {
 /// This is NOT the same as SQLite serial types used in database records!
 pub(crate) fn encode_value<S: AsRef<str>, B: AsRef<[u8]>>(
     out: &mut Vec<u8>,
-    value: &Option<Value<S, B>>,
+    value: Option<&Value<S, B>>,
 ) {
     match value {
         None => encode_undefined(out),
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_encode_decode_null() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(TestValue::Null));
+        encode_value(&mut buf, Some(&TestValue::Null));
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, Some(TestValue::Null));
         assert_eq!(len, buf.len());
@@ -350,7 +350,7 @@ mod tests {
             i64::MAX,
         ] {
             let mut buf = Vec::new();
-            encode_value(&mut buf, &Some(TestValue::Integer(v)));
+            encode_value(&mut buf, Some(&TestValue::Integer(v)));
             let (decoded, len) = decode_value(&buf).unwrap();
             assert_eq!(decoded, Some(TestValue::Integer(v)), "Failed for {v}");
             assert_eq!(len, buf.len());
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_encode_decode_real() {
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(TestValue::Real(6.14159)));
+        encode_value(&mut buf, Some(&TestValue::Real(6.14159)));
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, Some(TestValue::Real(6.14159)));
         assert_eq!(len, buf.len());
@@ -375,7 +375,7 @@ mod tests {
         let mut buf = Vec::new();
         // Use reference type for encoding
         let ref_value: Value<&str, &[u8]> = Value::Text("hello");
-        encode_value(&mut buf, &Some(ref_value));
+        encode_value(&mut buf, Some(&ref_value));
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, Some(TestValue::Text("hello".to_string())));
         assert_eq!(len, buf.len());
@@ -389,7 +389,7 @@ mod tests {
         // Use reference type for encoding
         let data: &[u8] = &[1, 2, 3, 4, 5];
         let ref_value: Value<&str, &[u8]> = Value::Blob(data);
-        encode_value(&mut buf, &Some(ref_value));
+        encode_value(&mut buf, Some(&ref_value));
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, Some(TestValue::Blob(vec![1, 2, 3, 4, 5])));
         assert_eq!(len, buf.len());
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_encode_decode_undefined() {
         let mut buf = Vec::new();
-        encode_value::<String, Vec<u8>>(&mut buf, &None);
+        encode_value::<String, Vec<u8>>(&mut buf, None);
         let (decoded, len) = decode_value(&buf).unwrap();
         assert_eq!(decoded, None);
         assert_eq!(len, buf.len());
@@ -414,7 +414,7 @@ mod tests {
 
         // Integer 1 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(TestValue::Integer(1)));
+        encode_value(&mut buf, Some(&TestValue::Integer(1)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
@@ -422,7 +422,7 @@ mod tests {
 
         // Integer 100 should be: type 1 + 8 bytes (big-endian)
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(TestValue::Integer(100)));
+        encode_value(&mut buf, Some(&TestValue::Integer(100)));
         assert_eq!(
             buf,
             vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64]
@@ -432,12 +432,12 @@ mod tests {
         // Using reference type here
         let mut buf = Vec::new();
         let ref_value: Value<&str, &[u8]> = Value::Text("alice");
-        encode_value(&mut buf, &Some(ref_value));
+        encode_value(&mut buf, Some(&ref_value));
         assert_eq!(buf, vec![0x03, 0x05, b'a', b'l', b'i', b'c', b'e']);
 
         // NULL should be type 5
         let mut buf = Vec::new();
-        encode_value(&mut buf, &Some(Value::Null::<&str, &[u8]>));
+        encode_value(&mut buf, Some(&Value::Null::<&str, &[u8]>));
         assert_eq!(buf, vec![0x05]);
     }
 

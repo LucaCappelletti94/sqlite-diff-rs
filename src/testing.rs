@@ -516,28 +516,19 @@ pub fn assert_patchset_sql_parity(schemas: &[SimpleTable], sql_statements: &[&st
         // Extract the table name from the DML to ensure proper registration order
         let upper = dml.trim().to_uppercase();
         let table_name = if upper.starts_with("INSERT INTO") {
-            dml.trim()["INSERT INTO".len()..]
-                .trim()
-                .split_whitespace()
-                .next()
+            dml.trim()["INSERT INTO".len()..].split_whitespace().next()
         } else if upper.starts_with("UPDATE") {
-            dml.trim()["UPDATE".len()..]
-                .trim()
-                .split_whitespace()
-                .next()
+            dml.trim()["UPDATE".len()..].split_whitespace().next()
         } else if upper.starts_with("DELETE FROM") {
-            dml.trim()["DELETE FROM".len()..]
-                .trim()
-                .split_whitespace()
-                .next()
+            dml.trim()["DELETE FROM".len()..].split_whitespace().next()
         } else {
             None
         };
 
-        if let Some(name) = table_name {
-            if let Some(schema) = schema_map.get(name) {
-                patchset.add_table(schema);
-            }
+        if let Some(name) = table_name
+            && let Some(schema) = schema_map.get(name)
+        {
+            patchset.add_table(schema);
         }
         patchset.digest_sql(dml).unwrap();
     }

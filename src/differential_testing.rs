@@ -47,7 +47,7 @@ pub fn run_differential_test(schemas: &[SimpleTable], create_sqls: &[&str], dml_
     // Digest each DML statement
     for &dml in dml_sqls {
         if our_patchset_builder.digest_sql(dml).is_err() {
-            continue; // Skip statements that fail to parse
+            // Skip statements that fail to parse
         }
     }
 
