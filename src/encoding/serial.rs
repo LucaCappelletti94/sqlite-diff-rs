@@ -20,7 +20,7 @@ use core::hash::{Hash, Hasher};
 use super::varint::encode_varint_simple;
 
 /// A value that can be encoded in SQLite changeset format.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value<S, B> {
     /// SQL NULL
     Null,
@@ -34,17 +34,7 @@ pub enum Value<S, B> {
     Blob(B),
 }
 
-impl<S: Clone, B: Clone> Clone for Value<S, B> {
-    fn clone(&self) -> Self {
-        match self {
-            Value::Null => Value::Null,
-            Value::Integer(v) => Value::Integer(*v),
-            Value::Real(v) => Value::Real(*v),
-            Value::Text(s) => Value::Text(s.clone()),
-            Value::Blob(b) => Value::Blob(b.clone()),
-        }
-    }
-}
+impl<S: Copy, B: Copy> Copy for Value<S, B> {}
 
 /// Internal type for representing values in changesets, where `None` means "undefined"
 /// (unchanged column in UPDATE operations).

@@ -214,6 +214,22 @@ impl<'a> arbitrary::Arbitrary<'a> for TypedSimpleTable {
             .map(|_| u.int_in_range(b'a'..=b'z').map(char::from))
             .collect::<arbitrary::Result<_>>()?;
 
+        Self::arbitrary_with_name(u, &name)
+    }
+}
+
+impl TypedSimpleTable {
+    /// Generate an arbitrary table with a given name.
+    ///
+    /// This is shared between the single-table and multi-table `Arbitrary`
+    /// implementations so that column count, types, and PK layout are still
+    /// fuzz-driven while the caller controls naming.
+    fn arbitrary_with_name(
+        u: &mut arbitrary::Unstructured<'_>,
+        name: &str,
+    ) -> arbitrary::Result<Self> {
+        use arbitrary::Arbitrary;
+
         // Column count: 1–8
         let ncols: usize = u.int_in_range(1..=8)?;
         let columns: Vec<(&str, SqlType)> = Vec::new(); // placeholder
@@ -236,7 +252,41 @@ impl<'a> arbitrary::Arbitrary<'a> for TypedSimpleTable {
             pk_indices.push(available.remove(idx));
         }
 
-        Ok(Self::new(&name, &col_refs, &pk_indices))
+        Ok(Self::new(name, &col_refs, &pk_indices))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FuzzSchemas – Vec<TypedSimpleTable> with guaranteed unique table names
+// ---------------------------------------------------------------------------
+
+/// A collection of 1–5 [`TypedSimpleTable`] schemas with unique table names.
+///
+/// Used as fuzz input for multi-table harnesses. Table names are deterministic
+/// (`t0`, `t1`, …) to avoid collisions; column count, types, and PK layout
+/// remain fuzz-driven.
+///
+/// Dereferences to `[TypedSimpleTable]` for ergonomic slice access.
+#[derive(Debug, Clone)]
+pub struct FuzzSchemas(pub Vec<TypedSimpleTable>);
+
+impl Deref for FuzzSchemas {
+    type Target = [TypedSimpleTable];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> arbitrary::Arbitrary<'a> for FuzzSchemas {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let ntables: usize = u.int_in_range(1..=5)?;
+        let mut tables = Vec::with_capacity(ntables);
+        for i in 0..ntables {
+            let name = format!("t{i}");
+            tables.push(TypedSimpleTable::arbitrary_with_name(u, &name)?);
+        }
+        Ok(Self(tables))
     }
 }
 
@@ -262,26 +312,44 @@ pub fn test_roundtrip(input: &[u8]) {
 /// Test that a changeset can be applied to an in-memory database without
 /// crashing, in addition to binary roundtrip verification.
 ///
-/// The `schema` provides the `CREATE TABLE` DDL (via its [`Display`](fmt::Display)
-/// impl) so the changeset has a matching table to apply against.
+/// Each schema in `schemas` provides a `CREATE TABLE` DDL (via its
+/// [`Display`](fmt::Display) impl) so the changeset has matching tables to
+/// apply against.
 ///
-/// Application errors are **not** treated as failures — fuzzed binary data may
-/// be semantically invalid for SQLite. Panics or crashes are bugs.
-pub fn test_apply_roundtrip(schema: &TypedSimpleTable, changeset_bytes: &[u8]) {
-    // Binary roundtrip check
-    test_roundtrip(changeset_bytes);
+/// Returns early if the input does not parse as a valid changeset/patchset,
+/// skipping the (expensive) SQLite setup. When parsing succeeds the
+/// **re-serialized** bytes — not the original fuzz input — are applied,
+/// so we test that *our* output is accepted by SQLite.
+///
+/// Application errors are **not** treated as failures — the changeset may
+/// be semantically invalid for the given schemas. Panics or crashes are bugs.
+pub fn test_apply_roundtrip(schemas: &[TypedSimpleTable], changeset_bytes: &[u8]) {
+    // Parse the input; bail early if it is not a valid changeset/patchset.
+    // This avoids paying the SQLite-setup cost for the vast majority of
+    // fuzzed inputs (random bytes almost never form valid changesets).
+    let Ok(parsed) = ParsedDiffSet::try_from(changeset_bytes) else {
+        return;
+    };
 
-    // Create an in-memory database with the table
+    // Binary roundtrip check: serialize → reparse → assert equality.
+    let serialized: Vec<u8> = parsed.clone().into();
+    let reparsed = ParsedDiffSet::try_from(serialized.as_slice())
+        .expect("Re-parsing our own output should never fail");
+    assert_eq!(parsed, reparsed, "Roundtrip mismatch");
+
+    // Create an in-memory database with all tables
     let Ok(conn) = Connection::open_in_memory() else {
         return;
     };
-    let ddl = schema.to_string();
-    if conn.execute(&ddl, []).is_err() {
-        return; // Schema might be invalid (e.g. no PK)
+    for schema in schemas {
+        let ddl = schema.to_string();
+        if conn.execute(&ddl, []).is_err() {
+            return; // Schema might be invalid (e.g. no PK)
+        }
     }
 
-    // Apply — errors are acceptable, panics are not
-    let _ = apply_changeset(&conn, changeset_bytes);
+    // Apply the *re-serialized* bytes — errors are acceptable, panics are not
+    let _ = apply_changeset(&conn, &serialized);
 }
 
 /// Test reverse idempotency: `reverse(reverse(x)) == x`.
@@ -336,15 +404,17 @@ pub fn test_reverse_idempotent(input: &[u8]) {
 
 /// Test SQL-digest roundtrip: digest SQL into a patchset, serialize, reparse.
 ///
-/// Given an arbitrary table schema and a SQL string, this:
-/// 1. Builds a [`PatchSet`] with the schema, digests the SQL.
+/// Given one or more table schemas and a SQL string, this:
+/// 1. Builds a [`PatchSet`] with all schemas, digests the SQL.
 /// 2. If digestion fails or the result is empty, returns early.
 /// 3. Serializes to binary and re-parses, asserting byte equality.
 ///
 /// Returns early (no panic) if SQL digestion fails or produces no operations.
-pub fn test_sql_roundtrip(schema: &TypedSimpleTable, sql: &str) {
+pub fn test_sql_roundtrip(schemas: &[TypedSimpleTable], sql: &str) {
     let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    builder.add_table(&**schema);
+    for schema in schemas {
+        builder.add_table(&**schema);
+    }
 
     if builder.digest_sql(sql).is_err() {
         return;
@@ -365,24 +435,27 @@ pub fn test_sql_roundtrip(schema: &TypedSimpleTable, sql: &str) {
 
 /// Test differential (bit-parity) between our patchset output and rusqlite's.
 ///
-/// Given an arbitrary table schema and a SQL DML string, this:
-/// 1. Builds a [`PatchSet`] with the schema, digests the SQL.
+/// Given one or more table schemas and a SQL DML string, this:
+/// 1. Builds a [`PatchSet`] with all schemas, digests the SQL.
 /// 2. If digestion fails or the result is empty, returns early.
 /// 3. Delegates to [`run_differential_test`](crate::differential_testing::run_differential_test)
 ///    to compare our bytes against rusqlite's session extension output.
 ///
 /// Returns early (no panic) if SQL digestion fails or produces no operations.
-pub fn test_differential(schema: &TypedSimpleTable, sql: &str) {
+pub fn test_differential(schemas: &[TypedSimpleTable], sql: &str) {
     let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    builder.add_table(&**schema);
+    for schema in schemas {
+        builder.add_table(&**schema);
+    }
 
     if builder.digest_sql(sql).is_err() || builder.is_empty() {
         return;
     }
 
-    let create_sql = schema.to_string();
-    let simple: SimpleTable = (**schema).clone();
-    run_differential_test(&[simple], &[create_sql.as_str()], &[sql]);
+    let create_sqls: Vec<String> = schemas.iter().map(ToString::to_string).collect();
+    let create_sql_refs: Vec<&str> = create_sqls.iter().map(String::as_str).collect();
+    let simples: Vec<SimpleTable> = schemas.iter().map(|s| (**s).clone()).collect();
+    run_differential_test(&simples, &create_sql_refs, &[sql]);
 }
 
 /// and return the raw changeset and patchset bytes.

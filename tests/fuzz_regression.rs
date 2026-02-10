@@ -11,9 +11,9 @@
 //! |----------------------|----------------------------------|------------------------------------------|
 //! | `roundtrip`          | `&[u8]`                          | `tests/crash_inputs/roundtrip/`          |
 //! | `reverse_idempotent` | `&[u8]`                          | `tests/crash_inputs/reverse_idempotent/` |
-//! | `apply_roundtrip`    | `(TypedSimpleTable, Vec<u8>)`    | `tests/crash_inputs/apply_roundtrip/`    |
-//! | `sql_roundtrip`      | `(TypedSimpleTable, String)`     | `tests/crash_inputs/sql_roundtrip/`      |
-//! | `differential`       | `(TypedSimpleTable, String)`     | `tests/crash_inputs/differential/`       |
+//! | `apply_roundtrip`    | `(FuzzSchemas, Vec<u8>)`         | `tests/crash_inputs/apply_roundtrip/`    |
+//! | `sql_roundtrip`      | `(FuzzSchemas, String)`          | `tests/crash_inputs/sql_roundtrip/`      |
+//! | `differential`       | `(FuzzSchemas, String)`          | `tests/crash_inputs/differential/`       |
 //!
 //! Structured-input harnesses (`apply_roundtrip`, `sql_roundtrip`, `differential`)
 //! store honggfuzz crash files as raw `arbitrary`-encoded bytes. The regression
@@ -22,8 +22,8 @@
 //! (it may be a legacy file from before the structured-input migration).
 
 use sqlite_diff_rs::testing::{
-    TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip, test_differential,
-    test_reverse_idempotent, test_roundtrip, test_sql_roundtrip,
+    FuzzSchemas, TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip,
+    test_differential, test_reverse_idempotent, test_roundtrip, test_sql_roundtrip,
 };
 use std::time::Duration;
 
@@ -156,9 +156,9 @@ fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
 
 /// Automatically test all apply_roundtrip crash files.
 ///
-/// Since these crash files are raw bytes (not structured `(TypedSimpleTable, Vec<u8>)`
+/// Since these crash files are raw bytes (not structured `(FuzzSchemas, Vec<u8>)`
 /// tuples), we parse the changeset first to extract table schemas via
-/// [`TypedSimpleTable::from_table_schema`], then apply against each table.
+/// [`TypedSimpleTable::from_table_schema`], then apply against all tables at once.
 #[test]
 fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
     run_crash_dir_regression(
@@ -187,16 +187,14 @@ fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
                 .collect();
 
             let serialized: Vec<u8> = parsed.into();
-            for schema in &schemas {
-                test_apply_roundtrip(schema, &serialized);
-            }
+            test_apply_roundtrip(&schemas, &serialized);
         },
     );
 }
 
 /// Automatically test all sql_roundtrip crash files.
 ///
-/// Crash files contain `arbitrary`-encoded `(TypedSimpleTable, String)` tuples.
+/// Crash files contain `arbitrary`-encoded `(FuzzSchemas, String)` tuples.
 /// Files that fail to deserialize are skipped (legacy or corrupt inputs).
 #[test]
 fn fuzz_regression_sql_roundtrip_crash_inputs_dir() {
@@ -211,19 +209,19 @@ fn fuzz_regression_sql_roundtrip_crash_inputs_dir() {
         ),
         PER_INPUT_TIME_LIMIT,
         |data| {
-            let Ok((schema, sql)) =
-                arbitrary::Unstructured::new(data).arbitrary::<(TypedSimpleTable, String)>()
+            let Ok((schemas, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(FuzzSchemas, String)>()
             else {
                 return;
             };
-            test_sql_roundtrip(&schema, &sql);
+            test_sql_roundtrip(&schemas, &sql);
         },
     );
 }
 
 /// Automatically test all differential crash files.
 ///
-/// Crash files contain `arbitrary`-encoded `(TypedSimpleTable, String)` tuples.
+/// Crash files contain `arbitrary`-encoded `(FuzzSchemas, String)` tuples.
 /// Files that fail to deserialize are skipped (legacy or corrupt inputs).
 #[test]
 fn fuzz_regression_differential_crash_inputs_dir() {
@@ -238,12 +236,12 @@ fn fuzz_regression_differential_crash_inputs_dir() {
         ),
         PER_INPUT_TIME_LIMIT,
         |data| {
-            let Ok((schema, sql)) =
-                arbitrary::Unstructured::new(data).arbitrary::<(TypedSimpleTable, String)>()
+            let Ok((schemas, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(FuzzSchemas, String)>()
             else {
                 return;
             };
-            test_differential(&schema, &sql);
+            test_differential(&schemas, &sql);
         },
     );
 }

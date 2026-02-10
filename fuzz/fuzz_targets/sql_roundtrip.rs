@@ -5,13 +5,13 @@
 //! be serialized and re-parsed as a valid binary patchset.
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::testing::{TypedSimpleTable, test_sql_roundtrip};
+use sqlite_diff_rs::testing::{FuzzSchemas, test_sql_roundtrip};
 
 fn main() {
     loop {
-        fuzz!(|input: (TypedSimpleTable, String)| {
-            let (schema, sql) = input;
-            test_sql_roundtrip(&schema, &sql);
+        fuzz!(|input: (FuzzSchemas, String)| {
+            let (schemas, sql) = input;
+            test_sql_roundtrip(&schemas, &sql);
         });
     }
 }

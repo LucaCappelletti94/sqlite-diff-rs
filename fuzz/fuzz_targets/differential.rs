@@ -4,13 +4,13 @@
 //! builder produces **byte-identical** output to rusqlite's session extension.
 
 use honggfuzz::fuzz;
-use sqlite_diff_rs::testing::{TypedSimpleTable, test_differential};
+use sqlite_diff_rs::testing::{FuzzSchemas, test_differential};
 
 fn main() {
     loop {
-        fuzz!(|input: (TypedSimpleTable, String)| {
-            let (schema, sql) = input;
-            test_differential(&schema, &sql);
+        fuzz!(|input: (FuzzSchemas, String)| {
+            let (schemas, sql) = input;
+            test_differential(&schemas, &sql);
         });
     }
 }

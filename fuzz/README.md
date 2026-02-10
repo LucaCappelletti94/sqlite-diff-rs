@@ -50,8 +50,8 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
   `ChangeSet`/`PatchSet`, converts to SQL via `Display`, re-parses, and
   compares the in-memory structures.
 
-- **`apply_roundtrip`** — End-to-end bit-parity: parses SQL into
-  `ChangeSet`/`PatchSet` via `FromStr`, serializes to bytes, and compares
-  byte-for-byte with rusqlite's session extension output for the same SQL.
-  Also applies both changesets to empty databases and verifies identical
-  final state.
+- **`apply_roundtrip`** — Apply-roundtrip: parses arbitrary bytes as a
+  binary changeset/patchset, serializes back and verifies byte equality
+  (roundtrip), then applies the re-serialized changeset to an in-memory
+  rusqlite database. Returns early on parse failure to keep iteration
+  cost bounded. Input size is capped at 4 KiB.
