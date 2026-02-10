@@ -413,8 +413,8 @@ fn test_sqlite_table_order_three_tables_cancel_first_patchset() {
 /// operations cancel out on a single table.
 #[test]
 fn test_our_builder_empty_after_cancel() {
-    use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert};
     use sqlite_diff_rs::SimpleTable;
+    use sqlite_diff_rs::{ChangeDelete, ChangeSet, DiffOps, Insert};
 
     let schema = SimpleTable::new("users", &["id", "name"], &[0]);
 
@@ -430,9 +430,9 @@ fn test_our_builder_empty_after_cancel() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset_builder.insert(insert);
-    changeset_builder.delete(delete);
+    let changeset_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+    let changeset_builder = changeset_builder.insert(insert);
+    let changeset_builder = changeset_builder.delete(delete);
     let changeset_bytes: Vec<u8> = changeset_builder.build();
 
     // Should match SQLite: empty bytes
@@ -451,8 +451,8 @@ fn test_our_builder_empty_after_cancel() {
 /// Verify table ordering parity with SQLite after cancel + re-add.
 #[test]
 fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
-    use sqlite_diff_rs::{ChangeDelete, ChangeSet, Insert, ParsedDiffSet};
     use sqlite_diff_rs::SimpleTable;
+    use sqlite_diff_rs::{ChangeDelete, ChangeSet, DiffOps, Insert, ParsedDiffSet};
 
     let schema_a = SimpleTable::new("table_a", &["id", "val"], &[0]);
     let schema_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
@@ -479,11 +479,11 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
         .set(1, "a2")
         .unwrap();
 
-    let mut our_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    our_builder.insert(insert_a);
-    our_builder.insert(insert_b);
-    our_builder.delete(delete_a1);
-    our_builder.insert(insert_a2);
+    let our_builder: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+    let our_builder = our_builder.insert(insert_a);
+    let our_builder = our_builder.insert(insert_b);
+    let our_builder = our_builder.delete(delete_a1);
+    let our_builder = our_builder.insert(insert_a2);
     let our_bytes: Vec<u8> = our_builder.build();
 
     // Get SQLite's version

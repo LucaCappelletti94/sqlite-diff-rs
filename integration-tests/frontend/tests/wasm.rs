@@ -249,7 +249,7 @@ fn test_multi_insert_session() {
 /// the SQLite session extension applies it.
 #[wasm_bindgen_test]
 fn test_builder_patchset_apply() {
-    use sqlite_diff_rs::{Insert, PatchSet, TableSchema, Value};
+    use sqlite_diff_rs::{DiffOps, Insert, PatchSet, TableSchema, Value};
 
     let schema = chat_shared::ddl::users_table_schema();
 
@@ -301,7 +301,7 @@ fn test_builder_patchset_apply() {
 /// INSERT independently, and both parse identically via `ParsedDiffSet`.
 #[wasm_bindgen_test]
 fn test_builder_vs_session_roundtrip() {
-    use sqlite_diff_rs::{Insert, PatchSet, TableSchema, Value};
+    use sqlite_diff_rs::{DiffOps, Insert, PatchSet, TableSchema, Value};
 
     let schema = chat_shared::ddl::users_table_schema();
     let user_id = vec![0x01; 16];

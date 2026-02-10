@@ -3,7 +3,7 @@
 //! UUIDs are raw BLOB values. Unlike patchset, updates carry both old + new
 //! values and deletes carry all column values (for conflict detection).
 
-use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangeUpdate, TableSchema, Value};
+use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, TableSchema, Value};
 
 use crate::common::{Format, TestMessage, messages_schema};
 use crate::format_patchset; // reuse build_insert — INSERT is identical
@@ -13,7 +13,10 @@ type Schema = TableSchema<String>;
 
 pub struct Changeset;
 
-fn build_update<'a>(schema: &'a Schema, m: &TestMessage) -> ChangeUpdate<&'a Schema, String, Vec<u8>> {
+fn build_update<'a>(
+    schema: &'a Schema,
+    m: &TestMessage,
+) -> ChangeUpdate<&'a Schema, String, Vec<u8>> {
     ChangeUpdate::from(schema)
         .set(
             0,
@@ -29,7 +32,10 @@ fn build_update<'a>(schema: &'a Schema, m: &TestMessage) -> ChangeUpdate<&'a Sch
         .unwrap()
 }
 
-fn build_delete<'a>(schema: &'a Schema, m: &TestMessage) -> ChangeDelete<&'a Schema, String, Vec<u8>> {
+fn build_delete<'a>(
+    schema: &'a Schema,
+    m: &TestMessage,
+) -> ChangeDelete<&'a Schema, String, Vec<u8>> {
     ChangeDelete::from(schema)
         .set(0, Value::Blob(m.id.as_bytes().to_vec()))
         .unwrap()

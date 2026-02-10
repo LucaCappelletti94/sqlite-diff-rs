@@ -16,7 +16,9 @@ pub struct ChangeDelete<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
     pub(crate) values: Vec<Value<S, B>>,
 }
 
-impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for ChangeDelete<T, S, B> {
+impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
+    for ChangeDelete<T, S, B>
+{
     fn eq(&self, other: &Self) -> bool {
         self.table == other.table && self.values == other.values
     }
@@ -31,7 +33,9 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for ChangeDelete<T, S,
     }
 }
 
-impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u8]>> From<T> for ChangeDelete<T, S, B> {
+impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u8]>> From<T>
+    for ChangeDelete<T, S, B>
+{
     #[inline]
     fn from(table: T) -> Self {
         let num_cols = table.number_of_columns();
@@ -106,3 +110,32 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> ChangeDelete<T, S, B> {
     }
 }
 
+/// Represents a delete operation in patchset format.
+///
+/// Only stores the table schema and primary key values, as patchsets
+/// don't include full row data for deletions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchDelete<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
+    pub(crate) table: T,
+    /// Primary key values for the deleted row.
+    pub(crate) pk: Vec<Value<S, B>>,
+}
+
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for PatchDelete<T, S, B> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.table
+    }
+}
+
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> PatchDelete<T, S, B> {
+    /// Create a new patchset delete for the given table and primary key values.
+    ///
+    /// The `pk` values should be the primary key column values, in the order
+    /// they appear in the table schema. This is the same format returned by
+    /// [`crate::SchemaWithPK::extract_pk`].
+    #[inline]
+    pub fn new(table: T, pk: Vec<Value<S, B>>) -> Self {
+        Self { table, pk }
+    }
+}

@@ -18,8 +18,7 @@ fn main() {
         PathBuf::from(&args[1])
     } else {
         // Default: workspace root's target/criterion
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/criterion")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/criterion")
     };
 
     let output_dir = if args.len() > 2 {
@@ -42,7 +41,10 @@ fn main() {
     let results = data::ResultSet::load(&criterion_dir);
 
     if results.results.is_empty() {
-        eprintln!("error: no benchmark results found in {}", criterion_dir.display());
+        eprintln!(
+            "error: no benchmark results found in {}",
+            criterion_dir.display()
+        );
         std::process::exit(1);
     }
 
@@ -75,5 +77,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    eprintln!("\nDone! Report at: {}", output_dir.join("report.md").display());
+    eprintln!(
+        "\nDone! Report at: {}",
+        output_dir.join("report.md").display()
+    );
 }

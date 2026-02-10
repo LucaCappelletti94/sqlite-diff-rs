@@ -17,13 +17,13 @@ pub mod testing;
 
 // Re-export main types
 pub use builders::{
-    ChangeDelete, ChangeSet, ChangesetFormat, DiffSetBuilder, Insert, PatchSet, PatchsetFormat,
-    Reverse, Update,
+    ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, DiffSet, DiffSetBuilder, Insert,
+    PatchDelete, PatchSet, PatchsetFormat, Reverse, Update,
 };
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
-pub use schema::{DynTable, SchemaWithPK, SimpleTable};
 pub(crate) use schema::IndexableValues;
+pub use schema::{DynTable, SchemaWithPK, SimpleTable};
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.

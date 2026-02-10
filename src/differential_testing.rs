@@ -34,11 +34,7 @@ use alloc::vec::Vec;
 /// # Panics
 ///
 /// Panics if the patchset bytes differ (this is a test helper).
-pub fn run_differential_test(
-    schemas: &[SimpleTable],
-    create_sqls: &[&str],
-    dml_sqls: &[&str],
-) {
+pub fn run_differential_test(schemas: &[SimpleTable], create_sqls: &[&str], dml_sqls: &[&str]) {
     // Build our patchset via digest_sql
     let mut our_patchset_builder: DiffSetBuilder<PatchsetFormat, SimpleTable, String, Vec<u8>> =
         DiffSetBuilder::default();

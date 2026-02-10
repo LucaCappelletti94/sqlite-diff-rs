@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use chat_shared::ddl::{messages_table_schema, users_table_schema};
 use chat_shared::schema::{messages_columns, users_columns};
-use sqlite_diff_rs::{Insert, ParsedDiffSet, PatchSet, TableSchema, Value};
+use sqlite_diff_rs::{DiffOps, Insert, ParsedDiffSet, PatchSet, TableSchema, Value};
 
 // Type aliases to avoid verbosity
 type Val = Value<String, Vec<u8>>;

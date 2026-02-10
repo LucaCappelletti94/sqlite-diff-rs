@@ -37,9 +37,12 @@ use core::hash::Hash;
 use crate::{
     SchemaWithPK,
     builders::{
-        ChangeDelete, ChangesetFormat, Insert, Operation, PatchsetFormat, Update, format::Format,
+        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
+        format::Format,
     },
-    encoding::{MaybeValue, Value, encode_defined_value, encode_undefined, encode_value},
+    encoding::{
+        MaybeValue, Value, encode_defined_value, encode_undefined, encode_value, markers, op_codes,
+    },
 };
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
@@ -179,7 +182,66 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
     order
 }
 
+// ============================================================================
+// Shared encoding helpers
+// ============================================================================
+
+/// Write a table header to the output buffer.
+///
+/// Format:
+/// - Table marker byte (`'T'` for changeset, `'P'` for patchset)
+/// - Column count (1 byte)
+/// - PK flags (1 byte per column: non-zero = PK ordinal, 0 = not PK)
+/// - Table name (null-terminated UTF-8)
+fn write_table_header<T: SchemaWithPK>(out: &mut Vec<u8>, marker: u8, table: &T) {
+    out.push(marker);
+
+    let num_cols = table.number_of_columns();
+    out.push(u8::try_from(num_cols).unwrap());
+
+    let pk_start = out.len();
+    out.resize(pk_start + num_cols, 0);
+    table.write_pk_flags(&mut out[pk_start..]);
+
+    out.extend(table.name().as_bytes());
+    out.push(0);
+}
+
+/// Build the column-index → PK-vector-position mapping used by patchset serialization.
+///
+/// Returns `(pk_flags, pk_col_to_pk_pos)` where `pk_col_to_pk_pos[col_idx]`
+/// gives the index into the PK vector for PK columns, or `None` for non-PK columns.
+fn patchset_pk_mapping<T: SchemaWithPK>(table: &T) -> (Vec<u8>, Vec<Option<usize>>) {
+    let num_cols = table.number_of_columns();
+    let mut pk_flags = alloc::vec![0u8; num_cols];
+    table.write_pk_flags(&mut pk_flags);
+
+    let mut pk_col_to_pk_pos: Vec<Option<usize>> = alloc::vec![None; num_cols];
+    let mut pk_cols: Vec<(usize, u8)> = pk_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
+        .collect();
+    pk_cols.sort_by_key(|(_, ord)| *ord);
+    for (pos, (col_idx, _)) in pk_cols.into_iter().enumerate() {
+        pk_col_to_pk_pos[col_idx] = Some(pos);
+    }
+
+    (pk_flags, pk_col_to_pk_pos)
+}
+
+// ============================================================================
+// DiffSetBuilder — mutable builder (DML insertion order, hash-simulated build)
+// ============================================================================
+
 /// Builder for constructing changeset or patchset binary data.
+///
+/// `DiffSetBuilder` tracks rows in DML insertion order. When [`build`](Self::build)
+/// is called, it simulates SQLite's session-extension hash table to produce
+/// byte-identical output.
+///
+/// For parsed (frozen) data that should be emitted in its original order,
+/// see [`DiffSet`].
 ///
 /// Generic over the format `F` (Changeset or Patchset), table schema `T`, and value types `S`, `B`.
 #[derive(Debug, Clone)]
@@ -278,8 +340,6 @@ impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone 
     }
 }
 
-use crate::encoding::op_codes;
-
 impl<F: Format<S, B>, T: SchemaWithPK, S, B> DiffSetBuilder<F, T, S, B> {
     /// Returns the table corresponding to the given name, if it exists in the builder.
     pub(super) fn table<'builder>(&'builder self, name: &str) -> Option<&'builder T> {
@@ -332,31 +392,6 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
         self.tables.values().map(IndexMap::len).sum()
     }
 
-    /// Write the table header to the output buffer.
-    ///
-    /// Format:
-    /// - Table marker: 'T' (changeset) or 'P' (patchset)
-    /// - Column count (1 byte)
-    /// - PK flags (1 byte per column: 0x01 = PK, 0x00 = not)
-    /// - Table name (null-terminated UTF-8)
-    fn write_table_header(out: &mut Vec<u8>, table: &T) {
-        // Table marker
-        out.push(F::TABLE_MARKER);
-
-        // Column count (1 byte)
-        let num_cols = table.number_of_columns();
-        out.push(u8::try_from(num_cols).unwrap());
-
-        // PK flags (1 byte per column)
-        let pk_start = out.len();
-        out.resize(pk_start + num_cols, 0);
-        table.write_pk_flags(&mut out[pk_start..]);
-
-        // Table name (null-terminated)
-        out.extend(table.name().as_bytes());
-        out.push(0);
-    }
-
     /// Add any operation, consolidating with existing operations on the same row.
     ///
     /// The table schema is passed separately — operations are schema-less.
@@ -402,51 +437,67 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
                 }
             }
         }
+
         self
     }
 }
 
 // ============================================================================
-// Changeset-specific builder methods
+// DiffOps trait — unified insert / delete / update for DiffSetBuilder & DiffSet
 // ============================================================================
 
+/// Trait for adding DML operations (INSERT, DELETE, UPDATE) to a diff set.
+///
+/// Implemented for both [`DiffSetBuilder`] and [`DiffSet`], allowing
+/// operations to be added to either type. Methods consume `self` and
+/// return a [`DiffSetBuilder`].
+pub trait DiffOps<T: SchemaWithPK, S, B>: Sized {
+    /// The format (changeset or patchset) of the diff set.
+    type Format: Format<S, B>;
+
+    /// The argument type for the [`delete`](Self::delete) operation.
+    ///
+    /// * Changeset: [`ChangeDelete<T, S, B>`]
+    /// * Patchset: [`PatchDelete<T, S, B>`]
+    type DeleteArg;
+
+    /// Add an INSERT operation.
+    fn insert(self, insert: Insert<T, S, B>) -> DiffSetBuilder<Self::Format, T, S, B>;
+
+    /// Add a DELETE operation.
+    fn delete(self, delete: Self::DeleteArg) -> DiffSetBuilder<Self::Format, T, S, B>;
+
+    /// Add an UPDATE operation.
+    fn update(self, update: Update<T, Self::Format, S, B>)
+    -> DiffSetBuilder<Self::Format, T, S, B>;
+}
+
+// -- DiffOps for DiffSetBuilder<ChangesetFormat> ------------------------------
+
 impl<
     T: SchemaWithPK,
     S: Clone + Debug + Hash + Eq + AsRef<str>,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSetBuilder<ChangesetFormat, T, S, B>
+> DiffOps<T, S, B> for DiffSetBuilder<ChangesetFormat, T, S, B>
 {
-    /// Add an INSERT operation.
-    pub fn insert(&mut self, insert: Insert<T, S, B>) -> &mut Self {
+    type Format = ChangesetFormat;
+    type DeleteArg = ChangeDelete<T, S, B>;
+
+    fn insert(mut self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
+        self.add_operation(&table, pk, Operation::Insert(insert.into_values()));
+        self
     }
-}
 
-impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSetBuilder<ChangesetFormat, T, S, B>
-{
-    /// Add a DELETE operation.
-    pub fn delete(&mut self, delete: ChangeDelete<T, S, B>) -> &mut Self {
+    fn delete(mut self, delete: ChangeDelete<T, S, B>) -> Self {
         let pk = delete.as_ref().extract_pk(&delete.values);
         let table = delete.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Delete(delete.into_values()))
+        self.add_operation(&table, pk, Operation::Delete(delete.into_values()));
+        self
     }
-}
 
-impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSetBuilder<ChangesetFormat, T, S, B>
-{
-    /// Add an UPDATE operation.
-    pub fn update(&mut self, update: Update<T, ChangesetFormat, S, B>) -> &mut Self {
-        // Extract PK from old values (convert None to Null for PK extraction)
+    fn update(mut self, update: Update<T, ChangesetFormat, S, B>) -> Self {
         let old_values: Vec<_> = update
             .values()
             .iter()
@@ -455,59 +506,51 @@ impl<
         let pk = update.as_ref().extract_pk(&old_values);
         let table = update.as_ref().clone();
         let values: Vec<(MaybeValue<S, B>, MaybeValue<S, B>)> = update.into();
-        self.add_operation(&table, pk, Operation::Update(values))
+        self.add_operation(&table, pk, Operation::Update(values));
+        self
     }
 }
 
-// ============================================================================
-// Patchset-specific builder methods
-// ============================================================================
+// -- DiffOps for DiffSetBuilder<PatchsetFormat> -------------------------------
 
 impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
-    DiffSetBuilder<PatchsetFormat, T, S, B>
+    DiffOps<T, S, B> for DiffSetBuilder<PatchsetFormat, T, S, B>
 {
-    /// Add an INSERT operation.
-    pub fn insert(&mut self, insert: Insert<T, S, B>) -> &mut Self {
+    type Format = PatchsetFormat;
+    type DeleteArg = PatchDelete<T, S, B>;
+
+    fn insert(mut self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Insert(insert.into_values()))
+        self.add_operation(&table, pk, Operation::Insert(insert.into_values()));
+        self
     }
-}
 
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
-    DiffSetBuilder<PatchsetFormat, T, S, B>
-{
-    /// Add a DELETE operation by specifying the table and primary key values.
-    ///
-    /// The `pk` slice should contain only the primary key column values, in the order
-    /// they appear in the table schema. This is the same format returned by
-    /// [`SchemaWithPK::extract_pk`].
+    /// Delete by primary key.
     ///
     /// # Example
     ///
     /// ```
-    /// use sqlite_diff_rs::{PatchSet, SchemaWithPK, TableSchema};
+    /// use sqlite_diff_rs::{DiffOps, PatchDelete, PatchSet, SchemaWithPK, TableSchema};
     ///
     /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
     /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
     ///
     /// // Delete row where id = 1
-    /// let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
-    /// patchset.delete(&schema, &[1i64.into()]);
+    /// let patchset = PatchSet::<_, String, Vec<u8>>::new()
+    ///     .delete(PatchDelete::new(schema, vec![1i64.into()]));
     /// ```
-    pub fn delete(&mut self, table: &T, pk: &[Value<S, B>]) -> &mut Self {
-        self.add_operation(table, pk.to_vec(), Operation::Delete(()))
+    fn delete(mut self, delete: PatchDelete<T, S, B>) -> Self {
+        self.add_operation(&delete.table, delete.pk, Operation::Delete(()));
+        self
     }
 
-    /// Add an UPDATE operation.
-    ///
-    /// The primary key values are extracted from the Update's new values automatically.
-    /// For patchset updates, ensure the PK columns are set in the Update using `.set()`.
+    /// Update by primary key.
     ///
     /// # Example
     ///
     /// ```
-    /// use sqlite_diff_rs::{PatchSet, PatchsetFormat, Update, TableSchema};
+    /// use sqlite_diff_rs::{DiffOps, PatchSet, PatchsetFormat, Update, TableSchema};
     ///
     /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
     /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
@@ -517,15 +560,72 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     ///     .set(0, 1i64).unwrap()  // PK value
     ///     .set(1, "Bob").unwrap();
     ///
-    /// let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
-    /// patchset.update(update);
+    /// let patchset = PatchSet::<_, String, Vec<u8>>::new()
+    ///     .update(update);
     /// ```
-    pub fn update(&mut self, update: Update<T, PatchsetFormat, S, B>) -> &mut Self {
-        // Extract PK from new values
+    fn update(mut self, update: Update<T, PatchsetFormat, S, B>) -> Self {
         let pk = update.extract_pk();
         let table = update.as_ref().clone();
         let values: Vec<((), MaybeValue<S, B>)> = update.into();
-        self.add_operation(&table, pk, Operation::Update(values))
+        self.add_operation(&table, pk, Operation::Update(values));
+        self
+    }
+}
+
+// -- DiffOps for DiffSet<ChangesetFormat> -------------------------------------
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffOps<T, S, B> for DiffSet<ChangesetFormat, T, S, B>
+{
+    type Format = ChangesetFormat;
+    type DeleteArg = ChangeDelete<T, S, B>;
+
+    fn insert(self, insert: Insert<T, S, B>) -> DiffSetBuilder<ChangesetFormat, T, S, B> {
+        let builder: DiffSetBuilder<ChangesetFormat, T, S, B> = self.into();
+        builder.insert(insert)
+    }
+
+    fn delete(self, delete: ChangeDelete<T, S, B>) -> DiffSetBuilder<ChangesetFormat, T, S, B> {
+        let builder: DiffSetBuilder<ChangesetFormat, T, S, B> = self.into();
+        builder.delete(delete)
+    }
+
+    fn update(
+        self,
+        update: Update<T, ChangesetFormat, S, B>,
+    ) -> DiffSetBuilder<ChangesetFormat, T, S, B> {
+        let builder: DiffSetBuilder<ChangesetFormat, T, S, B> = self.into();
+        builder.update(update)
+    }
+}
+
+// -- DiffOps for DiffSet<PatchsetFormat> --------------------------------------
+
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    DiffOps<T, S, B> for DiffSet<PatchsetFormat, T, S, B>
+{
+    type Format = PatchsetFormat;
+    type DeleteArg = PatchDelete<T, S, B>;
+
+    fn insert(self, insert: Insert<T, S, B>) -> DiffSetBuilder<PatchsetFormat, T, S, B> {
+        let builder: DiffSetBuilder<PatchsetFormat, T, S, B> = self.into();
+        builder.insert(insert)
+    }
+
+    fn delete(self, delete: PatchDelete<T, S, B>) -> DiffSetBuilder<PatchsetFormat, T, S, B> {
+        let builder: DiffSetBuilder<PatchsetFormat, T, S, B> = self.into();
+        builder.delete(delete)
+    }
+
+    fn update(
+        self,
+        update: Update<T, PatchsetFormat, S, B>,
+    ) -> DiffSetBuilder<PatchsetFormat, T, S, B> {
+        let builder: DiffSetBuilder<PatchsetFormat, T, S, B> = self.into();
+        builder.update(update)
     }
 }
 
@@ -573,7 +673,7 @@ impl<
                 continue;
             }
 
-            Self::write_table_header(&mut out, table);
+            write_table_header(&mut out, markers::CHANGESET, table);
 
             for idx in session_row_order(rows) {
                 let (_pk, op) = rows.get_index(idx).unwrap();
@@ -626,26 +726,9 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                 continue;
             }
 
-            Self::write_table_header(&mut out, table);
+            write_table_header(&mut out, markers::PATCHSET, table);
 
-            // Get PK flags for this table
-            let num_cols = table.number_of_columns();
-            let mut pk_flags = alloc::vec![0u8; num_cols];
-            table.write_pk_flags(&mut pk_flags);
-
-            // Build a mapping from column index to position in pk vector.
-            let mut pk_col_to_pk_pos: alloc::vec::Vec<Option<usize>> = alloc::vec![None; num_cols];
-            {
-                let mut pk_cols: alloc::vec::Vec<(usize, u8)> = pk_flags
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
-                    .collect();
-                pk_cols.sort_by_key(|(_, ord)| *ord);
-                for (pos, (col_idx, _)) in pk_cols.into_iter().enumerate() {
-                    pk_col_to_pk_pos[col_idx] = Some(pos);
-                }
-            }
+            let (pk_flags, pk_col_to_pk_pos) = patchset_pk_mapping(table);
 
             for idx in session_row_order(rows) {
                 let (pk, op) = rows.get_index(idx).unwrap();
@@ -720,12 +803,316 @@ impl<
         for (table, rows) in self.tables {
             for (pk, op) in rows {
                 let rev_op = op.reverse();
-                
+
                 reversed.add_operation(&table, pk, rev_op);
             }
         }
 
         reversed
+    }
+}
+
+// ============================================================================
+// DiffSet — frozen (parsed) changeset/patchset with sequential row order
+// ============================================================================
+
+/// A frozen changeset or patchset whose rows are emitted in stored order.
+///
+/// `DiffSet` is produced by the binary parser (via [`ParsedDiffSet`](crate::parser::ParsedDiffSet))
+/// or by calling [`DiffSetBuilder::freeze`].  Unlike [`DiffSetBuilder`], it
+/// stores tables and rows in a plain `Vec`, reflecting the fact that no
+/// further mutation or PK-based lookup is needed.
+///
+/// [`build`](Self::build) serializes rows in the order they are stored — no
+/// session hash-table simulation is applied.  This preserves the original
+/// row order of parsed binary data across roundtrips.
+///
+/// To modify a `DiffSet`, convert it back to a [`DiffSetBuilder`] with
+/// [`into_builder`](Self::into_builder).
+#[derive(Debug, Clone)]
+pub struct DiffSet<F: Format<S, B>, T: SchemaWithPK, S, B> {
+    /// Tables and their rows, stored in order.  Each row is a `(pk, operation)` pair.
+    pub(crate) tables: Vec<(T, Vec<(Vec<Value<S, B>>, Operation<F, S, B>)>)>,
+}
+
+/// Custom `PartialEq` that ignores tables with no operations (same semantics
+/// as `DiffSetBuilder`).
+impl<F: Format<S, B>, T: SchemaWithPK, S, B> PartialEq for DiffSet<F, T, S, B>
+where
+    S: PartialEq + Eq + Hash + AsRef<str>,
+    B: PartialEq + Eq + Hash + AsRef<[u8]>,
+    F::Old: PartialEq,
+    F::DeleteData: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.tables
+            .iter()
+            .filter(|(_, ops)| !ops.is_empty())
+            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
+    }
+}
+
+impl<F: Format<S, B>, T: SchemaWithPK, S, B> Eq for DiffSet<F, T, S, B>
+where
+    S: Eq + Hash + AsRef<str>,
+    B: Eq + Hash + AsRef<[u8]>,
+    F::Old: Eq,
+    F::DeleteData: Eq,
+{
+}
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq>
+    Default for DiffSet<F, T, S, B>
+{
+    fn default() -> Self {
+        Self { tables: Vec::new() }
+    }
+}
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq>
+    DiffSet<F, T, S, B>
+{
+    /// Returns `true` if there are no operations in any table.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tables.iter().all(|(_, rows)| rows.is_empty())
+    }
+
+    /// Returns the total number of operations across all tables.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tables.iter().map(|(_, rows)| rows.len()).sum()
+    }
+}
+
+// -- Changeset build (DiffSet) ------------------------------------------------
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSet<ChangesetFormat, T, S, B>
+{
+    /// Serialize the changeset to binary.
+    ///
+    /// Rows are emitted in stored order (no hash simulation).
+    #[must_use]
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue;
+            }
+
+            write_table_header(&mut out, markers::CHANGESET, table);
+
+            for (_pk, op) in rows {
+                match op {
+                    Operation::Insert(values) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, &Some(value.clone()));
+                        }
+                    }
+                    Operation::Delete(values) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, &Some(value.clone()));
+                        }
+                    }
+                    Operation::Update(values) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0);
+                        for (old, _new) in values {
+                            encode_value(&mut out, old);
+                        }
+                        for (_old, new) in values {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+// -- Patchset build (DiffSet) -------------------------------------------------
+
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    DiffSet<PatchsetFormat, T, S, B>
+{
+    /// Serialize the patchset to binary.
+    ///
+    /// Rows are emitted in stored order (no hash simulation).
+    #[must_use]
+    pub fn build(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        for (table, rows) in &self.tables {
+            if rows.is_empty() {
+                continue;
+            }
+
+            write_table_header(&mut out, markers::PATCHSET, table);
+
+            let (pk_flags, pk_col_to_pk_pos) = patchset_pk_mapping(table);
+
+            for (pk, op) in rows {
+                match op {
+                    Operation::Insert(values) => {
+                        out.push(op_codes::INSERT);
+                        out.push(0);
+                        for value in values {
+                            encode_value(&mut out, &Some(value.clone()));
+                        }
+                    }
+                    Operation::Delete(()) => {
+                        out.push(op_codes::DELETE);
+                        out.push(0);
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_value(&mut out, &Some(pk[pk_pos].clone()));
+                                } else {
+                                    encode_value::<S, B>(&mut out, &None);
+                                }
+                            }
+                        }
+                    }
+                    Operation::Update(values) => {
+                        out.push(op_codes::UPDATE);
+                        out.push(0);
+                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                            if pk_flag > 0 {
+                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                                    encode_defined_value(&mut out, &pk[pk_pos]);
+                                } else {
+                                    encode_undefined(&mut out);
+                                }
+                            } else {
+                                encode_undefined(&mut out);
+                            }
+                        }
+                        for ((), new) in values {
+                            encode_value(&mut out, new);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+// -- From<DiffSet> for Vec<u8> ------------------------------------------------
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<&DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+{
+    #[inline]
+    fn from(diffset: &DiffSet<ChangesetFormat, T, S, B>) -> Self {
+        diffset.build()
+    }
+}
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+{
+    #[inline]
+    fn from(diffset: DiffSet<ChangesetFormat, T, S, B>) -> Self {
+        diffset.build()
+    }
+}
+
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq>
+    From<&DiffSet<PatchsetFormat, T, S, B>> for Vec<u8>
+{
+    #[inline]
+    fn from(diffset: &DiffSet<PatchsetFormat, T, S, B>) -> Self {
+        diffset.build()
+    }
+}
+
+impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone + Hash + Eq>
+    From<DiffSet<PatchsetFormat, T, S, B>> for Vec<u8>
+{
+    #[inline]
+    fn from(diffset: DiffSet<PatchsetFormat, T, S, B>) -> Self {
+        diffset.build()
+    }
+}
+
+// -- Reverse for DiffSet<ChangesetFormat> -------------------------------------
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> Reverse for DiffSet<ChangesetFormat, T, S, B>
+{
+    type Output = DiffSet<ChangesetFormat, T, S, B>;
+
+    fn reverse(self) -> Self::Output {
+        DiffSet {
+            tables: self
+                .tables
+                .into_iter()
+                .map(|(table, rows)| {
+                    let rev_rows = rows
+                        .into_iter()
+                        .map(|(pk, op)| (pk, op.reverse()))
+                        .collect();
+                    (table, rev_rows)
+                })
+                .collect(),
+        }
+    }
+}
+
+// -- From conversions between DiffSetBuilder and DiffSet ----------------------
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: Hash + Eq + AsRef<str>, B: Hash + Eq + AsRef<[u8]>>
+    From<DiffSetBuilder<F, T, S, B>> for DiffSet<F, T, S, B>
+{
+    fn from(builder: DiffSetBuilder<F, T, S, B>) -> Self {
+        Self {
+            tables: builder
+                .tables
+                .into_iter()
+                .map(|(table, rows)| {
+                    let ordered_rows: Vec<(Vec<Value<S, B>>, Operation<F, S, B>)> =
+                        rows.into_iter().collect();
+                    (table, ordered_rows)
+                })
+                .collect(),
+        }
+    }
+}
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: Hash + Eq + AsRef<str>, B: Hash + Eq + AsRef<[u8]>>
+    From<DiffSet<F, T, S, B>> for DiffSetBuilder<F, T, S, B>
+{
+    fn from(diffset: DiffSet<F, T, S, B>) -> Self {
+        let mut builder = Self::new();
+        for (table, rows) in diffset.tables {
+            let map: IndexMap<Vec<Value<S, B>>, Operation<F, S, B>> = rows.into_iter().collect();
+            builder.tables.insert(table, map);
+        }
+        builder
     }
 }
 
@@ -786,9 +1173,11 @@ mod tests {
             &self,
             values: &impl crate::IndexableValues<Text = S, Binary = B>,
         ) -> alloc::vec::Vec<Value<S, B>> {
-            alloc::vec![values
-                .get(self.pk_column)
-                .expect("primary key column index out of bounds — values shorter than schema")]
+            alloc::vec![
+                values
+                    .get(self.pk_column)
+                    .expect("primary key column index out of bounds — values shorter than schema")
+            ]
         }
     }
 
@@ -804,8 +1193,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
+        let builder = ChangesetBuilder::new().insert(insert);
 
         assert_eq!(builder.len(), 1);
         assert!(!builder.is_empty());
@@ -827,9 +1215,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
-        builder.delete(delete);
+        let builder = ChangesetBuilder::new().insert(insert).delete(delete);
 
         assert_eq!(builder.len(), 0);
         assert!(builder.is_empty());
@@ -851,9 +1237,7 @@ mod tests {
             .set(1, "alice", "bob")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
-        builder.update(update);
+        let builder = ChangesetBuilder::new().insert(insert).update(update);
 
         assert_eq!(builder.len(), 1);
         // Should still be an INSERT with "bob" as the name
@@ -875,9 +1259,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.delete(delete);
-        builder.insert(insert);
+        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
 
         assert_eq!(builder.len(), 0);
         assert!(builder.is_empty());
@@ -899,9 +1281,7 @@ mod tests {
             .set(1, "bob")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.delete(delete);
-        builder.insert(insert);
+        let builder = ChangesetBuilder::new().delete(delete).insert(insert);
 
         assert_eq!(builder.len(), 1);
         // Should be an UPDATE from alice to bob
@@ -923,9 +1303,7 @@ mod tests {
             .set(1, "bob")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert1);
-        builder.insert(insert2);
+        let builder = ChangesetBuilder::new().insert(insert1).insert(insert2);
 
         assert_eq!(builder.len(), 2);
     }
@@ -946,9 +1324,7 @@ mod tests {
             .set(1, "bob", "charlie")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.update(update1);
-        builder.update(update2);
+        let builder = ChangesetBuilder::new().update(update1).update(update2);
 
         assert_eq!(builder.len(), 1);
         // Should be a single UPDATE from alice to charlie
@@ -1028,8 +1404,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
+        let builder = ChangesetBuilder::new().insert(insert);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1050,8 +1425,7 @@ mod tests {
             .set(1, "alice")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.delete(delete);
+        let builder = ChangesetBuilder::new().delete(delete);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1072,8 +1446,7 @@ mod tests {
             .set(1, "alice", "bob")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.update(update);
+        let builder = ChangesetBuilder::new().update(update);
         let reversed = builder.reverse();
 
         assert_eq!(reversed.len(), 1);
@@ -1108,8 +1481,7 @@ mod tests {
             .unwrap()
             .set(1, "alice")
             .unwrap();
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert2);
+        let builder = ChangesetBuilder::new().insert(insert2);
         let double_reversed = builder.reverse().reverse();
 
         assert_eq!(double_reversed.len(), 1);
@@ -1141,8 +1513,7 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
+        let builder = ChangesetBuilder::new().insert(insert);
         let bytes = builder.build();
 
         // Verify the structure:
@@ -1175,8 +1546,7 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.delete(delete);
+        let builder = ChangesetBuilder::new().delete(delete);
         let bytes = builder.build();
 
         assert!(!bytes.is_empty());
@@ -1194,8 +1564,7 @@ mod tests {
             .set(1, "a", "b")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.update(update);
+        let builder = ChangesetBuilder::new().update(update);
         let bytes = builder.build();
 
         assert!(!bytes.is_empty());
@@ -1220,9 +1589,7 @@ mod tests {
             .set(1, "b")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
-        builder.insert(insert2);
+        let builder = ChangesetBuilder::new().insert(insert).insert(insert2);
         let bytes = builder.build();
 
         assert!(!bytes.is_empty());
@@ -1246,9 +1613,7 @@ mod tests {
             .set(1, "a")
             .unwrap();
 
-        let mut builder = ChangesetBuilder::new();
-        builder.insert(insert);
-        builder.delete(delete);
+        let builder = ChangesetBuilder::new().insert(insert).delete(delete);
         let bytes = builder.build();
 
         // INSERT + DELETE with same values cancels out

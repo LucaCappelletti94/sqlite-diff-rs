@@ -28,7 +28,7 @@ use alloc::vec::Vec;
 use core::hash::Hash;
 
 use crate::IndexableValues;
-use crate::builders::{ChangesetFormat, DiffSetBuilder, Operation, PatchsetFormat};
+use crate::builders::{ChangesetFormat, DiffSet, DiffSetBuilder, Operation, PatchsetFormat};
 use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
@@ -187,34 +187,35 @@ impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWit
         self.pk_indices()
             .into_iter()
             .map(|i| {
-                values.get(i).expect(
-                    "primary key column index out of bounds — values shorter than schema",
-                )
+                values
+                    .get(i)
+                    .expect("primary key column index out of bounds — values shorter than schema")
             })
             .collect()
     }
 }
 
-/// A parsed changeset or patchset as a builder.
+/// A parsed changeset or patchset.
+///
+/// This represents a frozen (immutable) diffset produced by the binary parser.
+/// To modify it, convert it to a [`DiffSetBuilder`] via [`DiffSet::into_builder`].
 #[derive(Debug, Clone, Eq)]
 pub enum ParsedDiffSet {
-    /// A changeset builder.
-    Changeset(DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>),
-    /// A patchset builder.
-    Patchset(DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>),
+    /// A parsed changeset.
+    Changeset(DiffSet<ChangesetFormat, TableSchema<String>, String, Vec<u8>>),
+    /// A parsed patchset.
+    Patchset(DiffSet<PatchsetFormat, TableSchema<String>, String, Vec<u8>>),
 }
 
 impl PartialEq for ParsedDiffSet {
     fn eq(&self, other: &Self) -> bool {
-        // Empty changesets and patchsets are considered equal since they both
-        // serialize to empty bytes and can't be distinguished after roundtrip.
         let self_empty = match self {
-            ParsedDiffSet::Changeset(b) => b.is_empty(),
-            ParsedDiffSet::Patchset(b) => b.is_empty(),
+            ParsedDiffSet::Changeset(d) => d.is_empty(),
+            ParsedDiffSet::Patchset(d) => d.is_empty(),
         };
         let other_empty = match other {
-            ParsedDiffSet::Changeset(b) => b.is_empty(),
-            ParsedDiffSet::Patchset(b) => b.is_empty(),
+            ParsedDiffSet::Changeset(d) => d.is_empty(),
+            ParsedDiffSet::Patchset(d) => d.is_empty(),
         };
 
         if self_empty && other_empty {
@@ -241,14 +242,14 @@ impl TryFrom<&[u8]> for ParsedDiffSet {
 impl From<ParsedDiffSet> for Vec<u8> {
     fn from(diffset: ParsedDiffSet) -> Self {
         match diffset {
-            ParsedDiffSet::Changeset(builder) => builder.into(),
-            ParsedDiffSet::Patchset(builder) => builder.into(),
+            ParsedDiffSet::Changeset(d) => d.into(),
+            ParsedDiffSet::Patchset(d) => d.into(),
         }
     }
 }
 
 impl ParsedDiffSet {
-    /// Parse binary data into a builder.
+    /// Parse binary data into a frozen [`DiffSet`].
     ///
     /// The format (changeset vs patchset) is determined by the first table marker.
     ///
@@ -258,18 +259,18 @@ impl ParsedDiffSet {
     pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
         if data.is_empty() {
             // Empty data defaults to changeset
-            return Ok(ParsedDiffSet::Changeset(DiffSetBuilder::new()));
+            return Ok(ParsedDiffSet::Changeset(DiffSet::default()));
         }
 
         // Peek at the first byte to determine format
         match data[0] {
             markers::CHANGESET => {
-                let builder = parse_as_changeset(data)?;
-                Ok(ParsedDiffSet::Changeset(builder))
+                let diffset = parse_as_changeset(data)?;
+                Ok(ParsedDiffSet::Changeset(diffset))
             }
             markers::PATCHSET => {
-                let builder = parse_as_patchset(data)?;
-                Ok(ParsedDiffSet::Patchset(builder))
+                let diffset = parse_as_patchset(data)?;
+                Ok(ParsedDiffSet::Patchset(diffset))
             }
             b => Err(ParseError::InvalidTableMarker(b, 0)),
         }
@@ -286,6 +287,25 @@ impl ParsedDiffSet {
     pub fn is_patchset(&self) -> bool {
         matches!(self, ParsedDiffSet::Patchset(_))
     }
+
+    /// Returns the table schemas for all tables with non-empty operations.
+    #[must_use]
+    pub fn table_schemas(&self) -> Vec<&TableSchema<String>> {
+        match self {
+            ParsedDiffSet::Changeset(d) => d
+                .tables
+                .iter()
+                .filter(|(_, ops)| !ops.is_empty())
+                .map(|(schema, _)| schema)
+                .collect(),
+            ParsedDiffSet::Patchset(d) => d
+                .tables
+                .iter()
+                .filter(|(_, ops)| !ops.is_empty())
+                .map(|(schema, _)| schema)
+                .collect(),
+        }
+    }
 }
 
 /// Parse binary data as a changeset.
@@ -295,8 +315,9 @@ impl ParsedDiffSet {
 /// Returns a `ParseError` if the data is malformed or not a valid changeset.
 fn parse_as_changeset(
     data: &[u8],
-) -> Result<DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
-    let mut builder = DiffSetBuilder::new();
+) -> Result<DiffSet<ChangesetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
+    let mut builder: DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>> =
+        DiffSetBuilder::new();
     let mut pos = 0;
 
     while pos < data.len() {
@@ -320,7 +341,7 @@ fn parse_as_changeset(
         }
     }
 
-    Ok(builder)
+    Ok(builder.into())
 }
 
 /// Parse binary data as a patchset.
@@ -330,8 +351,9 @@ fn parse_as_changeset(
 /// Returns a `ParseError` if the data is malformed or not a valid patchset.
 fn parse_as_patchset(
     data: &[u8],
-) -> Result<DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
-    let mut builder = DiffSetBuilder::new();
+) -> Result<DiffSet<PatchsetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
+    let mut builder: DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>> =
+        DiffSetBuilder::new();
     let mut pos = 0;
 
     while pos < data.len() {
@@ -355,7 +377,7 @@ fn parse_as_patchset(
         }
     }
 
-    Ok(builder)
+    Ok(builder.into())
 }
 
 /// Parse a table header and return the schema.
@@ -500,20 +522,22 @@ fn parse_patchset_operation(
             builder.add_operation(schema, pk, Operation::Delete(()));
         }
         op_codes::UPDATE => {
-            // Note: old_values are parsed but ignored for patchsets since PK is in new_values
-            let (_old_values, old_len) =
+            // Patchset UPDATE old values contain PK column values (non-PK are Undefined).
+            // New values contain all column updates (Undefined for unchanged columns).
+            let (old_values, old_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += old_len;
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            // Extract PK using new values (convert None to Null)
-            let pk_values: Vec<Value<String, Vec<u8>>> = new_values
+            // Extract PK from old values (that's where build() writes PK columns)
+            let pk_values: Vec<Value<String, Vec<u8>>> = old_values
                 .iter()
                 .map(|v| v.clone().unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&pk_values);
-            let values: Vec<((), MaybeValue<String, Vec<u8>>)> = new_values.into_iter().map(|v| ((), v)).collect();
+            let values: Vec<((), MaybeValue<String, Vec<u8>>)> =
+                new_values.into_iter().map(|v| ((), v)).collect();
             builder.add_operation(schema, pk, Operation::Update(values));
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),

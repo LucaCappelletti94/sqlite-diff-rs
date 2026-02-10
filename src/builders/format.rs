@@ -22,19 +22,15 @@ pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static
     /// - Changeset: `Vec<Value<S, B>>` — full old-row values
     /// - Patchset: `()` — only the PK matters (stored externally)
     type DeleteData: Clone + Debug + Default;
-
-    /// Table header marker byte.
-    /// Changesets use 'T' (0x54), patchsets use 'P' (0x50).
-    const TABLE_MARKER: u8;
 }
 
 /// Changeset format marker.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ChangesetFormat;
 
-impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Format<S, B> for ChangesetFormat {
-    const TABLE_MARKER: u8 = b'T';
-
+impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Format<S, B>
+    for ChangesetFormat
+{
     type Old = MaybeValue<S, B>;
     type DeleteData = Vec<Value<S, B>>;
 }
@@ -46,6 +42,4 @@ pub struct PatchsetFormat;
 impl<S, B> Format<S, B> for PatchsetFormat {
     type Old = ();
     type DeleteData = ();
-
-    const TABLE_MARKER: u8 = b'P';
 }

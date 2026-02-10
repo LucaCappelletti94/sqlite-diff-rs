@@ -10,7 +10,9 @@
 
 use rusqlite::Connection;
 use sqlite_diff_rs::testing::{apply_changeset, get_all_rows};
-use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangesetFormat, Insert, Reverse, SimpleTable, Update};
+use sqlite_diff_rs::{
+    ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, Reverse, SimpleTable, Update,
+};
 
 // =============================================================================
 // Basic reversal tests
@@ -26,8 +28,7 @@ fn test_reverse_single_insert() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert);
     let reversed = changeset.clone().reverse();
 
     // Reversed should have one operation
@@ -51,8 +52,7 @@ fn test_reverse_single_delete() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.delete(delete);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().delete(delete);
     let reversed = changeset.clone().reverse();
 
     assert_eq!(reversed.len(), 1);
@@ -68,8 +68,7 @@ fn test_reverse_single_update() {
         .set(1, "Alice", "Alicia")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.update(update);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().update(update);
     let reversed = changeset.clone().reverse();
 
     assert_eq!(reversed.len(), 1);
@@ -97,10 +96,10 @@ fn test_reverse_multiple_operations() {
         .set(1, "Charlie")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert1);
-    changeset.insert(insert2);
-    changeset.delete(delete);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
+        .insert(insert1)
+        .insert(insert2)
+        .delete(delete);
 
     let reversed = changeset.clone().reverse();
     assert_eq!(reversed.len(), 3);
@@ -120,8 +119,7 @@ fn test_double_reverse_is_identity() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut original: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    original.insert(insert);
+    let original: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert);
     let double_reversed = original.clone().reverse().reverse();
 
     // Double reverse should equal original
@@ -156,10 +154,10 @@ fn test_double_reverse_complex() {
         .set(2, 35i64)
         .unwrap();
 
-    let mut original: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    original.insert(insert);
-    original.update(update);
-    original.delete(delete);
+    let original: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
+        .insert(insert)
+        .update(update)
+        .delete(delete);
 
     let double_reversed = original.clone().reverse().reverse();
     assert_eq!(original, double_reversed);
@@ -187,8 +185,7 @@ fn test_apply_and_reverse_insert() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert);
     let changeset_bytes = changeset.build();
     apply_changeset(&conn1, &changeset_bytes).unwrap();
 
@@ -231,8 +228,7 @@ fn test_apply_and_reverse_delete() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.delete(delete);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().delete(delete);
     let changeset_bytes = changeset.build();
     apply_changeset(&conn1, &changeset_bytes).unwrap();
 
@@ -280,8 +276,7 @@ fn test_apply_and_reverse_update() {
         .set(1, "Alice", "Alicia")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.update(update);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().update(update);
     let changeset_bytes = changeset.build();
     apply_changeset(&conn1, &changeset_bytes).unwrap();
 
@@ -352,10 +347,10 @@ fn test_apply_and_reverse_multiple_operations() {
         .set(1, "Bob")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
-    changeset.update(update);
-    changeset.delete(delete);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
+        .insert(insert)
+        .update(update)
+        .delete(delete);
 
     let changeset_bytes = changeset.build();
 
@@ -395,8 +390,7 @@ fn test_reverse_with_composite_primary_key() {
         .set(2, "pending")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert);
     let reversed = changeset.clone().reverse();
 
     // Double reverse should equal original
@@ -416,8 +410,7 @@ fn test_reverse_with_null_values() {
         .set(2, 9.99f64)
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(insert);
     let reversed = changeset.clone().reverse();
     let double_reversed = reversed.reverse();
 
@@ -455,9 +448,8 @@ fn test_reverse_consolidated_operations() {
         .set(1, "Alice", "Alicia")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
-    changeset.update(update); // This consolidates to INSERT with "Alicia"
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> =
+        ChangeSet::new().insert(insert).update(update); // This consolidates to INSERT with "Alicia"
 
     // Should have 1 operation (consolidated)
     assert_eq!(changeset.len(), 1);
@@ -489,9 +481,8 @@ fn test_reverse_cancelled_operations() {
         .set(1, "Alice")
         .unwrap();
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset.insert(insert);
-    changeset.delete(delete);
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> =
+        ChangeSet::new().insert(insert).delete(delete);
 
     // Should cancel out to empty
     assert_eq!(changeset.len(), 0);

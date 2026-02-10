@@ -3,7 +3,7 @@
 //! UUIDs are raw BLOB values. Updates carry only new values; deletes carry
 //! only the primary key.
 
-use sqlite_diff_rs::{Insert, PatchSet, PatchUpdate, TableSchema, Value};
+use sqlite_diff_rs::{DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate, TableSchema, Value};
 
 use crate::common::{Format, TestMessage, messages_schema};
 
@@ -11,7 +11,10 @@ type Schema = TableSchema<String>;
 
 pub struct Patchset;
 
-pub fn build_insert<'a>(schema: &'a Schema, m: &TestMessage) -> Insert<&'a Schema, String, Vec<u8>> {
+pub fn build_insert<'a>(
+    schema: &'a Schema,
+    m: &TestMessage,
+) -> Insert<&'a Schema, String, Vec<u8>> {
     Insert::from(schema)
         .set(0, Value::Blob(m.id.as_bytes().to_vec()))
         .unwrap()
@@ -25,7 +28,10 @@ pub fn build_insert<'a>(schema: &'a Schema, m: &TestMessage) -> Insert<&'a Schem
         .unwrap()
 }
 
-fn build_update<'a>(schema: &'a Schema, m: &TestMessage) -> PatchUpdate<&'a Schema, String, Vec<u8>> {
+fn build_update<'a>(
+    schema: &'a Schema,
+    m: &TestMessage,
+) -> PatchUpdate<&'a Schema, String, Vec<u8>> {
     PatchUpdate::from(schema)
         .set(0, Value::Blob(m.id.as_bytes().to_vec()))
         .unwrap()
@@ -53,7 +59,10 @@ impl Format for Patchset {
             pset = pset.update(build_update(&schema, m));
         }
         for m in deletes {
-            pset = pset.delete(&&schema, &[Value::Blob(m.id.as_bytes().to_vec())]);
+            pset = pset.delete(PatchDelete::new(
+                &schema,
+                vec![Value::Blob(m.id.as_bytes().to_vec())],
+            ));
         }
         Vec::<u8>::from(pset)
     }

@@ -1,15 +1,15 @@
 //! Builder for constructing changesets and patchsets.
 
-pub mod sql;
 mod change;
 mod delete_operation;
 mod format;
 mod insert_operation;
 mod operation;
+pub mod sql;
 mod update_operation;
 
-pub use change::{ChangeSet, DiffSetBuilder, PatchSet};
-pub use delete_operation::ChangeDelete;
+pub use change::{ChangeSet, DiffOps, DiffSet, DiffSetBuilder, PatchSet};
+pub use delete_operation::{ChangeDelete, PatchDelete};
 pub use format::{ChangesetFormat, PatchsetFormat};
 pub use insert_operation::Insert;
 pub(crate) use operation::Operation;

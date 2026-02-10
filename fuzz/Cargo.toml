@@ -14,6 +14,7 @@ rusqlite = { version = "0.37", features = [
 	"bundled",
 	"session",
 ] }
+arbitrary = { version = "1", features = ["derive"] }
 
 [[bin]]
 name = "roundtrip"
@@ -36,5 +37,11 @@ doc = false
 [[bin]]
 name = "reverse_idempotent"
 path = "fuzz_targets/reverse_idempotent.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
 test = false
 doc = false

@@ -26,9 +26,11 @@ rusqlite = { version = "0.37", features = [
 	"bundled",
 	"session",
 ], optional = true }
+arbitrary = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 rusqlite = { version = "0.37", features = ["bundled", "session", "backup"] }
+arbitrary = { version = "1", features = ["derive"] }
 rand = "0.9.2"
 uuid = { version = "1", features = ["v7"] }
 hex = "0.4"
@@ -36,7 +38,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [features]
 default = []
-testing = ["dep:rusqlite"]
+testing = ["dep:rusqlite", "dep:arbitrary"]
 
 [lints.rust]
 missing_docs = "forbid"

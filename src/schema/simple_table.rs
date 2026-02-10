@@ -9,8 +9,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 
-use crate::{encoding::Value, schema::dyn_table::IndexableValues};
 use crate::parser::TableSchema;
+use crate::{encoding::Value, schema::dyn_table::IndexableValues};
 
 use super::{DynTable, SchemaWithPK};
 

@@ -22,7 +22,12 @@ const COLOR_CHANGESET: RGBColor = RGBColor(46, 204, 113); //  emerald
 pub const METHODS: &[&str] = &["sql", "sql_tx", "patchset", "changeset"];
 
 /// Method display names (for legends and tables).
-pub const METHOD_LABELS: &[&str] = &["SQL (autocommit)", "SQL (transaction)", "Patchset", "Changeset"];
+pub const METHOD_LABELS: &[&str] = &[
+    "SQL (autocommit)",
+    "SQL (transaction)",
+    "Patchset",
+    "Changeset",
+];
 
 fn method_color(method: &str) -> RGBColor {
     match method {
@@ -168,7 +173,10 @@ pub fn scaling_chart(
             .legend(move |(x, y)| {
                 PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(width))
             });
-        chart.draw_series(xy.iter().map(|&(x, y)| Circle::new((x, y), 3, color.filled())))?;
+        chart.draw_series(
+            xy.iter()
+                .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
+        )?;
     }
 
     chart
@@ -302,7 +310,12 @@ pub fn config_variant_chart(
         for (ci, &cfg) in configs.iter().enumerate() {
             if let Some(r) = results.find_apply(pk_kind, state, op_count, cfg, method) {
                 let x = ci as f64;
-                points.push((x, r.median_us(), r.mean_lower_ns / 1_000.0, r.mean_upper_ns / 1_000.0));
+                points.push((
+                    x,
+                    r.median_us(),
+                    r.mean_lower_ns / 1_000.0,
+                    r.mean_upper_ns / 1_000.0,
+                ));
             }
         }
         if !points.is_empty() {
@@ -380,7 +393,10 @@ pub fn config_variant_chart(
             .legend(move |(x, y)| {
                 PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(width))
             });
-        chart.draw_series(xy.iter().map(|&(x, y)| Circle::new((x, y), 4, color.filled())))?;
+        chart.draw_series(
+            xy.iter()
+                .map(|&(x, y)| Circle::new((x, y), 4, color.filled())),
+        )?;
     }
 
     chart
@@ -524,7 +540,10 @@ pub fn pk_comparison_chart(
 // ---------------------------------------------------------------------------
 
 /// Generate all SVG charts into `output_dir`.
-pub fn generate_all(results: &ResultSet, output_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn generate_all(
+    results: &ResultSet,
+    output_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(output_dir)?;
 
     // Chart A — Scaling charts: one per (pk_kind, state) with config=base.
@@ -538,7 +557,14 @@ pub fn generate_all(results: &ResultSet, output_dir: &Path) -> Result<(), Box<dy
     // Chart B — Method comparison for populated/1000/base.
     for pk in &["int_pk", "uuid_pk"] {
         let filename = format!("method_{pk}.svg");
-        method_comparison_chart(results, pk, "populated", 1000, "base", &output_dir.join(&filename))?;
+        method_comparison_chart(
+            results,
+            pk,
+            "populated",
+            1000,
+            "base",
+            &output_dir.join(&filename),
+        )?;
     }
 
     // Chart C — Config variant impact.

@@ -2,29 +2,35 @@
 //!
 //! These tests ensure that bugs found by fuzzing don't regress.
 //!
-//! To add a new roundtrip crash, copy the .fuzz file to `tests/crash_inputs/roundtrip/`.
-//! To add a new differential crash, copy the .fuzz file to `tests/crash_inputs/differential/`.
+//! Each fuzz harness has a corresponding crash-input directory under
+//! `tests/crash_inputs/<harness>/`. The directory-based tests auto-copy new
+//! `.fuzz` files from the honggfuzz workspace and replay every file through
+//! the same shared helper the harness uses.
+//!
+//! | Harness              | Input type                       | Crash directory                          |
+//! |----------------------|----------------------------------|------------------------------------------|
+//! | `roundtrip`          | `&[u8]`                          | `tests/crash_inputs/roundtrip/`          |
+//! | `reverse_idempotent` | `&[u8]`                          | `tests/crash_inputs/reverse_idempotent/` |
+//! | `apply_roundtrip`    | `(TypedSimpleTable, Vec<u8>)`    | `tests/crash_inputs/apply_roundtrip/`    |
+//! | `sql_roundtrip`      | `(TypedSimpleTable, String)`     | `tests/crash_inputs/sql_roundtrip/`      |
+//! | `differential`       | `(TypedSimpleTable, String)`     | `tests/crash_inputs/differential/`       |
+//!
+//! Structured-input harnesses (`apply_roundtrip`, `sql_roundtrip`, `differential`)
+//! store honggfuzz crash files as raw `arbitrary`-encoded bytes. The regression
+//! tests deserialize them via [`arbitrary::Unstructured`] before calling the
+//! shared test function. If deserialization fails the file is silently skipped
+//! (it may be a legacy file from before the structured-input migration).
 
-use sqlite_diff_rs::ParsedDiffSet;
-use std::fs;
-use std::time::{Duration, Instant};
+use sqlite_diff_rs::testing::{
+    TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip, test_differential,
+    test_reverse_idempotent, test_roundtrip, test_sql_roundtrip,
+};
+use std::time::Duration;
 
 /// Maximum time allowed for a single crash input before we flag it as a
 /// timeout-class bug. Honggfuzz uses 1 s by default; we use 2 s to account
 /// for debug-mode overhead while still catching algorithmic slowness.
 const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
-
-/// Helper to test roundtrip: parse -> serialize -> parse -> compare.
-fn test_roundtrip(input: &[u8]) {
-    let Ok(parsed) = ParsedDiffSet::try_from(input) else {
-        return; // Invalid input is fine, we just shouldn't crash
-    };
-
-    let serialized: Vec<u8> = parsed.clone().into();
-    let reparsed = ParsedDiffSet::try_from(serialized.as_slice())
-        .expect("Re-parsing our own output should never fail");
-    assert_eq!(parsed, reparsed, "Roundtrip mismatch");
-}
 
 /// Crash 1: Empty patchset vs empty changeset equality.
 ///
@@ -118,94 +124,126 @@ fn fuzz_regression_crash_6() {
 /// bugs that honggfuzz would kill but `cargo test` would silently pass.
 #[test]
 fn fuzz_regression_roundtrip_crash_inputs_dir() {
-    let crash_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/crash_inputs/roundtrip");
-    let fuzz_crash_dir = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/fuzz/hfuzz_workspace/roundtrip"
+    run_crash_dir_regression(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/crash_inputs/roundtrip"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/hfuzz_workspace/roundtrip"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        test_roundtrip,
     );
+}
 
-    // Ensure crash_inputs directory exists
-    let _ = fs::create_dir_all(crash_dir);
+/// Automatically test all reverse_idempotent crash files.
+///
+/// Raw `&[u8]` input — same simple pattern as the roundtrip test.
+#[test]
+fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/reverse_idempotent"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/hfuzz_workspace/reverse_idempotent"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        test_reverse_idempotent,
+    );
+}
 
-    // Copy any new crash files from fuzz workspace
-    if let Ok(fuzz_entries) = fs::read_dir(fuzz_crash_dir) {
-        for entry in fuzz_entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "fuzz") {
-                let dest = format!(
-                    "{}/{}",
-                    crash_dir,
-                    path.file_name().unwrap().to_string_lossy()
-                );
-                if !std::path::Path::new(&dest).exists() {
-                    let _ = fs::copy(&path, &dest);
-                }
+/// Automatically test all apply_roundtrip crash files.
+///
+/// Since these crash files are raw bytes (not structured `(TypedSimpleTable, Vec<u8>)`
+/// tuples), we parse the changeset first to extract table schemas via
+/// [`TypedSimpleTable::from_table_schema`], then apply against each table.
+#[test]
+fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/apply_roundtrip"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/hfuzz_workspace/apply_roundtrip"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            // Always do a roundtrip check
+            test_roundtrip(data);
+
+            // If it parses, try to apply against synthesized schemas
+            let Ok(parsed) = sqlite_diff_rs::ParsedDiffSet::try_from(data) else {
+                return;
+            };
+
+            let schemas: Vec<TypedSimpleTable> = parsed
+                .table_schemas()
+                .into_iter()
+                .map(TypedSimpleTable::from_table_schema)
+                .collect();
+
+            let serialized: Vec<u8> = parsed.into();
+            for schema in &schemas {
+                test_apply_roundtrip(schema, &serialized);
             }
-        }
-    }
-
-    let Ok(entries) = fs::read_dir(crash_dir) else {
-        return;
-    }; // Directory doesn't exist or is empty, that's fine
-
-    let mut tested = 0;
-    let mut failures = Vec::new();
-    let mut slow_inputs = Vec::new();
-    let overall_start = Instant::now();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let data = match fs::read(&path) {
-            Ok(d) => d,
-            Err(e) => {
-                failures.push(format!("{}: read error: {}", path.display(), e));
-                continue;
-            }
-        };
-
-        let filename = path.file_name().unwrap().to_string_lossy().to_string();
-        let start = Instant::now();
-
-        test_roundtrip(&data);
-
-        let elapsed = start.elapsed();
-        if elapsed > PER_INPUT_TIME_LIMIT {
-            slow_inputs.push(format!(
-                "{filename}: {:.3}s (limit: {:.1}s) [{} bytes]",
-                elapsed.as_secs_f64(),
-                PER_INPUT_TIME_LIMIT.as_secs_f64(),
-                data.len(),
-            ));
-        }
-
-        tested += 1;
-    }
-
-    let overall_elapsed = overall_start.elapsed();
-
-    assert!(
-        failures.is_empty(),
-        "Roundtrip failures in {} of {} crash files:\n{}",
-        failures.len(),
-        tested,
-        failures.join("\n")
+        },
     );
+}
 
-    assert!(
-        slow_inputs.is_empty(),
-        "Timeout-class bugs: {} of {} inputs exceeded {:.1}s time limit:\n{}",
-        slow_inputs.len(),
-        tested,
-        PER_INPUT_TIME_LIMIT.as_secs_f64(),
-        slow_inputs.join("\n")
+/// Automatically test all sql_roundtrip crash files.
+///
+/// Crash files contain `arbitrary`-encoded `(TypedSimpleTable, String)` tuples.
+/// Files that fail to deserialize are skipped (legacy or corrupt inputs).
+#[test]
+fn fuzz_regression_sql_roundtrip_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/sql_roundtrip"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/hfuzz_workspace/sql_roundtrip"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            let Ok((schema, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(TypedSimpleTable, String)>()
+            else {
+                return;
+            };
+            test_sql_roundtrip(&schema, &sql);
+        },
     );
+}
 
-    eprintln!(
-        "Tested {tested} roundtrip crash input files in {:.3}s",
-        overall_elapsed.as_secs_f64()
+/// Automatically test all differential crash files.
+///
+/// Crash files contain `arbitrary`-encoded `(TypedSimpleTable, String)` tuples.
+/// Files that fail to deserialize are skipped (legacy or corrupt inputs).
+#[test]
+fn fuzz_regression_differential_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/differential"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/hfuzz_workspace/differential"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            let Ok((schema, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(TypedSimpleTable, String)>()
+            else {
+                return;
+            };
+            test_differential(&schema, &sql);
+        },
     );
 }

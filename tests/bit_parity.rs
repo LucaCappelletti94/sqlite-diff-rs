@@ -13,8 +13,8 @@
 
 use sqlite_diff_rs::testing::{assert_bit_parity, assert_patchset_sql_parity};
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangesetFormat, Insert, PatchSet, PatchsetFormat, SimpleTable,
-    Update, Value,
+    ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, PatchDelete, PatchSet,
+    PatchsetFormat, SimpleTable, Update, Value,
 };
 
 // =============================================================================
@@ -264,26 +264,22 @@ fn bit_parity_composite_pk() {
 fn bit_parity_builder_single_insert() {
     let schema = SimpleTable::new("users", &["id", "name"], &[0]);
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset
-        .insert(
-            Insert::<_, String, Vec<u8>>::from(schema.clone())
-                .set(0, 1i64)
-                .unwrap()
-                .set(1, "Alice")
-                .unwrap(),
-        );
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(
+        Insert::<_, String, Vec<u8>>::from(schema.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "Alice")
+            .unwrap(),
+    );
     let our_changeset: Vec<u8> = changeset.build();
 
-    let mut patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    patchset
-        .insert(
-            Insert::<_, String, Vec<u8>>::from(schema)
-                .set(0, 1i64)
-                .unwrap()
-                .set(1, "Alice")
-                .unwrap(),
-        );
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new().insert(
+        Insert::<_, String, Vec<u8>>::from(schema)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "Alice")
+            .unwrap(),
+    );
     let our_patchset: Vec<u8> = patchset.build();
 
     assert_bit_parity(
@@ -300,8 +296,7 @@ fn bit_parity_builder_single_insert() {
 fn bit_parity_builder_two_inserts() {
     let schema = SimpleTable::new("users", &["id", "name"], &[0]);
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema.clone())
                 .set(0, 1i64)
@@ -318,8 +313,7 @@ fn bit_parity_builder_two_inserts() {
         );
     let our_changeset: Vec<u8> = changeset.build();
 
-    let mut patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    patchset
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema.clone())
                 .set(0, 1i64)
@@ -351,8 +345,7 @@ fn bit_parity_builder_two_inserts() {
 fn bit_parity_builder_insert_then_update() {
     let schema = SimpleTable::new("users", &["id", "name"], &[0]);
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema.clone())
                 .set(0, 1i64)
@@ -369,8 +362,7 @@ fn bit_parity_builder_insert_then_update() {
         );
     let our_changeset: Vec<u8> = changeset.build();
 
-    let mut patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    patchset
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema.clone())
                 .set(0, 1i64)
@@ -403,8 +395,7 @@ fn bit_parity_builder_two_tables() {
     let schema_u = SimpleTable::new("users", &["id", "name"], &[0]);
     let schema_p = SimpleTable::new("posts", &["id", "title"], &[0]);
 
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema_u.clone())
                 .set(0, 1i64)
@@ -421,8 +412,7 @@ fn bit_parity_builder_two_tables() {
         );
     let our_changeset: Vec<u8> = changeset.build();
 
-    let mut patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    patchset
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema_u)
                 .set(0, 1i64)
@@ -457,8 +447,7 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let schema_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
 
     // Changeset
-    let mut changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
-    changeset
+    let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema_a.clone())
                 .set(0, 1i64)
@@ -490,8 +479,7 @@ fn bit_parity_builder_table_cancel_and_readd() {
     let our_changeset: Vec<u8> = changeset.build();
 
     // Patchset (delete uses PK only)
-    let mut patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
-    patchset
+    let patchset: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new()
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema_a.clone())
                 .set(0, 1i64)
@@ -506,7 +494,7 @@ fn bit_parity_builder_table_cancel_and_readd() {
                 .set(1, "b1")
                 .unwrap(),
         )
-        .delete(&schema_a, &[Value::Integer(1)])
+        .delete(PatchDelete::new(schema_a.clone(), vec![Value::Integer(1)]))
         .insert(
             Insert::<_, String, Vec<u8>>::from(schema_a)
                 .set(0, 2i64)

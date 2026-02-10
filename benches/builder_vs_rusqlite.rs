@@ -8,8 +8,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rusqlite::Connection;
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangeUpdate, Insert, PatchSet, PatchUpdate, SimpleTable, TableSchema,
-    Value,
+    ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate,
+    SimpleTable, TableSchema, Value,
 };
 use std::hint::black_box;
 use std::string::String;
@@ -136,20 +136,105 @@ fn create_schemas() -> (
 
 /// Static user data rows for inserts (no allocations)
 static USER_ROWS: &[&[Val]] = &[
-    &[Val::Integer(1), Val::Text("alice"), Val::Text("alice@example.com"), Val::Integer(1000000), Val::Null, Val::Integer(1), Val::Null],
-    &[Val::Integer(2), Val::Text("bob"), Val::Text("bob@example.com"), Val::Integer(1000100), Val::Null, Val::Integer(1), Val::Null],
-    &[Val::Integer(3), Val::Text("charlie"), Val::Text("charlie@example.com"), Val::Integer(1000200), Val::Null, Val::Integer(1), Val::Null],
-    &[Val::Integer(4), Val::Text("diana"), Val::Text("diana@example.com"), Val::Integer(1000300), Val::Null, Val::Integer(0), Val::Null],
-    &[Val::Integer(5), Val::Text("eve"), Val::Text("eve@example.com"), Val::Integer(1000400), Val::Null, Val::Integer(1), Val::Null],
+    &[
+        Val::Integer(1),
+        Val::Text("alice"),
+        Val::Text("alice@example.com"),
+        Val::Integer(1000000),
+        Val::Null,
+        Val::Integer(1),
+        Val::Null,
+    ],
+    &[
+        Val::Integer(2),
+        Val::Text("bob"),
+        Val::Text("bob@example.com"),
+        Val::Integer(1000100),
+        Val::Null,
+        Val::Integer(1),
+        Val::Null,
+    ],
+    &[
+        Val::Integer(3),
+        Val::Text("charlie"),
+        Val::Text("charlie@example.com"),
+        Val::Integer(1000200),
+        Val::Null,
+        Val::Integer(1),
+        Val::Null,
+    ],
+    &[
+        Val::Integer(4),
+        Val::Text("diana"),
+        Val::Text("diana@example.com"),
+        Val::Integer(1000300),
+        Val::Null,
+        Val::Integer(0),
+        Val::Null,
+    ],
+    &[
+        Val::Integer(5),
+        Val::Text("eve"),
+        Val::Text("eve@example.com"),
+        Val::Integer(1000400),
+        Val::Null,
+        Val::Integer(1),
+        Val::Null,
+    ],
 ];
 
 /// Static post data rows for inserts (no allocations)
 static POST_ROWS: &[&[Val]] = &[
-    &[Val::Integer(1), Val::Integer(1), Val::Text("First Post"), Val::Text("Hello World!"), Val::Integer(1000500), Val::Null, Val::Integer(0), Val::Integer(1)],
-    &[Val::Integer(2), Val::Integer(1), Val::Text("Second Post"), Val::Text("More content"), Val::Integer(1000600), Val::Null, Val::Integer(0), Val::Integer(1)],
-    &[Val::Integer(3), Val::Integer(2), Val::Text("Bob's Post"), Val::Text("My thoughts"), Val::Integer(1000700), Val::Null, Val::Integer(0), Val::Integer(1)],
-    &[Val::Integer(4), Val::Integer(3), Val::Text("Draft"), Val::Text("Work in progress"), Val::Integer(1000800), Val::Null, Val::Integer(0), Val::Integer(0)],
-    &[Val::Integer(5), Val::Integer(5), Val::Text("Eve's Post"), Val::Text("Latest news"), Val::Integer(1000900), Val::Null, Val::Integer(0), Val::Integer(1)],
+    &[
+        Val::Integer(1),
+        Val::Integer(1),
+        Val::Text("First Post"),
+        Val::Text("Hello World!"),
+        Val::Integer(1000500),
+        Val::Null,
+        Val::Integer(0),
+        Val::Integer(1),
+    ],
+    &[
+        Val::Integer(2),
+        Val::Integer(1),
+        Val::Text("Second Post"),
+        Val::Text("More content"),
+        Val::Integer(1000600),
+        Val::Null,
+        Val::Integer(0),
+        Val::Integer(1),
+    ],
+    &[
+        Val::Integer(3),
+        Val::Integer(2),
+        Val::Text("Bob's Post"),
+        Val::Text("My thoughts"),
+        Val::Integer(1000700),
+        Val::Null,
+        Val::Integer(0),
+        Val::Integer(1),
+    ],
+    &[
+        Val::Integer(4),
+        Val::Integer(3),
+        Val::Text("Draft"),
+        Val::Text("Work in progress"),
+        Val::Integer(1000800),
+        Val::Null,
+        Val::Integer(0),
+        Val::Integer(0),
+    ],
+    &[
+        Val::Integer(5),
+        Val::Integer(5),
+        Val::Text("Eve's Post"),
+        Val::Text("Latest news"),
+        Val::Integer(1000900),
+        Val::Null,
+        Val::Integer(0),
+        Val::Integer(1),
+    ],
 ];
 
 /// Static tag data rows for inserts (no allocations)
@@ -172,45 +257,187 @@ static POST_TAG_ROWS: &[&[Val]] = &[
 
 /// Static comment data rows for inserts (no allocations)
 static COMMENT_ROWS: &[&[Val]] = &[
-    &[Val::Integer(1), Val::Integer(1), Val::Integer(2), Val::Text("Great post!"), Val::Integer(1001000), Val::Null, Val::Integer(0)],
-    &[Val::Integer(2), Val::Integer(1), Val::Integer(3), Val::Text("Thanks for sharing"), Val::Integer(1001100), Val::Null, Val::Integer(0)],
-    &[Val::Integer(3), Val::Integer(2), Val::Integer(2), Val::Text("Interesting"), Val::Integer(1001200), Val::Null, Val::Integer(0)],
-    &[Val::Integer(4), Val::Integer(3), Val::Integer(1), Val::Text("Nice work"), Val::Integer(1001300), Val::Null, Val::Integer(0)],
-    &[Val::Integer(5), Val::Integer(1), Val::Integer(5), Val::Text("Reply to comment 1"), Val::Integer(1001400), Val::Null, Val::Integer(0)],
+    &[
+        Val::Integer(1),
+        Val::Integer(1),
+        Val::Integer(2),
+        Val::Text("Great post!"),
+        Val::Integer(1001000),
+        Val::Null,
+        Val::Integer(0),
+    ],
+    &[
+        Val::Integer(2),
+        Val::Integer(1),
+        Val::Integer(3),
+        Val::Text("Thanks for sharing"),
+        Val::Integer(1001100),
+        Val::Null,
+        Val::Integer(0),
+    ],
+    &[
+        Val::Integer(3),
+        Val::Integer(2),
+        Val::Integer(2),
+        Val::Text("Interesting"),
+        Val::Integer(1001200),
+        Val::Null,
+        Val::Integer(0),
+    ],
+    &[
+        Val::Integer(4),
+        Val::Integer(3),
+        Val::Integer(1),
+        Val::Text("Nice work"),
+        Val::Integer(1001300),
+        Val::Null,
+        Val::Integer(0),
+    ],
+    &[
+        Val::Integer(5),
+        Val::Integer(1),
+        Val::Integer(5),
+        Val::Text("Reply to comment 1"),
+        Val::Integer(1001400),
+        Val::Null,
+        Val::Integer(0),
+    ],
 ];
 
 /// Static user update data: (old_row, new_row)
 static USER_UPDATES: &[(&[Val], &[Val])] = &[
     (
-        &[Val::Integer(1), Val::Text("alice"), Val::Text("alice@example.com"), Val::Integer(1000000), Val::Null, Val::Integer(1), Val::Null],
-        &[Val::Integer(1), Val::Text("alice"), Val::Text("alice@example.com"), Val::Integer(1000000), Val::Integer(1002000), Val::Integer(1), Val::Null],
+        &[
+            Val::Integer(1),
+            Val::Text("alice"),
+            Val::Text("alice@example.com"),
+            Val::Integer(1000000),
+            Val::Null,
+            Val::Integer(1),
+            Val::Null,
+        ],
+        &[
+            Val::Integer(1),
+            Val::Text("alice"),
+            Val::Text("alice@example.com"),
+            Val::Integer(1000000),
+            Val::Integer(1002000),
+            Val::Integer(1),
+            Val::Null,
+        ],
     ),
     (
-        &[Val::Integer(2), Val::Text("bob"), Val::Text("bob@example.com"), Val::Integer(1000100), Val::Null, Val::Integer(1), Val::Null],
-        &[Val::Integer(2), Val::Text("bob"), Val::Text("bob@example.com"), Val::Integer(1000100), Val::Integer(1002100), Val::Integer(1), Val::Null],
+        &[
+            Val::Integer(2),
+            Val::Text("bob"),
+            Val::Text("bob@example.com"),
+            Val::Integer(1000100),
+            Val::Null,
+            Val::Integer(1),
+            Val::Null,
+        ],
+        &[
+            Val::Integer(2),
+            Val::Text("bob"),
+            Val::Text("bob@example.com"),
+            Val::Integer(1000100),
+            Val::Integer(1002100),
+            Val::Integer(1),
+            Val::Null,
+        ],
     ),
 ];
 
 /// Static post update data: (old_row, new_row)
 static POST_UPDATES: &[(&[Val], &[Val])] = &[
     (
-        &[Val::Integer(1), Val::Integer(1), Val::Text("First Post"), Val::Text("Hello World!"), Val::Integer(1000500), Val::Null, Val::Integer(0), Val::Integer(1)],
-        &[Val::Integer(1), Val::Integer(1), Val::Text("First Post"), Val::Text("Hello World!"), Val::Integer(1000500), Val::Null, Val::Integer(10), Val::Integer(1)],
+        &[
+            Val::Integer(1),
+            Val::Integer(1),
+            Val::Text("First Post"),
+            Val::Text("Hello World!"),
+            Val::Integer(1000500),
+            Val::Null,
+            Val::Integer(0),
+            Val::Integer(1),
+        ],
+        &[
+            Val::Integer(1),
+            Val::Integer(1),
+            Val::Text("First Post"),
+            Val::Text("Hello World!"),
+            Val::Integer(1000500),
+            Val::Null,
+            Val::Integer(10),
+            Val::Integer(1),
+        ],
     ),
     (
-        &[Val::Integer(2), Val::Integer(1), Val::Text("Second Post"), Val::Text("More content"), Val::Integer(1000600), Val::Null, Val::Integer(0), Val::Integer(1)],
-        &[Val::Integer(2), Val::Integer(1), Val::Text("Second Post"), Val::Text("More content"), Val::Integer(1000600), Val::Null, Val::Integer(5), Val::Integer(1)],
+        &[
+            Val::Integer(2),
+            Val::Integer(1),
+            Val::Text("Second Post"),
+            Val::Text("More content"),
+            Val::Integer(1000600),
+            Val::Null,
+            Val::Integer(0),
+            Val::Integer(1),
+        ],
+        &[
+            Val::Integer(2),
+            Val::Integer(1),
+            Val::Text("Second Post"),
+            Val::Text("More content"),
+            Val::Integer(1000600),
+            Val::Null,
+            Val::Integer(5),
+            Val::Integer(1),
+        ],
     ),
     (
-        &[Val::Integer(2), Val::Integer(1), Val::Text("Second Post"), Val::Text("More content"), Val::Integer(1000600), Val::Null, Val::Integer(5), Val::Integer(1)],
-        &[Val::Integer(2), Val::Integer(1), Val::Text("Second Post"), Val::Text("Updated content"), Val::Integer(1000600), Val::Integer(1002200), Val::Integer(5), Val::Integer(1)],
+        &[
+            Val::Integer(2),
+            Val::Integer(1),
+            Val::Text("Second Post"),
+            Val::Text("More content"),
+            Val::Integer(1000600),
+            Val::Null,
+            Val::Integer(5),
+            Val::Integer(1),
+        ],
+        &[
+            Val::Integer(2),
+            Val::Integer(1),
+            Val::Text("Second Post"),
+            Val::Text("Updated content"),
+            Val::Integer(1000600),
+            Val::Integer(1002200),
+            Val::Integer(5),
+            Val::Integer(1),
+        ],
     ),
 ];
 
 /// Static delete rows
-static COMMENT_DELETE: &[Val] = &[Val::Integer(5), Val::Integer(1), Val::Integer(5), Val::Text("Reply to comment 1"), Val::Integer(1001400), Val::Null, Val::Integer(0)];
+static COMMENT_DELETE: &[Val] = &[
+    Val::Integer(5),
+    Val::Integer(1),
+    Val::Integer(5),
+    Val::Text("Reply to comment 1"),
+    Val::Integer(1001400),
+    Val::Null,
+    Val::Integer(0),
+];
 static POST_TAG_DELETE: &[Val] = &[Val::Integer(3), Val::Integer(5)];
-static USER_DELETE: &[Val] = &[Val::Integer(4), Val::Text("diana"), Val::Text("diana@example.com"), Val::Integer(1000300), Val::Null, Val::Integer(0), Val::Null];
+static USER_DELETE: &[Val] = &[
+    Val::Integer(4),
+    Val::Text("diana"),
+    Val::Text("diana@example.com"),
+    Val::Integer(1000300),
+    Val::Null,
+    Val::Integer(0),
+    Val::Null,
+];
 
 /// Static patchset update data: (column_index, new_value)
 static PATCH_USER_UPDATES: &[&[(usize, Val)]] = &[
@@ -221,7 +448,11 @@ static PATCH_USER_UPDATES: &[&[(usize, Val)]] = &[
 static PATCH_POST_UPDATES: &[&[(usize, Val)]] = &[
     &[(0, Val::Integer(1)), (6, Val::Integer(10))],
     &[(0, Val::Integer(2)), (6, Val::Integer(5))],
-    &[(0, Val::Integer(2)), (3, Val::Text("Updated content")), (5, Val::Integer(1002200))],
+    &[
+        (0, Val::Integer(2)),
+        (3, Val::Text("Updated content")),
+        (5, Val::Integer(1002200)),
+    ],
 ];
 
 /// Static patchset delete PK values
@@ -271,20 +502,20 @@ fn rusqlite_patchset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
 
 /// Add insert operations for all tables to the changeset builder
 fn add_inserts_to_changeset<'a>(
-    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     tags: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) {
+) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User inserts
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Post inserts
@@ -293,7 +524,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Tag inserts
@@ -302,7 +533,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Post-tag inserts
@@ -311,7 +542,7 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Comment inserts
@@ -320,62 +551,70 @@ fn add_inserts_to_changeset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
+
+    builder
 }
 
 /// Add update operations to the changeset builder
 fn add_updates_to_changeset<'a>(
-    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
-) {
+) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
     for (old, new) in USER_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> = ChangeUpdate::from(users.clone());
+        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
+            ChangeUpdate::from(users.clone());
         for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
             update = update.set(i, *o, *n).unwrap();
         }
-        builder.update(update);
+        builder = builder.update(update);
     }
 
     // Post updates
     for (old, new) in POST_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> = ChangeUpdate::from(posts.clone());
+        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
+            ChangeUpdate::from(posts.clone());
         for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
             update = update.set(i, *o, *n).unwrap();
         }
-        builder.update(update);
+        builder = builder.update(update);
     }
+
+    builder
 }
 
 /// Add delete operations to the changeset builder
 fn add_deletes_to_changeset<'a>(
-    builder: &mut ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) {
+) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // Delete comment
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(comments.clone());
     for (i, val) in COMMENT_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder.delete(delete);
+    builder = builder.delete(delete);
 
     // Delete post-tag
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(post_tags.clone());
     for (i, val) in POST_TAG_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder.delete(delete);
+    builder = builder.delete(delete);
 
     // Delete user
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(users.clone());
     for (i, val) in USER_DELETE.iter().enumerate() {
         delete = delete.set(i, val.clone()).unwrap();
     }
-    builder.delete(delete);
+    builder = builder.delete(delete);
+
+    builder
 }
 
 /// Generate changeset using builder API (programmatic construction)
@@ -385,29 +624,29 @@ fn builder_changeset() -> Vec<u8> {
     let mut builder: ChangeSet<TableSchema<&str>, &str, &[u8]> = ChangeSet::new();
 
     // Add all operations
-    add_inserts_to_changeset(&mut builder, &users, &posts, &comments, &tags, &post_tags);
-    add_updates_to_changeset(&mut builder, &users, &posts);
-    add_deletes_to_changeset(&mut builder, &users, &comments, &post_tags);
+    builder = add_inserts_to_changeset(builder, &users, &posts, &comments, &tags, &post_tags);
+    builder = add_updates_to_changeset(builder, &users, &posts);
+    builder = add_deletes_to_changeset(builder, &users, &comments, &post_tags);
 
     builder.build()
 }
 
 /// Add insert operations for all tables to the patchset builder
 fn add_inserts_to_patchset<'a>(
-    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     tags: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) {
+) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User inserts
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Post inserts
@@ -416,7 +655,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Tag inserts
@@ -425,7 +664,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Post-tag inserts
@@ -434,7 +673,7 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
 
     // Comment inserts
@@ -443,23 +682,25 @@ fn add_inserts_to_patchset<'a>(
         for (i, val) in row.iter().enumerate() {
             insert = insert.set(i, val.clone()).unwrap();
         }
-        builder.insert(insert);
+        builder = builder.insert(insert);
     }
+
+    builder
 }
 
 /// Add update operations to the patchset builder
 fn add_updates_to_patchset<'a>(
-    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
-) {
+) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
     for cols in PATCH_USER_UPDATES {
         let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(users.clone());
         for (i, val) in *cols {
             update = update.set(*i, val.clone()).unwrap();
         }
-        builder.update(update);
+        builder = builder.update(update);
     }
 
     // Post updates
@@ -468,21 +709,34 @@ fn add_updates_to_patchset<'a>(
         for (i, val) in *cols {
             update = update.set(*i, val.clone()).unwrap();
         }
-        builder.update(update);
+        builder = builder.update(update);
     }
+
+    builder
 }
 
 /// Add delete operations to the patchset builder
 fn add_deletes_to_patchset<'a>(
-    builder: &mut PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
     users: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
-) {
+) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // Deletes for patchset (only need PK values)
-    builder.delete(comments, PATCH_COMMENT_DELETE_PK);
-    builder.delete(post_tags, PATCH_POST_TAG_DELETE_PK);
-    builder.delete(users, PATCH_USER_DELETE_PK);
+    builder = builder.delete(PatchDelete::new(
+        comments.clone(),
+        PATCH_COMMENT_DELETE_PK.to_vec(),
+    ));
+    builder = builder.delete(PatchDelete::new(
+        post_tags.clone(),
+        PATCH_POST_TAG_DELETE_PK.to_vec(),
+    ));
+    builder = builder.delete(PatchDelete::new(
+        users.clone(),
+        PATCH_USER_DELETE_PK.to_vec(),
+    ));
+
+    builder
 }
 
 /// Generate patchset using builder API (programmatic construction)
@@ -492,9 +746,9 @@ fn builder_patchset() -> Vec<u8> {
     let mut builder: PatchSet<TableSchema<&str>, &str, &[u8]> = PatchSet::new();
 
     // Add all operations
-    add_inserts_to_patchset(&mut builder, &users, &posts, &comments, &tags, &post_tags);
-    add_updates_to_patchset(&mut builder, &users, &posts);
-    add_deletes_to_patchset(&mut builder, &users, &comments, &post_tags);
+    builder = add_inserts_to_patchset(builder, &users, &posts, &comments, &tags, &post_tags);
+    builder = add_updates_to_patchset(builder, &users, &posts);
+    builder = add_deletes_to_patchset(builder, &users, &comments, &post_tags);
 
     builder.build()
 }
@@ -509,17 +763,42 @@ fn create_simple_table_schemas() -> (
 ) {
     let users = SimpleTable::new(
         "users",
-        &["id", "username", "email", "created_at", "last_login", "is_active", "profile_data"],
+        &[
+            "id",
+            "username",
+            "email",
+            "created_at",
+            "last_login",
+            "is_active",
+            "profile_data",
+        ],
         &[0],
     );
     let posts = SimpleTable::new(
         "posts",
-        &["id", "user_id", "title", "content", "created_at", "updated_at", "view_count", "is_published"],
+        &[
+            "id",
+            "user_id",
+            "title",
+            "content",
+            "created_at",
+            "updated_at",
+            "view_count",
+            "is_published",
+        ],
         &[0],
     );
     let comments = SimpleTable::new(
         "comments",
-        &["id", "post_id", "user_id", "content", "created_at", "parent_id", "is_deleted"],
+        &[
+            "id",
+            "post_id",
+            "user_id",
+            "content",
+            "created_at",
+            "parent_id",
+            "is_deleted",
+        ],
         &[0],
     );
     let tags = SimpleTable::new("tags", &["id", "name"], &[0]);

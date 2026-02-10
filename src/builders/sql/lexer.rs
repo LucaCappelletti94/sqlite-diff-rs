@@ -183,8 +183,7 @@ impl<'input> Lexer<'input> {
     }
 
     /// Peek at the next token without consuming it.
-    pub fn peek<'b>(&'b mut self) -> Result<&'b Token<'input>, LexerError>
-    {
+    pub fn peek<'b>(&'b mut self) -> Result<&'b Token<'input>, LexerError> {
         if self.peeked.is_none() {
             self.peeked = Some(self.next_token()?);
         }

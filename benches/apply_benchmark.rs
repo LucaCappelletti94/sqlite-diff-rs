@@ -24,8 +24,8 @@
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use rand::Rng;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rusqlite::Connection;
 use rusqlite::params;
 use rusqlite::session::Session;
@@ -146,10 +146,30 @@ struct DbConfig {
 
 /// The set of configurations to benchmark.
 const CONFIGS: &[DbConfig] = &[
-    DbConfig { label: "base", indexes: false, triggers: false, foreign_keys: false },
-    DbConfig { label: "indexed", indexes: true, triggers: false, foreign_keys: false },
-    DbConfig { label: "triggers", indexes: false, triggers: true, foreign_keys: false },
-    DbConfig { label: "fk", indexes: false, triggers: false, foreign_keys: true },
+    DbConfig {
+        label: "base",
+        indexes: false,
+        triggers: false,
+        foreign_keys: false,
+    },
+    DbConfig {
+        label: "indexed",
+        indexes: true,
+        triggers: false,
+        foreign_keys: false,
+    },
+    DbConfig {
+        label: "triggers",
+        indexes: false,
+        triggers: true,
+        foreign_keys: false,
+    },
+    DbConfig {
+        label: "fk",
+        indexes: false,
+        triggers: false,
+        foreign_keys: true,
+    },
 ];
 
 /// The five data tables whose changes we track in the session.
@@ -291,8 +311,10 @@ impl IdCounter {
 fn create_db(schema: &str, id_type: &str, config: &DbConfig) -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     let fk = if config.foreign_keys { "ON" } else { "OFF" };
-    conn.execute_batch(&format!("PRAGMA journal_mode=WAL; PRAGMA foreign_keys={fk};"))
-        .unwrap();
+    conn.execute_batch(&format!(
+        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys={fk};"
+    ))
+    .unwrap();
     conn.execute_batch(schema).unwrap();
     if config.indexes {
         conn.execute_batch(INDEXES_DDL).unwrap();
@@ -800,17 +822,15 @@ fn bench_apply_base(c: &mut Criterion) {
             };
 
             for op_count in [30usize, 100, 1000] {
-                let group_name =
-                    format!("apply/{}/{state_label}/{op_count}", kind.label());
+                let group_name = format!("apply/{}/{state_label}/{op_count}", kind.label());
                 let mut group = c.benchmark_group(&group_name);
 
                 let mut rng_ops = StdRng::seed_from_u64(match kind {
                     IdKind::Integer => 123 + op_count as u64,
                     IdKind::Uuid => 456 + op_count as u64,
                 });
-                let scenario = generate_scenario(
-                    &template, config, kind, &existing, op_count, &mut rng_ops,
-                );
+                let scenario =
+                    generate_scenario(&template, config, kind, &existing, op_count, &mut rng_ops);
 
                 register_benches(&mut group, &template, config, &scenario);
                 group.finish();
@@ -846,9 +866,8 @@ fn bench_apply_variants(c: &mut Criterion) {
                 IdKind::Integer => 123 + op_count as u64,
                 IdKind::Uuid => 456 + op_count as u64,
             });
-            let scenario = generate_scenario(
-                &template, config, kind, &existing, op_count, &mut rng_ops,
-            );
+            let scenario =
+                generate_scenario(&template, config, kind, &existing, op_count, &mut rng_ops);
 
             register_benches(&mut group, &template, config, &scenario);
             group.finish();

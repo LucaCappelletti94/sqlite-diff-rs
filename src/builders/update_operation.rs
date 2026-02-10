@@ -5,7 +5,9 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use crate::{
-    DynTable, SchemaWithPK, builders::{ChangesetFormat, PatchsetFormat, format::Format}, encoding::{MaybeValue, Value}
+    DynTable, SchemaWithPK,
+    builders::{ChangesetFormat, PatchsetFormat, format::Format},
+    encoding::{MaybeValue, Value},
 };
 
 #[derive(Debug, Clone)]

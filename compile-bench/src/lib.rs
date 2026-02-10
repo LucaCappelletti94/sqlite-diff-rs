@@ -134,7 +134,8 @@ CREATE TABLE post_tags (
 #[cfg(feature = "builder")]
 pub mod builder_approach {
     use sqlite_diff_rs::{
-        ChangeDelete, ChangeSet, ChangeUpdate, Insert, PatchSet, PatchUpdate, TableSchema, Value,
+        ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate,
+        TableSchema, Value,
     };
 
     // Type aliases for cleaner code
@@ -326,13 +327,13 @@ pub mod builder_approach {
     }
 
     fn add_inserts(
-        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
         comments: &Schema,
         tags: &Schema,
         post_tags: &Schema,
-    ) {
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -345,16 +346,17 @@ pub mod builder_approach {
                 for (i, val) in row.iter().enumerate() {
                     insert = insert.set(i, val.clone()).unwrap();
                 }
-                builder.insert(insert);
+                builder = builder.insert(insert);
             }
         }
+        builder
     }
 
     fn add_changeset_updates(
-        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
-    ) {
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
         let user_updates: &[(&[Val], &[Val])] = &[
             (
                 &[
@@ -402,7 +404,7 @@ pub mod builder_approach {
             for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
                 update = update.set(i, o.clone(), n.clone()).unwrap();
             }
-            builder.update(update);
+            builder = builder.update(update);
         }
 
         let post_updates: &[(&[Val], &[Val])] = &[
@@ -478,16 +480,17 @@ pub mod builder_approach {
             for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
                 update = update.set(i, o.clone(), n.clone()).unwrap();
             }
-            builder.update(update);
+            builder = builder.update(update);
         }
+        builder
     }
 
     fn add_changeset_deletes(
-        builder: &mut ChangeSet<Schema, String, Vec<u8>>,
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
         comments: &Schema,
         post_tags: &Schema,
-    ) {
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
         // Delete comment 5
         let mut delete = ChangeDelete::from(comments.clone());
         for (i, val) in [
@@ -504,14 +507,14 @@ pub mod builder_approach {
         {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder.delete(delete);
+        builder = builder.delete(delete);
 
         // Delete post_tag (3, 5)
         let mut delete = ChangeDelete::from(post_tags.clone());
         for (i, val) in [Value::from(3i64), Value::from(5i64)].iter().enumerate() {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder.delete(delete);
+        builder = builder.delete(delete);
 
         // Delete user 4
         let mut delete = ChangeDelete::from(users.clone());
@@ -529,27 +532,28 @@ pub mod builder_approach {
         {
             delete = delete.set(i, val.clone()).unwrap();
         }
-        builder.delete(delete);
+        builder = builder.delete(delete);
+        builder
     }
 
     /// Generate a changeset using the builder API.
     pub fn changeset() -> Vec<u8> {
         let (users, posts, comments, tags, post_tags) = create_schemas();
-        let mut builder = ChangeSet::new();
-        add_inserts(&mut builder, &users, &posts, &comments, &tags, &post_tags);
-        add_changeset_updates(&mut builder, &users, &posts);
-        add_changeset_deletes(&mut builder, &users, &comments, &post_tags);
+        let builder = ChangeSet::new();
+        let builder = add_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
+        let builder = add_changeset_updates(builder, &users, &posts);
+        let builder = add_changeset_deletes(builder, &users, &comments, &post_tags);
         builder.build()
     }
 
     fn add_patchset_inserts(
-        builder: &mut PatchSet<Schema, String, Vec<u8>>,
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
         comments: &Schema,
         tags: &Schema,
         post_tags: &Schema,
-    ) {
+    ) -> PatchSet<Schema, String, Vec<u8>> {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -562,16 +566,17 @@ pub mod builder_approach {
                 for (i, val) in row.iter().enumerate() {
                     insert = insert.set(i, val.clone()).unwrap();
                 }
-                builder.insert(insert);
+                builder = builder.insert(insert);
             }
         }
+        builder
     }
 
     fn add_patchset_updates(
-        builder: &mut PatchSet<Schema, String, Vec<u8>>,
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
-    ) {
+    ) -> PatchSet<Schema, String, Vec<u8>> {
         let user_updates: &[&[(usize, Val)]] = &[
             &[(0, 1i64.into()), (4, 1002000i64.into())],
             &[(0, 2i64.into()), (4, 1002100i64.into())],
@@ -581,7 +586,7 @@ pub mod builder_approach {
             for (i, val) in *cols {
                 update = update.set(*i, val.clone()).unwrap();
             }
-            builder.update(update);
+            builder = builder.update(update);
         }
 
         let post_updates: &[&[(usize, Val)]] = &[
@@ -598,28 +603,33 @@ pub mod builder_approach {
             for (i, val) in *cols {
                 update = update.set(*i, val.clone()).unwrap();
             }
-            builder.update(update);
+            builder = builder.update(update);
         }
+        builder
     }
 
     fn add_patchset_deletes(
-        builder: &mut PatchSet<Schema, String, Vec<u8>>,
+        builder: PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
         comments: &Schema,
         post_tags: &Schema,
-    ) {
-        builder.delete(comments, &[5i64.into()]);
-        builder.delete(post_tags, &[3i64.into(), 5i64.into()]);
-        builder.delete(users, &[4i64.into()]);
+    ) -> PatchSet<Schema, String, Vec<u8>> {
+        builder
+            .delete(PatchDelete::new(comments.clone(), vec![5i64.into()]))
+            .delete(PatchDelete::new(
+                post_tags.clone(),
+                vec![3i64.into(), 5i64.into()],
+            ))
+            .delete(PatchDelete::new(users.clone(), vec![4i64.into()]))
     }
 
     /// Generate a patchset using the builder API.
     pub fn patchset() -> Vec<u8> {
         let (users, posts, comments, tags, post_tags) = create_schemas();
-        let mut builder = PatchSet::new();
-        add_patchset_inserts(&mut builder, &users, &posts, &comments, &tags, &post_tags);
-        add_patchset_updates(&mut builder, &users, &posts);
-        add_patchset_deletes(&mut builder, &users, &comments, &post_tags);
+        let builder = PatchSet::new();
+        let builder = add_patchset_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
+        let builder = add_patchset_updates(builder, &users, &posts);
+        let builder = add_patchset_deletes(builder, &users, &comments, &post_tags);
         builder.build()
     }
 }

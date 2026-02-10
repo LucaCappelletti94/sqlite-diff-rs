@@ -7,24 +7,384 @@
 //! - [`session_changeset_and_patchset`]: execute SQL in rusqlite and capture raw changeset/patchset bytes
 //! - [`byte_diff_report`]: pretty-print a byte-level diff between two buffers
 //! - [`assert_bit_parity`]: assert byte-for-byte equality for both changeset and patchset
-//! - [`parse_schema`]: parse a `CREATE TABLE` statement into a `SimpleTable`
+//! - [`TypedSimpleTable`]: a [`SimpleTable`] with column type information and `Display` for DDL
+//! - [`SqlType`]: SQLite column type affinities
+//! - [`test_roundtrip`]: parse → serialize → reparse → assert equality
+//! - [`test_apply_roundtrip`]: parse, roundtrip, then apply changeset to an in-memory database
+//! - [`test_reverse_idempotent`]: verify `reverse(reverse(x)) == x` for changesets
+//! - [`test_sql_roundtrip`]: digest SQL into a patchset, then binary roundtrip
+//! - [`test_differential`]: compare our patchset output against rusqlite byte-for-byte
 
-use core::fmt::Write;
+use core::fmt::{self, Write};
+use core::ops::Deref;
 
 extern crate std;
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 use rusqlite::Connection;
 use rusqlite::session::Session;
 use std::io::Cursor;
 
 use crate::DynTable;
-use crate::schema::SimpleTable;
 use crate::PatchSet;
+use crate::Reverse;
+use crate::differential_testing::run_differential_test;
+use crate::parser::ParsedDiffSet;
+use crate::schema::SimpleTable;
 
-/// Execute a sequence of SQL statements against rusqlite with session tracking
+// ---------------------------------------------------------------------------
+// SqlType – SQLite column type affinities
+// ---------------------------------------------------------------------------
+
+/// SQLite column type affinities for use in `CREATE TABLE` DDL generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SqlType {
+    /// `INTEGER` affinity.
+    Integer,
+    /// `TEXT` affinity.
+    Text,
+    /// `REAL` affinity.
+    Real,
+    /// `BLOB` affinity (accepts any value).
+    Blob,
+}
+
+impl fmt::Display for SqlType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Integer => f.write_str("INTEGER"),
+            Self::Text => f.write_str("TEXT"),
+            Self::Real => f.write_str("REAL"),
+            Self::Blob => f.write_str("BLOB"),
+        }
+    }
+}
+
+impl<'a> arbitrary::Arbitrary<'a> for SqlType {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(*u.choose(&[Self::Integer, Self::Text, Self::Real, Self::Blob])?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TypedSimpleTable – SimpleTable + column types with Display for DDL
+// ---------------------------------------------------------------------------
+
+/// A [`SimpleTable`] augmented with column type information.
+///
+/// Implements [`Display`](fmt::Display) to emit a `CREATE TABLE` SQL statement,
+/// enabling database setup from schema metadata alone (e.g. in fuzz harnesses).
+///
+/// Dereferences to [`SimpleTable`], so it can be used anywhere a `SimpleTable`
+/// is expected.
+///
+/// # Example
+///
+/// ```rust
+/// use sqlite_diff_rs::testing::{TypedSimpleTable, SqlType};
+///
+/// let table = TypedSimpleTable::new(
+///     "users",
+///     &[("id", SqlType::Integer), ("name", SqlType::Text)],
+///     &[0],
+/// );
+/// assert_eq!(
+///     table.to_string(),
+///     "CREATE TABLE \"users\" (\"id\" INTEGER PRIMARY KEY, \"name\" TEXT)"
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypedSimpleTable {
+    table: SimpleTable,
+    column_types: Vec<SqlType>,
+}
+
+impl TypedSimpleTable {
+    /// Create a new typed table schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` – The table name.
+    /// * `columns` – Pairs of `(column_name, column_type)` in order.
+    /// * `pk_indices` – Indices of primary key columns (in PK order).
+    ///
+    /// # Panics
+    ///
+    /// Panics if any `pk_indices` value is out of bounds.
+    #[must_use]
+    pub fn new(name: &str, columns: &[(&str, SqlType)], pk_indices: &[usize]) -> Self {
+        let col_names: Vec<&str> = columns.iter().map(|(n, _)| *n).collect();
+        let col_types: Vec<SqlType> = columns.iter().map(|(_, t)| *t).collect();
+        Self {
+            table: SimpleTable::new(name, &col_names, pk_indices),
+            column_types: col_types,
+        }
+    }
+
+    /// Create a `TypedSimpleTable` from a [`crate::parser::TableSchema`].
+    ///
+    /// Synthesizes generic column names (`c0`, `c1`, …) and uses
+    /// [`SqlType::Blob`] for every column (the most permissive SQLite type).
+    /// This is primarily useful in fuzz harnesses that parse arbitrary binary
+    /// changesets and need to create matching database tables.
+    #[must_use]
+    pub fn from_table_schema(schema: &crate::parser::TableSchema<String>) -> Self {
+        let ncols = schema.number_of_columns();
+        let mut pk_flags_buf = vec![0u8; ncols];
+        schema.write_pk_flags(&mut pk_flags_buf);
+
+        // Derive pk_indices from pk_flags (sorted by ordinal)
+        let mut pk_cols: Vec<(usize, u8)> = pk_flags_buf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &ord)| if ord > 0 { Some((i, ord)) } else { None })
+            .collect();
+        pk_cols.sort_by_key(|&(_, ord)| ord);
+        let pk_indices: Vec<usize> = pk_cols.into_iter().map(|(i, _)| i).collect();
+
+        let columns: Vec<(String, SqlType)> = (0..ncols)
+            .map(|i| (format!("c{i}"), SqlType::Blob))
+            .collect();
+        let col_refs: Vec<(&str, SqlType)> =
+            columns.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+
+        Self::new(schema.name(), &col_refs, &pk_indices)
+    }
+
+    /// The column types in order.
+    #[must_use]
+    pub fn column_types(&self) -> &[SqlType] {
+        &self.column_types
+    }
+}
+
+impl Deref for TypedSimpleTable {
+    type Target = SimpleTable;
+
+    fn deref(&self) -> &Self::Target {
+        &self.table
+    }
+}
+
+impl fmt::Display for TypedSimpleTable {
+    /// Emit a `CREATE TABLE` DDL statement.
+    ///
+    /// For a single-column PK the `PRIMARY KEY` clause is inlined on the column.
+    /// For composite PKs a trailing `PRIMARY KEY(…)` constraint is appended.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let pk_indices = self.table.pk_indices();
+        let columns = self.table.column_names();
+        let single_pk = pk_indices.len() == 1;
+
+        write!(f, "CREATE TABLE \"{}\" (", self.table.name())?;
+
+        for (i, (col_name, col_type)) in columns.iter().zip(&self.column_types).enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "\"{col_name}\" {col_type}")?;
+            if single_pk && pk_indices[0] == i {
+                f.write_str(" PRIMARY KEY")?;
+            }
+        }
+
+        if !single_pk && !pk_indices.is_empty() {
+            f.write_str(", PRIMARY KEY(")?;
+            for (j, &pk_idx) in pk_indices.iter().enumerate() {
+                if j > 0 {
+                    f.write_str(", ")?;
+                }
+                write!(f, "\"{}\"", columns[pk_idx])?;
+            }
+            f.write_char(')')?;
+        }
+
+        f.write_char(')')
+    }
+}
+
+impl<'a> arbitrary::Arbitrary<'a> for TypedSimpleTable {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        // Table name: 1–8 lowercase alpha chars
+        let name_len = u.int_in_range(1..=8)?;
+        let name: String = (0..name_len)
+            .map(|_| u.int_in_range(b'a'..=b'z').map(char::from))
+            .collect::<arbitrary::Result<_>>()?;
+
+        // Column count: 1–8
+        let ncols: usize = u.int_in_range(1..=8)?;
+        let columns: Vec<(&str, SqlType)> = Vec::new(); // placeholder
+        let mut col_data: Vec<(String, SqlType)> = Vec::with_capacity(ncols);
+        for i in 0..ncols {
+            let ty = SqlType::arbitrary(u)?;
+            col_data.push((format!("c{i}"), ty));
+        }
+        let col_refs: Vec<(&str, SqlType)> =
+            col_data.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+        drop(columns);
+
+        // PK: at least 1 column, up to ncols
+        let npk: usize = u.int_in_range(1..=ncols)?;
+        // Choose npk distinct indices from 0..ncols
+        let mut available: Vec<usize> = (0..ncols).collect();
+        let mut pk_indices = Vec::with_capacity(npk);
+        for _ in 0..npk {
+            let idx = u.int_in_range(0..=available.len() - 1)?;
+            pk_indices.push(available.remove(idx));
+        }
+
+        Ok(Self::new(&name, &col_refs, &pk_indices))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared fuzzer / regression-test helpers
+// ---------------------------------------------------------------------------
+
+/// Test binary roundtrip: parse → serialize → reparse → assert equality.
+///
+/// Returns early (no panic) if the input cannot be parsed.
+/// Panics if re-parsing or equality checks fail.
+pub fn test_roundtrip(input: &[u8]) {
+    let Ok(parsed) = ParsedDiffSet::try_from(input) else {
+        return; // Invalid input is fine, we just shouldn't crash
+    };
+
+    let serialized: Vec<u8> = parsed.clone().into();
+    let reparsed = ParsedDiffSet::try_from(serialized.as_slice())
+        .expect("Re-parsing our own output should never fail");
+    assert_eq!(parsed, reparsed, "Roundtrip mismatch");
+}
+
+/// Test that a changeset can be applied to an in-memory database without
+/// crashing, in addition to binary roundtrip verification.
+///
+/// The `schema` provides the `CREATE TABLE` DDL (via its [`Display`](fmt::Display)
+/// impl) so the changeset has a matching table to apply against.
+///
+/// Application errors are **not** treated as failures — fuzzed binary data may
+/// be semantically invalid for SQLite. Panics or crashes are bugs.
+pub fn test_apply_roundtrip(schema: &TypedSimpleTable, changeset_bytes: &[u8]) {
+    // Binary roundtrip check
+    test_roundtrip(changeset_bytes);
+
+    // Create an in-memory database with the table
+    let Ok(conn) = Connection::open_in_memory() else {
+        return;
+    };
+    let ddl = schema.to_string();
+    if conn.execute(&ddl, []).is_err() {
+        return; // Schema might be invalid (e.g. no PK)
+    }
+
+    // Apply — errors are acceptable, panics are not
+    let _ = apply_changeset(&conn, changeset_bytes);
+}
+
+/// Test reverse idempotency: `reverse(reverse(x)) == x`.
+///
+/// Parses the input as a binary changeset (skips patchsets, since they don't
+/// support [`Reverse`]). Verifies four properties:
+///
+/// 1. Double-reversing yields a structurally equal changeset.
+/// 2. Binary representations match after double reverse.
+/// 3. Operation count is preserved by reversal.
+/// 4. Empty changesets reverse to empty.
+///
+/// Returns early (no panic) if the input cannot be parsed or is a patchset.
+pub fn test_reverse_idempotent(input: &[u8]) {
+    let Ok(parsed) = ParsedDiffSet::try_from(input) else {
+        return;
+    };
+
+    // Only changesets support Reverse
+    let ParsedDiffSet::Changeset(changeset) = parsed else {
+        return;
+    };
+
+    let reversed = changeset.clone().reverse();
+    let double_reversed = reversed.clone().reverse();
+
+    assert_eq!(
+        changeset, double_reversed,
+        "Double reverse should equal original"
+    );
+
+    let original_bytes = changeset.build();
+    let double_reversed_bytes = double_reversed.build();
+    assert_eq!(
+        original_bytes, double_reversed_bytes,
+        "Binary representation should be identical after double reverse"
+    );
+
+    assert_eq!(
+        changeset.len(),
+        reversed.len(),
+        "Reversed changeset should have same number of operations"
+    );
+
+    if changeset.is_empty() {
+        assert!(
+            reversed.is_empty(),
+            "Empty changeset should reverse to empty"
+        );
+    }
+}
+
+/// Test SQL-digest roundtrip: digest SQL into a patchset, serialize, reparse.
+///
+/// Given an arbitrary table schema and a SQL string, this:
+/// 1. Builds a [`PatchSet`] with the schema, digests the SQL.
+/// 2. If digestion fails or the result is empty, returns early.
+/// 3. Serializes to binary and re-parses, asserting byte equality.
+///
+/// Returns early (no panic) if SQL digestion fails or produces no operations.
+pub fn test_sql_roundtrip(schema: &TypedSimpleTable, sql: &str) {
+    let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+    builder.add_table(&**schema);
+
+    if builder.digest_sql(sql).is_err() {
+        return;
+    }
+    if builder.is_empty() {
+        return;
+    }
+
+    let bytes = builder.build();
+    let reparsed = ParsedDiffSet::try_from(bytes.as_slice())
+        .expect("Serialized patchset should be re-parseable");
+    let reparsed_bytes: Vec<u8> = reparsed.into();
+    assert_eq!(
+        bytes, reparsed_bytes,
+        "Binary round-trip mismatch after SQL digest"
+    );
+}
+
+/// Test differential (bit-parity) between our patchset output and rusqlite's.
+///
+/// Given an arbitrary table schema and a SQL DML string, this:
+/// 1. Builds a [`PatchSet`] with the schema, digests the SQL.
+/// 2. If digestion fails or the result is empty, returns early.
+/// 3. Delegates to [`run_differential_test`](crate::differential_testing::run_differential_test)
+///    to compare our bytes against rusqlite's session extension output.
+///
+/// Returns early (no panic) if SQL digestion fails or produces no operations.
+pub fn test_differential(schema: &TypedSimpleTable, sql: &str) {
+    let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+    builder.add_table(&**schema);
+
+    if builder.digest_sql(sql).is_err() || builder.is_empty() {
+        return;
+    }
+
+    let create_sql = schema.to_string();
+    let simple: SimpleTable = (**schema).clone();
+    run_differential_test(&[simple], &[create_sql.as_str()], &[sql]);
+}
+
 /// and return the raw changeset and patchset bytes.
 ///
 /// DDL (`CREATE TABLE`) is executed before the session starts.
@@ -145,10 +505,8 @@ pub fn assert_patchset_sql_parity(schemas: &[SimpleTable], sql_statements: &[&st
     let mut patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new();
 
     // Build a lookup map so we can register tables on first DML reference
-    let schema_map: std::collections::HashMap<&str, &SimpleTable> = schemas
-        .iter()
-        .map(|s| (s.name(), s))
-        .collect();
+    let schema_map: std::collections::HashMap<&str, &SimpleTable> =
+        schemas.iter().map(|s| (s.name(), s)).collect();
 
     // Digest DML statements, registering each table on first touch
     for dml in sql_statements
@@ -158,11 +516,20 @@ pub fn assert_patchset_sql_parity(schemas: &[SimpleTable], sql_statements: &[&st
         // Extract the table name from the DML to ensure proper registration order
         let upper = dml.trim().to_uppercase();
         let table_name = if upper.starts_with("INSERT INTO") {
-            dml.trim()["INSERT INTO".len()..].trim().split_whitespace().next()
+            dml.trim()["INSERT INTO".len()..]
+                .trim()
+                .split_whitespace()
+                .next()
         } else if upper.starts_with("UPDATE") {
-            dml.trim()["UPDATE".len()..].trim().split_whitespace().next()
+            dml.trim()["UPDATE".len()..]
+                .trim()
+                .split_whitespace()
+                .next()
         } else if upper.starts_with("DELETE FROM") {
-            dml.trim()["DELETE FROM".len()..].trim().split_whitespace().next()
+            dml.trim()["DELETE FROM".len()..]
+                .trim()
+                .split_whitespace()
+                .next()
         } else {
             None
         };
@@ -270,4 +637,125 @@ pub fn extract_table_name(create_sql: &str) -> String {
         .find(|c: char| c.is_whitespace() || c == '(')
         .unwrap_or(rest.len());
     rest[..end].to_string()
+}
+
+/// Run all crash files in a directory through a test function, with timing
+/// and auto-copy from the fuzz workspace.
+///
+/// This is the shared implementation behind the per-target regression tests
+/// (e.g. `roundtrip`, `apply_roundtrip`). It:
+///
+/// 1. Ensures `crash_dir` exists.
+/// 2. Copies any `.fuzz` files from `fuzz_source_dir` that aren't already in `crash_dir`.
+/// 3. Runs `test_fn` on every file in `crash_dir`, enforcing `time_limit` per input.
+/// 4. Panics with a summary if any input fails or exceeds the time limit.
+///
+/// Returns the number of files tested.
+pub fn run_crash_dir_regression(
+    crash_dir: &str,
+    fuzz_source_dir: &str,
+    time_limit: std::time::Duration,
+    test_fn: impl Fn(&[u8]),
+) -> usize {
+    use std::fs;
+    use std::time::Instant;
+
+    // Ensure crash_inputs directory exists
+    let _ = fs::create_dir_all(crash_dir);
+
+    // Copy any new crash files from fuzz workspace
+    if let Ok(fuzz_entries) = fs::read_dir(fuzz_source_dir) {
+        for entry in fuzz_entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "fuzz") {
+                let dest = format!(
+                    "{}/{}",
+                    crash_dir,
+                    path.file_name().unwrap().to_string_lossy()
+                );
+                if !std::path::Path::new(&dest).exists() {
+                    let _ = fs::copy(&path, &dest);
+                }
+            }
+        }
+    }
+
+    let Ok(entries) = fs::read_dir(crash_dir) else {
+        return 0;
+    };
+
+    let mut tested = 0;
+    let mut failures: Vec<String> = Vec::new();
+    let mut slow_inputs: Vec<String> = Vec::new();
+    let overall_start = Instant::now();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let data = match fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                failures.push(format!("{}: read error: {e}", path.display()));
+                continue;
+            }
+        };
+
+        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+        let start = Instant::now();
+
+        // Use catch_unwind to collect panics without aborting the loop
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            test_fn(&data);
+        }));
+
+        if let Err(panic) = result {
+            let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = panic.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            failures.push(format!("{filename}: {msg}"));
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed > time_limit {
+            slow_inputs.push(format!(
+                "{filename}: {:.3}s (limit: {:.1}s) [{} bytes]",
+                elapsed.as_secs_f64(),
+                time_limit.as_secs_f64(),
+                data.len(),
+            ));
+        }
+
+        tested += 1;
+    }
+
+    let overall_elapsed = overall_start.elapsed();
+
+    assert!(
+        failures.is_empty(),
+        "Failures in {}/{tested} crash files:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+
+    assert!(
+        slow_inputs.is_empty(),
+        "Timeout-class bugs: {}/{tested} inputs exceeded {:.1}s limit:\n{}",
+        slow_inputs.len(),
+        time_limit.as_secs_f64(),
+        slow_inputs.join("\n")
+    );
+
+    std::eprintln!(
+        "Tested {tested} crash input files in {:.3}s",
+        overall_elapsed.as_secs_f64()
+    );
+
+    tested
 }

@@ -31,7 +31,8 @@ pub(crate) enum Operation<F: Format<S, B>, S, B> {
 }
 
 /// Implement PartialEq for Operation where needed.
-impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq for Operation<F, S, B>
+impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
+    for Operation<F, S, B>
 where
     F::DeleteData: PartialEq,
     F::Old: PartialEq,
@@ -50,7 +51,8 @@ impl<F: Format<S, B>, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Operation<
 where
     F::DeleteData: Eq,
     F::Old: Eq,
-{}
+{
+}
 
 /// Trait for reversing operations.
 ///
@@ -66,7 +68,9 @@ pub trait Reverse {
     fn reverse(self) -> Self::Output;
 }
 
-impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse for Operation<ChangesetFormat, S, B> {
+impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse
+    for Operation<ChangesetFormat, S, B>
+{
     type Output = Self;
 
     fn reverse(self) -> Self::Output {
@@ -87,8 +91,8 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse for 
 // Operation + Operation for Changeset
 // ============================================================================
 
-impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + AsRef<[u8]>> core::ops::Add
-    for Operation<ChangesetFormat, S, B>
+impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + AsRef<[u8]>>
+    core::ops::Add for Operation<ChangesetFormat, S, B>
 {
     type Output = Option<Self>;
 
@@ -161,7 +165,9 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
 // Operation + Operation for Patchset
 // ============================================================================
 
-impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core::ops::Add for Operation<PatchsetFormat, S, B> {
+impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core::ops::Add
+    for Operation<PatchsetFormat, S, B>
+{
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {

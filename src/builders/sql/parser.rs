@@ -173,7 +173,8 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         } else {
             for column_index in column_identifiers {
                 values[usize::from(column_index)] = self.parse_value()?;
-                if let Some(primary_key_index) = table.primary_key_index(usize::from(column_index)) {
+                if let Some(primary_key_index) = table.primary_key_index(usize::from(column_index))
+                {
                     pks[primary_key_index] = values[usize::from(column_index)].clone();
                 };
                 if self.lexer.peek()?.kind != TokenKind::Comma {
@@ -267,11 +268,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     }
 
     /// Parse a WHERE clause.
-    fn digest_where<D>(
-        &mut self,
-        table: &T,
-        mut digestor: D,
-    ) -> Result<(), ParseError<'input>>
+    fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<(), ParseError<'input>>
     where
         D: FnMut(u16, &'input str, Value<S, Vec<u8>>) -> Result<(), ParseError<'input>>,
     {
@@ -357,10 +354,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     }
 
     /// Expects a column identifier and returns the corresponding column index in the table schema.
-    fn expect_column(
-        &mut self,
-        table: &T,
-    ) -> Result<(u16, &'input str), ParseError<'input>> {
+    fn expect_column(&mut self, table: &T) -> Result<(u16, &'input str), ParseError<'input>> {
         let column_name = self.expect_identifier()?;
         table
             .column_index(column_name)
@@ -475,8 +469,7 @@ mod tests {
     fn test_digest_delete_rejects_non_pk_in_where() {
         let users = SimpleTable::new("users", &["id", "name", "status"], &[0]);
         let mut builder = make_builder(&[users]);
-        let result =
-            builder.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
+        let result = builder.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
         assert!(result.is_err());
     }
 
@@ -500,8 +493,7 @@ mod tests {
     fn test_digest_create_table_rejected() {
         let mut builder: DiffSetBuilder<PatchsetFormat, SimpleTable, String, Vec<u8>> =
             DiffSetBuilder::default();
-        let result =
-            builder.digest_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+        let result = builder.digest_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
         assert!(result.is_err());
     }
 

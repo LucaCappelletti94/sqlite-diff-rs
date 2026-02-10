@@ -7,7 +7,7 @@ use std::fmt::Write;
 use std::path::Path;
 
 use crate::data::ResultSet;
-use crate::plots::{METHODS, METHOD_LABELS};
+use crate::plots::{METHOD_LABELS, METHODS};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,11 +43,7 @@ fn write_header(out: &mut String) {
         "This report compares four methods for applying changes to an SQLite database:\n"
     )
     .unwrap();
-    writeln!(
-        out,
-        "| Method | Description |"
-    )
-    .unwrap();
+    writeln!(out, "| Method | Description |").unwrap();
     writeln!(out, "|--------|-------------|").unwrap();
     writeln!(
         out,
