@@ -821,7 +821,7 @@ fn bench_apply_base(c: &mut Criterion) {
                 IdPools::empty()
             };
 
-            for op_count in [30usize, 100, 1000] {
+            for op_count in [30usize, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000] {
                 let group_name = format!("apply/{}/{state_label}/{op_count}", kind.label());
                 let mut group = c.benchmark_group(&group_name);
 

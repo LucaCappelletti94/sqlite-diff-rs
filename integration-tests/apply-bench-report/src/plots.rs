@@ -88,7 +88,7 @@ pub fn scaling_chart(
     config: &str,
     output: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let op_counts: &[usize] = &[30, 100, 1000];
+    let op_counts: &[usize] = &[30, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
 
     // Collect data points per method.
     let mut series: Vec<(&str, Vec<(f64, f64, f64, f64)>)> = Vec::new();
