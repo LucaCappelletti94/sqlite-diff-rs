@@ -247,3 +247,153 @@ async fn test_user_does_not_receive_others_messages() {
         "Eve should not receive Alice→Bob message"
     );
 }
+
+#[tokio::test]
+async fn test_self_message() {
+    // User sends a message to themselves
+    let url = start_server().await;
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut sink, mut stream) = ws.split();
+
+    let user_id = uuid::Uuid::new_v4();
+
+    // Login
+    sink.send(Message::Binary(
+        build_user_insert_patchset(user_id.as_bytes(), "Solo", "2026-02-07T00:00:00Z").into(),
+    ))
+    .await
+    .unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Send message to self
+    let msg_id = uuid::Uuid::new_v4();
+    sink.send(Message::Binary(
+        build_message_insert_patchset(
+            msg_id.as_bytes(),
+            user_id.as_bytes(),
+            user_id.as_bytes(), // same as sender
+            "Note to self",
+            "2026-02-07T00:00:01Z",
+        )
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // Should receive the message (sent to self)
+    let received = recv_patchsets(&mut stream, 500).await;
+    assert!(
+        !received.is_empty(),
+        "User should receive their own self-message"
+    );
+}
+
+#[tokio::test]
+async fn test_late_joiner_catches_up() {
+    // Alice joins, sends messages, Bob joins later and gets catch-up
+    let url = start_server().await;
+
+    // Alice connects and logs in
+    let (alice_ws, _) = connect_async(&url).await.unwrap();
+    let (mut alice_sink, _alice_stream) = alice_ws.split();
+
+    let alice_id = uuid::Uuid::new_v4();
+    let bob_id = uuid::Uuid::new_v4();
+
+    alice_sink
+        .send(Message::Binary(
+            build_user_insert_patchset(alice_id.as_bytes(), "Alice", "2026-02-07T00:00:00Z").into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Alice sends a message to Bob (who isn't connected yet)
+    let msg_id = uuid::Uuid::new_v4();
+    alice_sink
+        .send(Message::Binary(
+            build_message_insert_patchset(
+                msg_id.as_bytes(),
+                alice_id.as_bytes(),
+                bob_id.as_bytes(),
+                "Hey Bob, are you there?",
+                "2026-02-07T00:00:01Z",
+            )
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Now Bob connects
+    let (bob_ws, _) = connect_async(&url).await.unwrap();
+    let (mut bob_sink, mut bob_stream) = bob_ws.split();
+
+    bob_sink
+        .send(Message::Binary(
+            build_user_insert_patchset(bob_id.as_bytes(), "Bob", "2026-02-07T00:00:02Z").into(),
+        ))
+        .await
+        .unwrap();
+
+    // Bob should receive catch-up with Alice's user info AND the message
+    let bob_catchup = recv_patchsets(&mut bob_stream, 500).await;
+    assert!(
+        !bob_catchup.is_empty(),
+        "Bob should receive catch-up patchset"
+    );
+
+    // All received patchsets should be valid
+    for data in &bob_catchup {
+        let parsed = ParsedDiffSet::parse(data).unwrap();
+        assert!(parsed.is_patchset());
+    }
+}
+
+#[tokio::test]
+async fn test_malformed_data_ignored() {
+    // Server should handle malformed data gracefully
+    let url = start_server().await;
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut sink, mut stream) = ws.split();
+
+    // Send garbage data
+    sink.send(Message::Binary(vec![0xFF, 0xFE, 0xFD].into()))
+        .await
+        .unwrap();
+
+    // Should not crash, but also shouldn't receive anything meaningful
+    let received = recv_patchsets(&mut stream, 300).await;
+    assert!(received.is_empty(), "Garbage input should be ignored");
+
+    // Connection should still work - send valid user registration
+    let user_id = uuid::Uuid::new_v4();
+    sink.send(Message::Binary(
+        build_user_insert_patchset(user_id.as_bytes(), "Valid", "2026-02-07T00:00:00Z").into(),
+    ))
+    .await
+    .unwrap();
+
+    // This is a valid registration, connection should still be alive
+    // (we don't expect a response for the first user since there are no others)
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+}
+
+#[tokio::test]
+async fn test_empty_message_ignored() {
+    let url = start_server().await;
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut sink, mut stream) = ws.split();
+
+    // Send empty binary message
+    sink.send(Message::Binary(vec![].into())).await.unwrap();
+
+    let received = recv_patchsets(&mut stream, 300).await;
+    assert!(received.is_empty(), "Empty messages should be ignored");
+}

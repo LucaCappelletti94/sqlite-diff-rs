@@ -530,3 +530,229 @@ fn decode_varint(data: &[u8]) -> Option<(usize, usize)> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{Message as ChatMessage, User};
+
+    fn make_user(id: u8, name: &str) -> User {
+        User {
+            id: vec![id; 16],
+            name: name.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn make_message(id: u8, sender: u8, receiver: u8, body: &str) -> ChatMessage {
+        ChatMessage {
+            id: vec![id; 16],
+            sender_id: vec![sender; 16],
+            receiver_id: vec![receiver; 16],
+            body: body.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // decode_varint tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_decode_varint_empty() {
+        assert!(decode_varint(&[]).is_none());
+    }
+
+    #[test]
+    fn test_decode_varint_single_byte() {
+        // Values 0-127 fit in one byte with high bit clear
+        let (val, len) = decode_varint(&[0x00]).unwrap();
+        assert_eq!(val, 0);
+        assert_eq!(len, 1);
+
+        let (val, len) = decode_varint(&[0x7F]).unwrap();
+        assert_eq!(val, 127);
+        assert_eq!(len, 1);
+
+        let (val, len) = decode_varint(&[0x01]).unwrap();
+        assert_eq!(val, 1);
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_decode_varint_two_bytes() {
+        // 128 = 0x80 0x00 in varint (first byte has continuation, second doesn't)
+        // Actually: 128 = (1 << 7) so first byte = 0x81, second = 0x00
+        let (val, len) = decode_varint(&[0x81, 0x00]).unwrap();
+        assert_eq!(val, 128);
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn test_decode_varint_truncated() {
+        // High bit set but no continuation byte
+        assert!(decode_varint(&[0x80]).is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // parse_n_values tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_n_values_null() {
+        // 0x05 = Null
+        let data = [0x05];
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(values.len(), 1);
+        assert!(matches!(values[0], Value::Null));
+    }
+
+    #[test]
+    fn test_parse_n_values_undefined() {
+        // 0x00 = Undefined (treated as Null)
+        let data = [0x00];
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 1);
+        assert!(matches!(values[0], Value::Null));
+    }
+
+    #[test]
+    fn test_parse_n_values_integer() {
+        // 0x01 = Integer, followed by 8 bytes big-endian
+        let mut data = vec![0x01];
+        data.extend_from_slice(&42i64.to_be_bytes());
+
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 9);
+        assert!(matches!(values[0], Value::Integer(42)));
+    }
+
+    #[test]
+    fn test_parse_n_values_float() {
+        // 0x02 = Float, followed by 8 bytes big-endian
+        let mut data = vec![0x02];
+        data.extend_from_slice(&3.14f64.to_be_bytes());
+
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 9);
+        if let Value::Real(v) = values[0] {
+            assert!((v - 3.14).abs() < 0.001);
+        } else {
+            panic!("Expected Real value");
+        }
+    }
+
+    #[test]
+    fn test_parse_n_values_text() {
+        // 0x03 = Text, varint length, UTF-8 bytes
+        // "hello" = 5 bytes, varint 5 = 0x05
+        let data = [0x03, 0x05, b'h', b'e', b'l', b'l', b'o'];
+
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 7);
+        if let Value::Text(s) = &values[0] {
+            assert_eq!(s, "hello");
+        } else {
+            panic!("Expected Text value");
+        }
+    }
+
+    #[test]
+    fn test_parse_n_values_blob() {
+        // 0x04 = Blob, varint length, raw bytes
+        let data = [0x04, 0x03, 0xDE, 0xAD, 0xBE];
+
+        let (values, len) = parse_n_values(&data, 1).unwrap();
+        assert_eq!(len, 5);
+        if let Value::Blob(b) = &values[0] {
+            assert_eq!(b, &[0xDE, 0xAD, 0xBE]);
+        } else {
+            panic!("Expected Blob value");
+        }
+    }
+
+    #[test]
+    fn test_parse_n_values_multiple() {
+        // Parse two values: Integer(1) and Text("hi")
+        let mut data = vec![0x01]; // Integer
+        data.extend_from_slice(&1i64.to_be_bytes());
+        data.push(0x03); // Text
+        data.push(0x02); // length = 2
+        data.extend_from_slice(b"hi");
+
+        let (values, len) = parse_n_values(&data, 2).unwrap();
+        assert_eq!(len, 13); // 1 + 8 + 1 + 1 + 2
+        assert_eq!(values.len(), 2);
+        assert!(matches!(values[0], Value::Integer(1)));
+        if let Value::Text(s) = &values[1] {
+            assert_eq!(s, "hi");
+        } else {
+            panic!("Expected Text");
+        }
+    }
+
+    #[test]
+    fn test_parse_n_values_truncated() {
+        // Integer needs 9 bytes total, only provide 5
+        let data = [0x01, 0x00, 0x00, 0x00, 0x00];
+        assert!(parse_n_values(&data, 1).is_none());
+    }
+
+    #[test]
+    fn test_parse_n_values_unknown_type() {
+        // Unknown type code
+        let data = [0xFF];
+        assert!(parse_n_values(&data, 1).is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // build_*_patchset tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_build_user_patchset() {
+        let user = make_user(1, "Alice");
+        let patchset = build_user_patchset(&user);
+
+        assert!(!patchset.is_empty());
+        // Should be parseable as a patchset
+        let parsed = ParsedDiffSet::parse(&patchset).unwrap();
+        assert!(parsed.is_patchset());
+    }
+
+    #[test]
+    fn test_build_message_patchset() {
+        let msg = make_message(1, 1, 2, "Hello!");
+        let patchset = build_message_patchset(&msg);
+
+        assert!(!patchset.is_empty());
+        let parsed = ParsedDiffSet::parse(&patchset).unwrap();
+        assert!(parsed.is_patchset());
+    }
+
+    #[test]
+    fn test_user_insert() {
+        let user = make_user(42, "TestUser");
+        let insert = user_insert(&user);
+
+        // Build a patchset from it and verify it's valid
+        let patchset: Vec<u8> = PatchSet::<Schema, String, Vec<u8>>::new()
+            .insert(insert)
+            .into();
+        let parsed = ParsedDiffSet::parse(&patchset).unwrap();
+        assert!(parsed.is_patchset());
+    }
+
+    #[test]
+    fn test_message_insert() {
+        let msg = make_message(1, 10, 20, "Test message");
+        let insert = message_insert(&msg);
+
+        let patchset: Vec<u8> = PatchSet::<Schema, String, Vec<u8>>::new()
+            .insert(insert)
+            .into();
+        let parsed = ParsedDiffSet::parse(&patchset).unwrap();
+        assert!(parsed.is_patchset());
+    }
+}
