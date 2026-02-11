@@ -26,6 +26,19 @@
 //! | DELETE | INSERT | UPDATE if different, no-op if same |
 //! | DELETE | UPDATE | Ignore new |
 //! | DELETE | DELETE | Ignore new |
+//!
+//! # Merging Changesets / Patchsets
+//!
+//! Two changesets or patchsets can be merged using the `|` (BitOr) operator,
+//! which is equivalent to SQLite's `sqlite3changeset_concat()`:
+//!
+//! ```ignore
+//! let combined = changeset_a | changeset_b;
+//! // or in-place:
+//! changeset_a |= changeset_b;
+//! ```
+//!
+//! Operations affecting the same row are consolidated using the rules above.
 
 use indexmap::IndexMap as IndexMapRaw;
 
@@ -33,6 +46,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::hash::Hash;
+use core::ops::{BitOr, BitOrAssign};
 
 use crate::{
     SchemaWithPK,
@@ -857,6 +871,76 @@ impl<
 }
 
 // ============================================================================
+// BitOr / BitOrAssign for DiffSetBuilder (changeset concatenation)
+// ============================================================================
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> BitOrAssign for DiffSetBuilder<ChangesetFormat, T, S, B>
+{
+    /// Merge another changeset into this one, consolidating operations on the same row.
+    ///
+    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    fn bitor_assign(&mut self, rhs: Self) {
+        for (table, rows) in rhs.tables {
+            for (pk, op) in rows {
+                self.add_operation(&table, pk, op);
+            }
+        }
+    }
+}
+
+impl<
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> BitOr for DiffSetBuilder<ChangesetFormat, T, S, B>
+{
+    type Output = Self;
+
+    /// Merge two changesets, consolidating operations on the same row.
+    ///
+    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    #[inline]
+    fn bitor(mut self, rhs: Self) -> Self::Output {
+        self |= rhs;
+        self
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
+    BitOrAssign for DiffSetBuilder<PatchsetFormat, T, S, B>
+{
+    /// Merge another patchset into this one, consolidating operations on the same row.
+    ///
+    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    fn bitor_assign(&mut self, rhs: Self) {
+        for (table, rows) in rhs.tables {
+            for (pk, op) in rows {
+                self.add_operation(&table, pk, op);
+            }
+        }
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> BitOr
+    for DiffSetBuilder<PatchsetFormat, T, S, B>
+{
+    type Output = Self;
+
+    /// Merge two patchsets, consolidating operations on the same row.
+    ///
+    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    #[inline]
+    fn bitor(mut self, rhs: Self) -> Self::Output {
+        self |= rhs;
+        self
+    }
+}
+
+// ============================================================================
 // DiffSet — frozen (parsed) changeset/patchset with sequential row order
 // ============================================================================
 
@@ -1648,5 +1732,181 @@ mod tests {
 
         // INSERT + DELETE with same values cancels out
         assert!(bytes.is_empty());
+    }
+
+    // ========================================================================
+    // BitOr / BitOrAssign tests
+    // ========================================================================
+
+    #[test]
+    fn test_bitor_changeset_disjoint_rows() {
+        let table = TestTable::new("users", 2, 0);
+
+        let insert1 = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "bob")
+            .unwrap();
+
+        let cs1 = ChangesetBuilder::new().insert(insert1);
+        let cs2 = ChangesetBuilder::new().insert(insert2);
+
+        let merged = cs1 | cs2;
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_bitor_changeset_consolidates_same_row() {
+        let table = TestTable::new("users", 2, 0);
+
+        // First changeset: INSERT row 1
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        // Second changeset: DELETE row 1
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let cs1 = ChangesetBuilder::new().insert(insert);
+        let cs2 = ChangesetBuilder::new().delete(delete);
+
+        // INSERT + DELETE with same values should cancel out
+        let merged = cs1 | cs2;
+        assert_eq!(merged.len(), 0);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_bitor_assign_changeset() {
+        let table = TestTable::new("users", 2, 0);
+
+        let insert1 = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "bob")
+            .unwrap();
+
+        let mut cs = ChangesetBuilder::new().insert(insert1);
+        cs |= ChangesetBuilder::new().insert(insert2);
+
+        assert_eq!(cs.len(), 2);
+    }
+
+    #[test]
+    fn test_bitor_patchset_disjoint_rows() {
+        type PatchsetBuilder = DiffSetBuilder<PatchsetFormat, TestTable, String, Vec<u8>>;
+
+        let table = TestTable::new("users", 2, 0);
+
+        let insert1 = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "bob")
+            .unwrap();
+
+        let ps1 = PatchsetBuilder::new().insert(insert1);
+        let ps2 = PatchsetBuilder::new().insert(insert2);
+
+        let merged = ps1 | ps2;
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_bitor_patchset_consolidates_same_row() {
+        type PatchsetBuilder = DiffSetBuilder<PatchsetFormat, TestTable, String, Vec<u8>>;
+
+        let table = TestTable::new("users", 2, 0);
+
+        // First patchset: INSERT row 1
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        // Second patchset: DELETE row 1
+        let delete = PatchDelete::new(table.clone(), vec![Value::Integer(1)]);
+
+        let ps1 = PatchsetBuilder::new().insert(insert);
+        let ps2 = PatchsetBuilder::new().delete(delete);
+
+        // INSERT + DELETE should cancel out
+        let merged = ps1 | ps2;
+        assert_eq!(merged.len(), 0);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_bitor_multiple_tables() {
+        let table1 = TestTable::new("users", 2, 0);
+        let table2 = TestTable::new("posts", 2, 0);
+
+        let insert1 = Insert::from(table1.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        let insert2 = Insert::from(table2.clone())
+            .set(0, 100i64)
+            .unwrap()
+            .set(1, "first post")
+            .unwrap();
+
+        let cs1 = ChangesetBuilder::new().insert(insert1);
+        let cs2 = ChangesetBuilder::new().insert(insert2);
+
+        let merged = cs1 | cs2;
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_bitor_insert_then_update_consolidates() {
+        let table = TestTable::new("users", 2, 0);
+
+        // First changeset: INSERT row 1
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+
+        // Second changeset: UPDATE row 1
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "alice", "alicia")
+            .unwrap();
+
+        let cs1 = ChangesetBuilder::new().insert(insert);
+        let cs2 = ChangesetBuilder::new().update(update);
+
+        // INSERT + UPDATE should consolidate to INSERT with final values
+        let merged = cs1 | cs2;
+        assert_eq!(merged.len(), 1);
     }
 }

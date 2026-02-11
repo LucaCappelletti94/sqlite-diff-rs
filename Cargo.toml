@@ -2,9 +2,14 @@
 name = "sqlite-diff-rs"
 version = "0.1.0"
 edition = "2024"
-description = "Builder pattern for SQLite changeset and patchset binary formats"
+rust-version = "1.85"
+description = "Build SQLite changeset and patchset binary formats programmatically, without SQLite"
 license = "MIT"
 repository = "https://github.com/LucaCappelletti94/sqlite-diff-rs"
+documentation = "https://docs.rs/sqlite-diff-rs"
+readme = "README.md"
+keywords = ["sqlite", "changeset", "patchset", "session", "cdc"]
+categories = ["database", "encoding", "no-std"]
 
 [workspace]
 members = [
