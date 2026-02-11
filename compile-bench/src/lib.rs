@@ -670,3 +670,69 @@ mod builder_exports {
         builder_approach::patchset().len()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rusqlite")]
+    mod rusqlite_tests {
+        use crate::rusqlite_approach;
+
+        #[test]
+        fn test_rusqlite_changeset() {
+            let changeset = rusqlite_approach::changeset();
+            assert!(!changeset.is_empty(), "changeset should not be empty");
+        }
+
+        #[test]
+        fn test_rusqlite_patchset() {
+            let patchset = rusqlite_approach::patchset();
+            assert!(!patchset.is_empty(), "patchset should not be empty");
+        }
+    }
+
+    #[cfg(feature = "builder")]
+    mod builder_tests {
+        use crate::builder_approach;
+
+        #[test]
+        fn test_builder_changeset() {
+            let changeset = builder_approach::changeset();
+            assert!(!changeset.is_empty(), "changeset should not be empty");
+        }
+
+        #[test]
+        fn test_builder_patchset() {
+            let patchset = builder_approach::patchset();
+            assert!(!patchset.is_empty(), "patchset should not be empty");
+        }
+    }
+
+    #[cfg(all(feature = "rusqlite", feature = "builder"))]
+    mod comparison_tests {
+        use crate::{builder_approach, rusqlite_approach};
+
+        #[test]
+        fn test_changeset_output_matches() {
+            let rusqlite = rusqlite_approach::changeset();
+            let builder = builder_approach::changeset();
+            assert_eq!(
+                rusqlite, builder,
+                "rusqlite and builder changesets should match"
+            );
+        }
+
+        #[test]
+        fn test_patchset_output_matches() {
+            let rusqlite = rusqlite_approach::patchset();
+            let builder = builder_approach::patchset();
+            assert_eq!(
+                rusqlite, builder,
+                "rusqlite and builder patchsets should match"
+            );
+        }
+    }
+}
