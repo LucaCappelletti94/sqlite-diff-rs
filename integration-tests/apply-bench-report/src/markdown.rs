@@ -340,3 +340,129 @@ pub fn generate_report(
     eprintln!("    Saved: {}", report_path.display());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::BenchmarkResult;
+
+    #[test]
+    fn test_fmt_us_microseconds() {
+        assert_eq!(fmt_us(100.0), "100.0 µs");
+        assert_eq!(fmt_us(999.9), "999.9 µs");
+        assert_eq!(fmt_us(0.5), "0.5 µs");
+    }
+
+    #[test]
+    fn test_fmt_us_milliseconds() {
+        assert_eq!(fmt_us(1000.0), "1.00 ms");
+        assert_eq!(fmt_us(1500.0), "1.50 ms");
+        assert_eq!(fmt_us(10000.0), "10.00 ms");
+    }
+
+    #[test]
+    fn test_speedup() {
+        assert!((speedup(100.0, 50.0) - 2.0).abs() < 0.001);
+        assert!((speedup(100.0, 100.0) - 1.0).abs() < 0.001);
+        assert!((speedup(50.0, 100.0) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_speedup_zero_target() {
+        let sp = speedup(100.0, 0.0);
+        assert!(sp.is_nan());
+    }
+
+    fn create_test_results() -> ResultSet {
+        let results = vec![
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 10_000_000.0,
+                median_ns: 9_000_000.0,
+                std_dev_ns: 500_000.0,
+                mean_lower_ns: 9_500_000.0,
+                mean_upper_ns: 10_500_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 2_000_000.0,
+                median_ns: 1_800_000.0,
+                std_dev_ns: 100_000.0,
+                mean_lower_ns: 1_900_000.0,
+                mean_upper_ns: 2_100_000.0,
+            },
+            BenchmarkResult {
+                group_id: "changeset_generation".to_string(),
+                function_id: "builder".to_string(),
+                mean_ns: 500_000.0,
+                median_ns: 450_000.0,
+                std_dev_ns: 25_000.0,
+                mean_lower_ns: 475_000.0,
+                mean_upper_ns: 525_000.0,
+            },
+        ];
+        ResultSet { results }
+    }
+
+    #[test]
+    fn test_write_header() {
+        let mut out = String::new();
+        write_header(&mut out);
+        assert!(out.contains("# Apply Benchmark Report"));
+        assert!(out.contains("Methodology"));
+    }
+
+    #[test]
+    fn test_write_summary_table() {
+        let rs = create_test_results();
+        let mut out = String::new();
+        write_summary_table(&mut out, &rs);
+        assert!(out.contains("## Summary Table"));
+        assert!(out.contains("PK Type"));
+    }
+
+    #[test]
+    fn test_write_scaling_section() {
+        let mut out = String::new();
+        write_scaling_section(&mut out);
+        assert!(out.contains("## Scaling Analysis"));
+        assert!(out.contains("scaling_int_pk_empty.svg"));
+    }
+
+    #[test]
+    fn test_write_generation_section_with_results() {
+        let rs = create_test_results();
+        let mut out = String::new();
+        write_generation_section(&mut out, &rs);
+        assert!(out.contains("## Generation Benchmarks"));
+        assert!(out.contains("changeset_generation"));
+    }
+
+    #[test]
+    fn test_write_generation_section_empty() {
+        let rs = ResultSet { results: vec![] };
+        let mut out = String::new();
+        write_generation_section(&mut out, &rs);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_generate_report() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-report-test");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = generate_report(&rs, &temp_dir);
+        assert!(result.is_ok());
+
+        let report_path = temp_dir.join("report.md");
+        assert!(report_path.exists());
+
+        let content = std::fs::read_to_string(&report_path).unwrap();
+        assert!(content.contains("# Apply Benchmark Report"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+}

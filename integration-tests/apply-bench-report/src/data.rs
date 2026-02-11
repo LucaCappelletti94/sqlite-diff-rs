@@ -323,4 +323,152 @@ mod tests {
     fn test_parse_non_apply() {
         assert!(parse_apply_dimensions("changeset_generation").is_none());
     }
+
+    #[test]
+    fn test_parse_too_short() {
+        assert!(parse_apply_dimensions("apply/int_pk/empty").is_none());
+    }
+
+    #[test]
+    fn test_parse_invalid_op_count() {
+        assert!(parse_apply_dimensions("apply/int_pk/empty/notanumber").is_none());
+    }
+
+    #[test]
+    fn test_benchmark_result_conversions() {
+        let result = BenchmarkResult {
+            group_id: "apply/int_pk/empty/100".to_string(),
+            function_id: "changeset".to_string(),
+            mean_ns: 5_000_000.0,   // 5ms = 5000µs
+            median_ns: 4_500_000.0, // 4.5ms = 4500µs
+            std_dev_ns: 100_000.0,  // 100µs
+            mean_lower_ns: 4_800_000.0,
+            mean_upper_ns: 5_200_000.0,
+        };
+
+        assert!((result.mean_us() - 5000.0).abs() < 0.01);
+        assert!((result.median_us() - 4500.0).abs() < 0.01);
+        assert!((result.std_dev_us() - 100.0).abs() < 0.01);
+    }
+
+    fn create_test_results() -> ResultSet {
+        let results = vec![
+            BenchmarkResult {
+                group_id: "apply/int_pk/empty/30".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 1000.0,
+                median_ns: 900.0,
+                std_dev_ns: 50.0,
+                mean_lower_ns: 950.0,
+                mean_upper_ns: 1050.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/empty/30".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 500.0,
+                median_ns: 450.0,
+                std_dev_ns: 25.0,
+                mean_lower_ns: 475.0,
+                mean_upper_ns: 525.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 10000.0,
+                median_ns: 9000.0,
+                std_dev_ns: 500.0,
+                mean_lower_ns: 9500.0,
+                mean_upper_ns: 10500.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000/indexed".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 12000.0,
+                median_ns: 11000.0,
+                std_dev_ns: 600.0,
+                mean_lower_ns: 11500.0,
+                mean_upper_ns: 12500.0,
+            },
+            BenchmarkResult {
+                group_id: "changeset_generation".to_string(),
+                function_id: "builder".to_string(),
+                mean_ns: 2000.0,
+                median_ns: 1800.0,
+                std_dev_ns: 100.0,
+                mean_lower_ns: 1900.0,
+                mean_upper_ns: 2100.0,
+            },
+        ];
+        ResultSet { results }
+    }
+
+    #[test]
+    fn test_apply_results() {
+        let rs = create_test_results();
+        let apply = rs.apply_results();
+        assert_eq!(apply.len(), 4);
+    }
+
+    #[test]
+    fn test_generation_results() {
+        let rs = create_test_results();
+        let r#gen = rs.generation_results();
+        assert_eq!(r#gen.len(), 1);
+        assert_eq!(r#gen[0].group_id, "changeset_generation");
+    }
+
+    #[test]
+    fn test_find_apply() {
+        let rs = create_test_results();
+
+        let found = rs.find_apply("int_pk", "empty", 30, "base", "sql");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().function_id, "sql");
+
+        let found = rs.find_apply("int_pk", "populated", 1000, "indexed", "sql");
+        assert!(found.is_some());
+
+        let not_found = rs.find_apply("uuid_pk", "empty", 30, "base", "sql");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_scaling_groups() {
+        let rs = create_test_results();
+        let groups = rs.scaling_groups();
+
+        // Should have entries for (int_pk, empty, base), (int_pk, populated, base), (int_pk, populated, indexed)
+        assert!(!groups.is_empty());
+
+        let key = (
+            "int_pk".to_string(),
+            "empty".to_string(),
+            "base".to_string(),
+        );
+        assert!(groups.contains_key(&key));
+
+        let ops_map = &groups[&key];
+        assert!(ops_map.contains_key(&30));
+    }
+
+    #[test]
+    fn test_config_groups() {
+        let rs = create_test_results();
+        let groups = rs.config_groups();
+
+        // Only populated results are included in config_groups
+        // Should have entry for (int_pk, 1000, sql)
+        let key = ("int_pk".to_string(), 1000, "sql".to_string());
+        assert!(groups.contains_key(&key));
+
+        let config_map = &groups[&key];
+        assert!(config_map.contains_key("base"));
+        assert!(config_map.contains_key("indexed"));
+    }
+
+    #[test]
+    fn test_load_nonexistent_dir() {
+        let rs = ResultSet::load(std::path::Path::new("/nonexistent/path"));
+        assert!(rs.results.is_empty());
+    }
 }

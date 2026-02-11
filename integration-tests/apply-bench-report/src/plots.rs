@@ -578,3 +578,212 @@ pub fn generate_all(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_method_color() {
+        assert_eq!(method_color("sql"), COLOR_SQL);
+        assert_eq!(method_color("sql_tx"), COLOR_SQL_TX);
+        assert_eq!(method_color("patchset"), COLOR_PATCHSET);
+        assert_eq!(method_color("changeset"), COLOR_CHANGESET);
+        assert_eq!(method_color("unknown"), RGBColor(128, 128, 128));
+    }
+
+    #[test]
+    fn test_method_label() {
+        assert_eq!(method_label("sql"), "SQL (autocommit)");
+        assert_eq!(method_label("sql_tx"), "SQL (transaction)");
+        assert_eq!(method_label("patchset"), "Patchset");
+        assert_eq!(method_label("changeset"), "Changeset");
+        assert_eq!(method_label("unknown"), "unknown");
+    }
+
+    #[test]
+    fn test_method_stroke() {
+        assert_eq!(method_stroke("sql"), 2);
+        assert_eq!(method_stroke("sql_tx"), 2);
+        assert_eq!(method_stroke("patchset"), 3);
+        assert_eq!(method_stroke("changeset"), 3);
+    }
+
+    #[test]
+    fn test_y_fmt() {
+        assert_eq!(y_fmt(&0.5), "0.5 µs");
+        assert_eq!(y_fmt(&1.0), "1 µs");
+        assert_eq!(y_fmt(&100.0), "100 µs");
+        assert_eq!(y_fmt(&999.0), "999 µs");
+        assert_eq!(y_fmt(&1000.0), "1.0 ms");
+        assert_eq!(y_fmt(&1500.0), "1.5 ms");
+    }
+
+    #[test]
+    fn test_methods_and_labels_consistent() {
+        assert_eq!(METHODS.len(), METHOD_LABELS.len());
+    }
+
+    fn create_test_results() -> ResultSet {
+        let results = vec![
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/30".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 1_000_000.0,
+                median_ns: 900_000.0,
+                std_dev_ns: 50_000.0,
+                mean_lower_ns: 850_000.0,
+                mean_upper_ns: 1_050_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/30".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 500_000.0,
+                median_ns: 450_000.0,
+                std_dev_ns: 25_000.0,
+                mean_lower_ns: 425_000.0,
+                mean_upper_ns: 525_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/100".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 3_000_000.0,
+                median_ns: 2_800_000.0,
+                std_dev_ns: 150_000.0,
+                mean_lower_ns: 2_700_000.0,
+                mean_upper_ns: 3_100_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/100".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 1_500_000.0,
+                median_ns: 1_400_000.0,
+                std_dev_ns: 75_000.0,
+                mean_lower_ns: 1_350_000.0,
+                mean_upper_ns: 1_550_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 10_000_000.0,
+                median_ns: 9_000_000.0,
+                std_dev_ns: 500_000.0,
+                mean_lower_ns: 8_500_000.0,
+                mean_upper_ns: 10_500_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/int_pk/populated/1000".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 2_000_000.0,
+                median_ns: 1_800_000.0,
+                std_dev_ns: 100_000.0,
+                mean_lower_ns: 1_700_000.0,
+                mean_upper_ns: 2_100_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/uuid_pk/populated/1000".to_string(),
+                function_id: "sql".to_string(),
+                mean_ns: 12_000_000.0,
+                median_ns: 11_000_000.0,
+                std_dev_ns: 600_000.0,
+                mean_lower_ns: 10_500_000.0,
+                mean_upper_ns: 12_500_000.0,
+            },
+            BenchmarkResult {
+                group_id: "apply/uuid_pk/populated/1000".to_string(),
+                function_id: "changeset".to_string(),
+                mean_ns: 2_500_000.0,
+                median_ns: 2_300_000.0,
+                std_dev_ns: 125_000.0,
+                mean_lower_ns: 2_200_000.0,
+                mean_upper_ns: 2_600_000.0,
+            },
+        ];
+        ResultSet { results }
+    }
+
+    #[test]
+    fn test_scaling_chart_with_data() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-scaling");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = scaling_chart(
+            &rs,
+            "int_pk",
+            "populated",
+            "base",
+            &temp_dir.join("test.svg"),
+        );
+        assert!(result.is_ok());
+        assert!(temp_dir.join("test.svg").exists());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_scaling_chart_empty() {
+        let rs = ResultSet { results: vec![] };
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-empty");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = scaling_chart(&rs, "int_pk", "empty", "base", &temp_dir.join("test.svg"));
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_method_comparison_chart() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-method");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = method_comparison_chart(
+            &rs,
+            "int_pk",
+            "populated",
+            1000,
+            "base",
+            &temp_dir.join("method.svg"),
+        );
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_config_variant_chart() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-config");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = config_variant_chart(&rs, "int_pk", &temp_dir.join("config.svg"));
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_pk_comparison_chart() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-pk");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let result = pk_comparison_chart(&rs, &temp_dir.join("pk.svg"));
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_generate_all() {
+        let rs = create_test_results();
+        let temp_dir = std::env::temp_dir().join("apply-bench-plots-test-all");
+
+        let result = generate_all(&rs, &temp_dir);
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+}
