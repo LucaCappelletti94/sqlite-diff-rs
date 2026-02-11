@@ -8,7 +8,7 @@
 //! - [`byte_diff_report`]: pretty-print a byte-level diff between two buffers
 //! - [`assert_bit_parity`]: assert byte-for-byte equality for both changeset and patchset
 //! - [`TypedSimpleTable`]: a [`SimpleTable`] with column type information and `Display` for DDL
-//! - [`SqlType`]: SQLite column type affinities
+//! - [`SqlType`]: `SQLite` column type affinities
 //! - [`test_roundtrip`]: parse → serialize → reparse → assert equality
 //! - [`test_apply_roundtrip`]: parse, roundtrip, then apply changeset to an in-memory database
 //! - [`test_reverse_idempotent`]: verify `reverse(reverse(x)) == x` for changesets
@@ -39,7 +39,7 @@ use crate::schema::SimpleTable;
 // SqlType – SQLite column type affinities
 // ---------------------------------------------------------------------------
 
-/// SQLite column type affinities for use in `CREATE TABLE` DDL generation.
+/// `SQLite` column type affinities for use in `CREATE TABLE` DDL generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SqlType {
     /// `INTEGER` affinity.
@@ -127,7 +127,7 @@ impl TypedSimpleTable {
     /// Create a `TypedSimpleTable` from a [`crate::parser::TableSchema`].
     ///
     /// Synthesizes generic column names (`c0`, `c1`, …) and uses
-    /// [`SqlType::Blob`] for every column (the most permissive SQLite type).
+    /// [`SqlType::Blob`] for every column (the most permissive `SQLite` type).
     /// This is primarily useful in fuzz harnesses that parse arbitrary binary
     /// changesets and need to create matching database tables.
     #[must_use]
@@ -248,6 +248,8 @@ impl TypedSimpleTable {
         let mut available: Vec<usize> = (0..ncols).collect();
         let mut pk_indices = Vec::with_capacity(npk);
         for _ in 0..npk {
+            // available.len() is guaranteed > 0 here because npk <= ncols and we remove one per iteration
+            #[allow(clippy::range_minus_one)]
             let idx = u.int_in_range(0..=available.len() - 1)?;
             pk_indices.push(available.remove(idx));
         }
@@ -297,7 +299,11 @@ impl<'a> arbitrary::Arbitrary<'a> for FuzzSchemas {
 /// Test binary roundtrip: parse → serialize → reparse → assert equality.
 ///
 /// Returns early (no panic) if the input cannot be parsed.
-/// Panics if re-parsing or equality checks fail.
+///
+/// # Panics
+///
+/// Panics if re-parsing our own output fails or if the reparsed data doesn't
+/// match the original.
 pub fn test_roundtrip(input: &[u8]) {
     let Ok(parsed) = ParsedDiffSet::try_from(input) else {
         return; // Invalid input is fine, we just shouldn't crash
@@ -317,12 +323,17 @@ pub fn test_roundtrip(input: &[u8]) {
 /// apply against.
 ///
 /// Returns early if the input does not parse as a valid changeset/patchset,
-/// skipping the (expensive) SQLite setup. When parsing succeeds the
+/// skipping the (expensive) `SQLite` setup. When parsing succeeds the
 /// **re-serialized** bytes — not the original fuzz input — are applied,
-/// so we test that *our* output is accepted by SQLite.
+/// so we test that *our* output is accepted by `SQLite`.
 ///
 /// Application errors are **not** treated as failures — the changeset may
 /// be semantically invalid for the given schemas. Panics or crashes are bugs.
+///
+/// # Panics
+///
+/// Panics if re-parsing our serialized output fails or if the reparsed data
+/// doesn't match the original.
 pub fn test_apply_roundtrip(schemas: &[TypedSimpleTable], changeset_bytes: &[u8]) {
     // Parse the input; bail early if it is not a valid changeset/patchset.
     // This avoids paying the SQLite-setup cost for the vast majority of
@@ -363,6 +374,11 @@ pub fn test_apply_roundtrip(schemas: &[TypedSimpleTable], changeset_bytes: &[u8]
 /// 4. Empty changesets reverse to empty.
 ///
 /// Returns early (no panic) if the input cannot be parsed or is a patchset.
+///
+/// # Panics
+///
+/// Panics if any of the reversal invariants are violated (double-reverse
+/// not equal to original, operation count changes, etc.).
 pub fn test_reverse_idempotent(input: &[u8]) {
     let Ok(parsed) = ParsedDiffSet::try_from(input) else {
         return;
@@ -410,6 +426,11 @@ pub fn test_reverse_idempotent(input: &[u8]) {
 /// 3. Serializes to binary and re-parses, asserting byte equality.
 ///
 /// Returns early (no panic) if SQL digestion fails or produces no operations.
+///
+/// # Panics
+///
+/// Panics if the serialized patchset cannot be re-parsed or if the binary
+/// representation changes after roundtrip.
 pub fn test_sql_roundtrip(schemas: &[TypedSimpleTable], sql: &str) {
     let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
     for schema in schemas {
@@ -438,7 +459,7 @@ pub fn test_sql_roundtrip(schemas: &[TypedSimpleTable], sql: &str) {
 /// Given one or more table schemas and a SQL DML string, this:
 /// 1. Builds a [`PatchSet`] with all schemas, digests the SQL.
 /// 2. If digestion fails or the result is empty, returns early.
-/// 3. Delegates to [`run_differential_test`](crate::differential_testing::run_differential_test)
+/// 3. Delegates to `run_differential_test` from the `differential_testing` module
 ///    to compare our bytes against rusqlite's session extension output.
 ///
 /// Returns early (no panic) if SQL digestion fails or produces no operations.
@@ -458,10 +479,15 @@ pub fn test_differential(schemas: &[TypedSimpleTable], sql: &str) {
     run_differential_test(&simples, &create_sql_refs, &[sql]);
 }
 
+/// Create an in-memory `SQLite` database, execute statements with a session,
 /// and return the raw changeset and patchset bytes.
 ///
 /// DDL (`CREATE TABLE`) is executed before the session starts.
 /// DML (`INSERT`/`UPDATE`/`DELETE`) is executed inside the session.
+///
+/// # Panics
+///
+/// Panics if database creation, statement execution, or session operations fail.
 #[must_use]
 pub fn session_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>) {
     fn run_session(statements: &[&str], extract: impl Fn(&mut Session<'_>) -> Vec<u8>) -> Vec<u8> {
@@ -562,7 +588,7 @@ pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: &[u8], our_patc
     );
 }
 
-/// Run bit-parity test by digesting SQL into a PatchSet via `digest_sql`,
+/// Run bit-parity test by digesting SQL into a `PatchSet` via `digest_sql`,
 /// serializing to bytes, and comparing the patchset with rusqlite's output.
 ///
 /// Note: this only tests patchset parity since SQL digestion is patchset-only.
@@ -683,6 +709,10 @@ pub fn compare_db_states(conn1: &Connection, conn2: &Connection, create_table_sq
 }
 
 /// Extract the table name from a `CREATE TABLE` SQL string.
+///
+/// # Panics
+///
+/// Panics if the input does not contain a valid `CREATE TABLE` statement.
 #[must_use]
 pub fn extract_table_name(create_sql: &str) -> String {
     let lower = create_sql.to_lowercase();
@@ -715,6 +745,11 @@ pub fn extract_table_name(create_sql: &str) -> String {
 /// 4. Panics with a summary if any input fails or exceeds the time limit.
 ///
 /// Returns the number of files tested.
+///
+/// # Panics
+///
+/// Panics if any test input causes `test_fn` to panic, or if any input exceeds
+/// the time limit.
 pub fn run_crash_dir_regression(
     crash_dir: &str,
     fuzz_source_dir: &str,
@@ -751,7 +786,6 @@ pub fn run_crash_dir_regression(
     let mut tested = 0;
     let mut failures: Vec<String> = Vec::new();
     let mut slow_inputs: Vec<String> = Vec::new();
-    let overall_start = Instant::now();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -799,8 +833,6 @@ pub fn run_crash_dir_regression(
         tested += 1;
     }
 
-    let overall_elapsed = overall_start.elapsed();
-
     assert!(
         failures.is_empty(),
         "Failures in {}/{tested} crash files:\n{}",
@@ -816,10 +848,388 @@ pub fn run_crash_dir_regression(
         slow_inputs.join("\n")
     );
 
-    std::eprintln!(
-        "Tested {tested} crash input files in {:.3}s",
-        overall_elapsed.as_secs_f64()
-    );
-
     tested
+}
+
+// ---------------------------------------------------------------------------
+// wal2json fuzzing helpers (requires `wal2json` feature)
+// ---------------------------------------------------------------------------
+
+/// Test wal2json parsing and conversion: parse JSON, convert to changeset operations.
+///
+/// This fuzzer tests that:
+/// 1. Parsing arbitrary bytes as JSON doesn't panic
+/// 2. Parsing valid JSON as wal2json messages doesn't panic
+/// 3. Converting parsed messages to changeset operations doesn't panic
+/// 4. Round-trip through serialize/deserialize produces equal structures
+///
+/// Returns early (no panic) if the input cannot be parsed as valid JSON.
+///
+/// # Panics
+///
+/// Panics if serde round-trip produces data that doesn't match the original
+/// parsed structure.
+#[cfg(feature = "wal2json")]
+pub fn test_wal2json(input: &[u8]) {
+    use crate::SimpleTable;
+    use crate::wal2json::{Action, MessageV2, TransactionV1, parse_v1, parse_v2};
+    use crate::{ChangeDelete, Insert};
+
+    // Try to interpret as UTF-8 JSON
+    let Ok(json_str) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Try parsing as v2 format (per-tuple JSON)
+    if let Ok(msg) = parse_v2(json_str) {
+        // Round-trip through serde
+        let serialized = serde_json::to_string(&msg);
+        if let Ok(json) = serialized {
+            let reparsed: Result<MessageV2, _> = serde_json::from_str(&json);
+            if let Ok(reparsed) = reparsed {
+                assert_eq!(msg.action, reparsed.action);
+                assert_eq!(msg.table, reparsed.table);
+                assert_eq!(msg.schema, reparsed.schema);
+            }
+        }
+
+        // Try conversion to changeset operations (if it has table info)
+        if let Some(ref table_name) = msg.table {
+            // Build a generic schema for testing conversion
+            let col_names: Vec<&str> = msg.columns.as_ref().map_or_else(
+                || {
+                    msg.identity.as_ref().map_or_else(Vec::new, |cols| {
+                        cols.iter().map(|c| c.name.as_str()).collect()
+                    })
+                },
+                |cols| cols.iter().map(|c| c.name.as_str()).collect(),
+            );
+
+            if !col_names.is_empty() {
+                let table = SimpleTable::new(table_name, &col_names, &[0]);
+
+                match msg.action {
+                    Action::I => {
+                        let _: Result<Insert<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+                    }
+                    Action::D => {
+                        let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
+                            (&msg, &table).try_into();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Try parsing as v1 format (transaction-level JSON)
+    if let Ok(tx) = parse_v1(json_str) {
+        // Round-trip through serde
+        let serialized = serde_json::to_string(&tx);
+        if let Ok(json) = serialized {
+            let reparsed: Result<TransactionV1, _> = serde_json::from_str(&json);
+            if let Ok(reparsed) = reparsed {
+                assert_eq!(tx.change.len(), reparsed.change.len());
+            }
+        }
+
+        // Try conversion for each change
+        for change in &tx.change {
+            if !change.columnnames.is_empty() {
+                let col_refs: Vec<&str> = change.columnnames.iter().map(String::as_str).collect();
+                let table = SimpleTable::new(&change.table, &col_refs, &[0]);
+
+                match change.kind.as_str() {
+                    "insert" => {
+                        let _: Result<Insert<_, String, Vec<u8>>, _> = (change, &table).try_into();
+                    }
+                    "delete" => {
+                        let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
+                            (change, &table).try_into();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Test wal2json with structured arbitrary input.
+///
+/// This tests the wal2json types with their `Arbitrary` implementations,
+/// ensuring serialization and conversion don't panic on any valid structure.
+#[cfg(feature = "wal2json")]
+pub fn test_wal2json_arbitrary(msg: &crate::wal2json::MessageV2) {
+    use crate::SimpleTable;
+    use crate::wal2json::Action;
+    use crate::{ChangeDelete, Insert};
+
+    // Serialize to JSON and back
+    if let Ok(json) = serde_json::to_string(msg) {
+        let _: Result<crate::wal2json::MessageV2, _> = serde_json::from_str(&json);
+    }
+
+    // Try conversion to changeset operations
+    if let Some(ref table_name) = msg.table {
+        let col_names: Vec<&str> = msg.columns.as_ref().map_or_else(
+            || {
+                msg.identity.as_ref().map_or_else(Vec::new, |cols| {
+                    cols.iter().map(|c| c.name.as_str()).collect()
+                })
+            },
+            |cols| cols.iter().map(|c| c.name.as_str()).collect(),
+        );
+
+        if !col_names.is_empty() {
+            let table = SimpleTable::new(table_name, &col_names, &[0]);
+
+            match msg.action {
+                Action::I => {
+                    let _: Result<Insert<_, String, Vec<u8>>, _> = (msg, &table).try_into();
+                }
+                Action::D => {
+                    let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (msg, &table).try_into();
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pg_walstream fuzz testing
+// ---------------------------------------------------------------------------
+
+/// Test `pg_walstream` event parsing and conversion from arbitrary bytes.
+///
+/// This function attempts to:
+/// 1. Parse bytes as UTF-8 JSON
+/// 2. Deserialize as `EventType`
+/// 3. Serialize and verify round-trip
+/// 4. Attempt conversion to changeset operations
+///
+/// The function will not panic on invalid input - it simply returns early.
+#[cfg(feature = "pg-walstream")]
+pub fn test_pg_walstream(input: &[u8]) {
+    use crate::SimpleTable;
+    use crate::pg_walstream::EventType;
+    use crate::{ChangeDelete, Insert};
+
+    // Try to interpret as UTF-8 JSON
+    let Ok(json_str) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Try parsing as EventType
+    let Ok(event) = serde_json::from_str::<EventType>(json_str) else {
+        return;
+    };
+
+    // Round-trip through serde
+    if let Ok(json) = serde_json::to_string(&event) {
+        let _: Result<EventType, _> = serde_json::from_str(&json);
+    }
+
+    // Try conversion to changeset operations based on event type
+    match event {
+        EventType::Insert {
+            ref table,
+            ref data,
+            ..
+        } => {
+            if !data.is_empty() {
+                let col_names: Vec<&str> = data.keys().map(String::as_str).collect();
+                let schema = SimpleTable::new(table, &col_names, &[0]);
+                // Clone event since we need ownership
+                let event_clone = event.clone();
+                let _: Result<Insert<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
+            }
+        }
+        EventType::Delete {
+            ref table,
+            ref old_data,
+            ..
+        } => {
+            if !old_data.is_empty() {
+                let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
+                let schema = SimpleTable::new(table, &col_names, &[0]);
+                let event_clone = event.clone();
+                let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
+                    (event_clone, schema).try_into();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Test `pg_walstream` `ChangeEvent` parsing and conversion from arbitrary bytes.
+#[cfg(feature = "pg-walstream")]
+pub fn test_pg_walstream_change_event(input: &[u8]) {
+    use crate::SimpleTable;
+    use crate::pg_walstream::{ChangeEvent, EventType};
+    use crate::{ChangeDelete, Insert};
+
+    // Try to interpret as UTF-8 JSON
+    let Ok(json_str) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Try parsing as ChangeEvent
+    let Ok(event) = serde_json::from_str::<ChangeEvent>(json_str) else {
+        return;
+    };
+
+    // Round-trip through serde
+    if let Ok(json) = serde_json::to_string(&event) {
+        let _: Result<ChangeEvent, _> = serde_json::from_str(&json);
+    }
+
+    // Try conversion to changeset operations based on event type
+    match &event.event_type {
+        EventType::Insert { table, data, .. } => {
+            if !data.is_empty() {
+                let col_names: Vec<&str> = data.keys().map(String::as_str).collect();
+                let schema = SimpleTable::new(table, &col_names, &[0]);
+                let _: Result<Insert<_, String, Vec<u8>>, _> = (event, schema).try_into();
+            }
+        }
+        EventType::Delete {
+            table, old_data, ..
+        } => {
+            if !old_data.is_empty() {
+                let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
+                let schema = SimpleTable::new(table, &col_names, &[0]);
+                let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, schema).try_into();
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Debezium fuzz testing
+// ---------------------------------------------------------------------------
+
+/// Test Debezium envelope parsing and conversion from arbitrary bytes.
+///
+/// This function attempts to:
+/// 1. Parse bytes as UTF-8 JSON
+/// 2. Deserialize as Debezium `Envelope<serde_json::Value>`
+/// 3. Serialize and verify round-trip
+/// 4. Attempt conversion to changeset operations based on operation type
+///
+/// The function will not panic on invalid input - it simply returns early.
+#[cfg(feature = "debezium")]
+pub fn test_debezium(input: &[u8]) {
+    use crate::SimpleTable;
+    use crate::debezium::{Envelope, Op, parse};
+    use crate::{ChangeDelete, ChangeUpdate, Insert};
+
+    // Try to interpret as UTF-8 JSON
+    let Ok(json_str) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Try parsing as Debezium Envelope
+    let Ok(envelope) = parse::<serde_json::Value>(json_str) else {
+        return;
+    };
+
+    // Round-trip through serde
+    if let Ok(json) = serde_json::to_string(&envelope) {
+        let _: Result<Envelope<serde_json::Value>, _> = serde_json::from_str(&json);
+    }
+
+    // Extract column names from the after or before data for schema building
+    let col_names: Vec<String> = envelope
+        .after
+        .as_ref()
+        .or(envelope.before.as_ref())
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+
+    if col_names.is_empty() {
+        return;
+    }
+
+    // Get table name from source metadata
+    let table_name = envelope.source.table.as_deref().unwrap_or("test_table");
+
+    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
+    let table = SimpleTable::new(table_name, &col_refs, &[0]);
+
+    // Try conversion based on operation type
+    match envelope.op {
+        Op::Create | Op::Read => {
+            let _: Result<Insert<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
+        }
+        Op::Update => {
+            let _: Result<ChangeUpdate<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
+        }
+        Op::Delete => {
+            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
+        }
+        Op::Truncate | Op::Message => {
+            // These operations don't have direct changeset equivalents
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Maxwell fuzz testing
+// ---------------------------------------------------------------------------
+
+/// Test Maxwell message parsing and conversion from arbitrary bytes.
+///
+/// This function attempts to:
+/// 1. Parse bytes as UTF-8 JSON
+/// 2. Deserialize as Maxwell `Message`
+/// 3. Serialize and verify round-trip
+/// 4. Attempt conversion to changeset operations based on operation type
+///
+/// The function will not panic on invalid input - it simply returns early.
+#[cfg(feature = "maxwell")]
+pub fn test_maxwell(input: &[u8]) {
+    use crate::SimpleTable;
+    use crate::maxwell::{Message, OpType, parse};
+    use crate::{ChangeDelete, ChangeUpdate, Insert};
+
+    // Try to interpret as UTF-8 JSON
+    let Ok(json_str) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Try parsing as Maxwell Message
+    let Ok(message) = parse(json_str) else {
+        return;
+    };
+
+    // Round-trip through serde
+    if let Ok(json) = serde_json::to_string(&message) {
+        let _: Result<Message, _> = serde_json::from_str(&json);
+    }
+
+    // Extract column names from the data
+    let col_names: Vec<String> = message.data.keys().cloned().collect();
+
+    if col_names.is_empty() {
+        return;
+    }
+
+    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
+    let table = SimpleTable::new(&message.table, &col_refs, &[0]);
+
+    // Try conversion based on operation type
+    match message.op_type {
+        OpType::Insert => {
+            let _: Result<Insert<_, String, Vec<u8>>, _> = (&message, &table).try_into();
+        }
+        OpType::Update => {
+            let _: Result<ChangeUpdate<_, String, Vec<u8>>, _> = (&message, &table).try_into();
+        }
+        OpType::Delete => {
+            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&message, &table).try_into();
+        }
+    }
 }

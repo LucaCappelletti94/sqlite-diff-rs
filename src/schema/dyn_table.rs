@@ -143,7 +143,7 @@ impl<O, S: Clone, B: Clone> IndexableValues for &[(O, Option<Value<S, B>>)] {
 /// Extension trait for schemas with typed primary key extraction.
 ///
 /// This trait is NOT object-safe due to the associated type.
-/// Use [`DynTable`] with the free function [`extract_pk`] for dynamic dispatch.
+/// Use [`DynTable`] with the `extract_pk` method for dynamic dispatch.
 ///
 /// # Type Parameter
 ///

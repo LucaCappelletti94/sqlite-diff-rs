@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use crate::{
-    builders::{format::Format, ChangesetFormat, PatchsetFormat},
-    encoding::{MaybeValue, Value},
     DynTable, SchemaWithPK,
+    builders::{ChangesetFormat, PatchsetFormat, format::Format},
+    encoding::{MaybeValue, Value},
 };
 
 #[derive(Debug, Clone)]
@@ -21,11 +21,11 @@ pub struct Update<T, F: Format<S, B>, S, B> {
 }
 
 impl<
-        T: DynTable + PartialEq,
-        F: Format<S, B>,
-        S: PartialEq + AsRef<str>,
-        B: PartialEq + AsRef<[u8]>,
-    > PartialEq for Update<T, F, S, B>
+    T: DynTable + PartialEq,
+    F: Format<S, B>,
+    S: PartialEq + AsRef<str>,
+    B: PartialEq + AsRef<[u8]>,
+> PartialEq for Update<T, F, S, B>
 where
     F::Old: PartialEq,
 {

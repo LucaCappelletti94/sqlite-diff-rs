@@ -6,14 +6,22 @@
 extern crate alloc;
 
 pub mod builders;
+#[cfg(feature = "debezium")]
+pub mod debezium;
 #[cfg(feature = "testing")]
 pub mod differential_testing;
 pub(crate) mod encoding;
 pub mod errors;
+#[cfg(feature = "maxwell")]
+pub mod maxwell;
 pub mod parser;
+#[cfg(feature = "pg-walstream")]
+pub mod pg_walstream;
 pub mod schema;
 #[cfg(feature = "testing")]
 pub mod testing;
+#[cfg(feature = "wal2json")]
+pub mod wal2json;
 
 // Re-export main types
 pub use builders::{
@@ -23,7 +31,7 @@ pub use builders::{
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub(crate) use schema::IndexableValues;
-pub use schema::{DynTable, SchemaWithPK, SimpleTable};
+pub use schema::{DynTable, NamedColumns, SchemaWithPK, SimpleTable};
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.

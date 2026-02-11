@@ -1,9 +1,9 @@
-//! Tests verifying SQLite's session extension behavior with empty table entries.
+//! Tests verifying `SQLite`'s session extension behavior with empty table entries.
 //!
 //! These tests answer two key questions for achieving bit-for-bit parity with rusqlite:
 //!
 //! 1. When all operations on a table cancel out (e.g., INSERT then DELETE on the same row),
-//!    does SQLite's session extension still include that table in the changeset/patchset?
+//!    does `SQLite`'s session extension still include that table in the changeset/patchset?
 //!
 //! 2. If a table's operations cancel out and then new operations are added to it,
 //!    does the table appear in its original position or at the end?
@@ -138,7 +138,7 @@ fn extract_table_names(data: &[u8]) -> Vec<String> {
     names
 }
 
-/// Read a varint (SQLite format) and return (value, bytes_consumed).
+/// Read a varint (`SQLite` format) and return (value, `bytes_consumed`).
 fn read_varint(data: &[u8]) -> (u64, usize) {
     let mut value: u64 = 0;
     for (i, &byte) in data.iter().enumerate().take(9) {
@@ -160,7 +160,7 @@ fn read_varint(data: &[u8]) -> (u64, usize) {
 // =============================================================================
 
 /// When a single table has INSERT + DELETE on the same row (cancelling out),
-/// SQLite should produce an empty changeset (no table header at all).
+/// `SQLite` should produce an empty changeset (no table header at all).
 #[test]
 fn test_sqlite_empty_table_after_insert_delete_changeset() {
     let (changeset, _) = session_changeset_and_patchset(&[
@@ -271,12 +271,12 @@ fn test_sqlite_cancelled_table_not_in_patchset_multi_table() {
 /// does the table appear in its original position or at the end?
 ///
 /// Scenario:
-///   1. INSERT into table_a (first touched)
-///   2. INSERT into table_b (second touched)
-///   3. DELETE from table_a (cancels out table_a)
-///   4. INSERT into table_a again (re-adds table_a)
+///   1. INSERT into `table_a` (first touched)
+///   2. INSERT into `table_b` (second touched)
+///   3. DELETE from `table_a` (cancels out `table_a`)
+///   4. INSERT into `table_a` again (re-adds `table_a`)
 ///
-/// Question: In the final changeset, is table_a before or after table_b?
+/// Question: In the final changeset, is `table_a` before or after `table_b`?
 #[test]
 fn test_sqlite_table_order_after_cancel_and_readd_changeset() {
     let (changeset, _) = session_changeset_and_patchset(&[
@@ -409,7 +409,7 @@ fn test_sqlite_table_order_three_tables_cancel_first_patchset() {
 // Parity tests: verify our DiffSetBuilder matches SQLite's behavior
 // =============================================================================
 
-/// Verify that our DiffSetBuilder produces the same result as SQLite when
+/// Verify that our `DiffSetBuilder` produces the same result as `SQLite` when
 /// operations cancel out on a single table.
 #[test]
 fn test_our_builder_empty_after_cancel() {
@@ -448,7 +448,7 @@ fn test_our_builder_empty_after_cancel() {
     );
 }
 
-/// Verify table ordering parity with SQLite after cancel + re-add.
+/// Verify table ordering parity with `SQLite` after cancel + re-add.
 #[test]
 fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     use sqlite_diff_rs::SimpleTable;
@@ -550,7 +550,7 @@ fn test_sqlite_partial_cancel_preserves_table() {
     assert!(!changeset.is_empty());
 }
 
-/// UPDATE that reverts to original values — does SQLite keep it or discard it?
+/// UPDATE that reverts to original values — does `SQLite` keep it or discard it?
 #[test]
 fn test_sqlite_update_revert_to_original() {
     // We need the row to exist before the session starts,

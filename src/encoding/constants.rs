@@ -1,4 +1,4 @@
-//! Constants for the SQLite changeset/patchset binary format.
+//! Constants for the `SQLite` changeset/patchset binary format.
 
 /// Operation codes used in the binary format.
 pub mod op_codes {

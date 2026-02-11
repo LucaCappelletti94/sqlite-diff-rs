@@ -1,6 +1,6 @@
-//! SQLite varint encoding/decoding.
+//! `SQLite` varint encoding/decoding.
 //!
-//! SQLite changesets use a big-endian variable-length integer encoding where:
+//! `SQLite` changesets use a big-endian variable-length integer encoding where:
 //! - The high bit of each byte is a continuation flag (1 = more bytes follow)
 //! - The remaining 7 bits are data, with MSB first
 //!
@@ -14,9 +14,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-/// Encode a u64 as a SQLite changeset varint (big-endian, 7-bit continuation).
+/// Encode a u64 as a `SQLite` changeset varint (big-endian, 7-bit continuation).
 ///
-/// This is the format used by SQLite's session extension for text/blob lengths.
+/// This is the format used by `SQLite`'s session extension for text/blob lengths.
 #[must_use]
 pub(crate) fn encode_varint(value: u64) -> Vec<u8> {
     if value < 128 {
@@ -48,14 +48,14 @@ pub(crate) fn encode_varint(value: u64) -> Vec<u8> {
     result
 }
 
-/// Alias for encode_varint - kept for backwards compatibility.
+/// Alias for `encode_varint` - kept for backwards compatibility.
 #[inline]
 #[must_use]
 pub(crate) fn encode_varint_simple(value: u64) -> Vec<u8> {
     encode_varint(value)
 }
 
-/// Decode a SQLite changeset varint (big-endian, 7-bit continuation).
+/// Decode a `SQLite` changeset varint (big-endian, 7-bit continuation).
 ///
 /// Returns the decoded value and number of bytes consumed.
 #[must_use]
@@ -96,19 +96,19 @@ pub(crate) fn varint_len(value: u64) -> usize {
         1
     } else if value < 16384 {
         2
-    } else if value < 2097152 {
+    } else if value < 2_097_152 {
         3
-    } else if value < 268435456 {
+    } else if value < 268_435_456 {
         4
-    } else if value < 34359738368 {
+    } else if value < 34_359_738_368 {
         5
-    } else if value < 4398046511104 {
+    } else if value < 4_398_046_511_104 {
         6
-    } else if value < 562949953421312 {
+    } else if value < 562_949_953_421_312 {
         7
-    } else if value < 72057594037927936 {
+    } else if value < 72_057_594_037_927_936 {
         8
-    } else if value < 9223372036854775808 {
+    } else if value < 9_223_372_036_854_775_808 {
         9
     } else {
         10
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_varint_roundtrip_medium() {
-        for v in [128, 255, 256, 300, 1000, 16383, 16384, 100000, 2097151] {
+        for v in [128, 255, 256, 300, 1000, 16383, 16384, 100_000, 2_097_151] {
             let encoded = encode_varint(v);
             let (decoded, len) = decode_varint(&encoded).unwrap();
             assert_eq!(decoded, v, "Failed for value {v}");

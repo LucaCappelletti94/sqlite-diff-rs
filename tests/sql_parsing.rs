@@ -1,4 +1,4 @@
-//! Integration tests for SQL digestion into DiffSetBuilder via `digest_sql`.
+//! Integration tests for SQL digestion into `DiffSetBuilder` via `digest_sql`.
 //!
 //! These tests verify that `DiffSetBuilder::digest_sql` correctly parses SQL
 //! DML statements (INSERT, UPDATE, DELETE) and populates the patchset builder.
@@ -9,7 +9,7 @@
 use sqlite_diff_rs::testing::assert_patchset_sql_parity;
 use sqlite_diff_rs::{PatchSet, SimpleTable};
 
-/// Helper: create a PatchSet with tables pre-registered.
+/// Helper: create a `PatchSet` with tables pre-registered.
 fn patchset_with(tables: &[SimpleTable]) -> PatchSet<SimpleTable, String, Vec<u8>> {
     let mut ps = PatchSet::new();
     for t in tables {

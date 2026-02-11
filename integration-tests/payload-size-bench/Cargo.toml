@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[lints.clippy]
+type_complexity = "allow"
+uninlined_format_args = "allow"
+ptr_arg = "allow"
+
 [dependencies]
 sqlite-diff-rs = { path = "../..", features = ["testing"] }
 serde = { version = "1", features = ["derive"] }

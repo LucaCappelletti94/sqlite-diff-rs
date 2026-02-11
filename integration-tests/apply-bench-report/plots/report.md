@@ -171,4 +171,3 @@ Time to generate a changeset/patchset from a database diff.
 - **uuid_pk**: Changeset apply is **3.0×** faster than autocommit SQL at 1000 ops
 - **uuid_pk**: Patchset apply is **3.4×** faster than autocommit SQL at 1000 ops
 - **uuid_pk**: Wrapping SQL in a transaction gives a **1.2×** speedup over autocommit
-

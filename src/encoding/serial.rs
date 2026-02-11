@@ -1,6 +1,6 @@
-//! SQLite changeset value encoding.
+//! `SQLite` changeset value encoding.
 //!
-//! **IMPORTANT**: SQLite changesets use a DIFFERENT encoding than database records!
+//! **IMPORTANT**: `SQLite` changesets use a DIFFERENT encoding than database records!
 //!
 //! Changeset value types (used in this module):
 //! - 0: Undefined (special marker for unchanged columns in UPDATE)
@@ -10,7 +10,7 @@
 //! - 4: BLOB (varint length + raw bytes)
 //! - 5: NULL (no data follows)
 //!
-//! This is NOT the same as SQLite database record serial types!
+//! This is NOT the same as `SQLite` database record serial types!
 //! Database records use types 0-9 plus computed types for variable-length data.
 
 use alloc::string::{String, ToString};
@@ -19,7 +19,7 @@ use core::hash::{Hash, Hasher};
 
 use super::varint::encode_varint_simple;
 
-/// A value that can be encoded in SQLite changeset format.
+/// A value that can be encoded in `SQLite` changeset format.
 #[derive(Debug, Clone)]
 pub enum Value<S, B> {
     /// SQL NULL
@@ -162,15 +162,15 @@ pub(crate) fn encode_undefined(out: &mut Vec<u8>) {
 
 /// Encode a Maybe value (Option<Value>) into the changeset binary format.
 ///
-/// SQLite changesets use a DIFFERENT encoding than database records:
+/// `SQLite` changesets use a DIFFERENT encoding than database records:
 /// - Type 0: Undefined (special marker for unchanged columns in UPDATE)
 /// - Type 1: INTEGER (always 8 bytes, big-endian i64)
-/// - Type 2: FLOAT (8 bytes, big-endian IEEE 754)  
+/// - Type 2: FLOAT (8 bytes, big-endian IEEE 754)
 /// - Type 3: TEXT (varint length + UTF-8 bytes)
 /// - Type 4: BLOB (varint length + raw bytes)
 /// - Type 5: NULL (no data follows)
 ///
-/// This is NOT the same as SQLite serial types used in database records!
+/// This is NOT the same as `SQLite` serial types used in database records!
 pub(crate) fn encode_value<S: AsRef<str>, B: AsRef<[u8]>>(
     out: &mut Vec<u8>,
     value: Option<&Value<S, B>>,
@@ -227,7 +227,7 @@ pub(crate) fn encode_defined_value<S: AsRef<str>, B: AsRef<[u8]>>(
 
 /// Decode a value from changeset binary format.
 ///
-/// SQLite changesets use the following type codes:
+/// `SQLite` changesets use the following type codes:
 /// - 0: Undefined (unchanged column in UPDATE)
 /// - 1: INTEGER (8 bytes big-endian)
 /// - 2: FLOAT (8 bytes big-endian IEEE 754)

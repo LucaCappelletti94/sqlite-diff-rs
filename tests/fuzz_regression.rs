@@ -36,7 +36,7 @@ const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
 ///
 /// Input: Patchset marker 'P' (0x50) with minimal table header.
 /// Bug: Empty patchset serializes to [], which parses as empty changeset.
-/// Fix: ParsedDiffSet::eq treats all empty builders as equal.
+/// Fix: `ParsedDiffSet::eq` treats all empty builders as equal.
 #[test]
 fn fuzz_regression_empty_patchset_changeset_equality() {
     // P, 1 col, pk_flags, name ";", null term, ...
@@ -47,8 +47,8 @@ fn fuzz_regression_empty_patchset_changeset_equality() {
 /// Crash 2: NaN in FLOAT value becomes NULL after roundtrip.
 ///
 /// Input: Changeset with FLOAT containing NaN bit pattern.
-/// Bug: decode_value returned Real(NaN), but encode_value converts NaN to NULL.
-/// Fix: decode_value now normalizes NaN to Null (matching SQLite behavior).
+/// Bug: `decode_value` returned Real(NaN), but `encode_value` converts NaN to NULL.
+/// Fix: `decode_value` now normalizes NaN to Null (matching `SQLite` behavior).
 #[test]
 fn fuzz_regression_nan_normalized_to_null() {
     // T, 4 cols, pk_flags, name "\x11", operations with NaN float
@@ -61,9 +61,9 @@ fn fuzz_regression_nan_normalized_to_null() {
 
 /// Crash 3: Latest crash - needs investigation.
 #[test]
-/// Crash 3: PatchDelete + Insert with Undefined values.
+/// Crash 3: `PatchDelete` + Insert with Undefined values.
 ///
-/// Bug: PatchDelete + Insert calls update.set() with Undefined values which errors.
+/// Bug: `PatchDelete` + Insert calls `update.set()` with Undefined values which errors.
 /// Fix: Skip Undefined values in the combination loop.
 fn fuzz_regression_crash_3() {
     let input = [
@@ -76,8 +76,8 @@ fn fuzz_regression_crash_3() {
 
 /// Crash 4: Negative zero (-0.0) not normalized during decoding.
 ///
-/// Bug: decode_value returned Real(-0.0), but encode_value normalizes to 0.0.
-/// Fix: decode_value now normalizes -0.0 to 0.0 (matching SQLite behavior).
+/// Bug: `decode_value` returned Real(-0.0), but `encode_value` normalizes to 0.0.
+/// Fix: `decode_value` now normalizes -0.0 to 0.0 (matching `SQLite` behavior).
 #[test]
 fn fuzz_regression_crash_4() {
     let input = [
@@ -91,8 +91,8 @@ fn fuzz_regression_crash_4() {
 /// Crash 5: Patchset UPDATE losing PK values during serialization.
 ///
 /// Bug: Patchset UPDATE serialization wrote Undefined for ALL old values,
-///      including PK columns. When re-parsed, extract_pk got all Undefined.
-/// Fix: Serialize PK values from HashMap key into the old_values PK positions.
+///      including PK columns. When re-parsed, `extract_pk` got all Undefined.
+/// Fix: Serialize PK values from `HashMap` key into the `old_values` PK positions.
 #[test]
 fn fuzz_regression_crash_5() {
     let input = [
@@ -102,9 +102,9 @@ fn fuzz_regression_crash_5() {
     test_roundtrip(&input);
 }
 
-/// Crash 6: ChangeDelete + Insert with Undefined values.
+/// Crash 6: `ChangeDelete` + Insert with Undefined values.
 ///
-/// Bug: ChangeDelete + Insert calls update.set(old, new) with Undefined values.
+/// Bug: `ChangeDelete` + Insert calls update.set(old, new) with Undefined values.
 /// Fix: Skip columns where either old or new is Undefined.
 #[test]
 fn fuzz_regression_crash_6() {
@@ -116,7 +116,7 @@ fn fuzz_regression_crash_6() {
     test_roundtrip(&input);
 }
 
-/// Automatically test all roundtrip crash files in the crash_inputs/roundtrip directory.
+/// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.
 ///
 /// This test also copies any new crash files from the fuzz workspace.
 ///
@@ -135,7 +135,7 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
     );
 }
 
-/// Automatically test all reverse_idempotent crash files.
+/// Automatically test all `reverse_idempotent` crash files.
 ///
 /// Raw `&[u8]` input — same simple pattern as the roundtrip test.
 #[test]
@@ -154,7 +154,7 @@ fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
     );
 }
 
-/// Automatically test all apply_roundtrip crash files.
+/// Automatically test all `apply_roundtrip` crash files.
 ///
 /// Since these crash files are raw bytes (not structured `(FuzzSchemas, Vec<u8>)`
 /// tuples), we parse the changeset first to extract table schemas via
@@ -192,7 +192,7 @@ fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
     );
 }
 
-/// Automatically test all sql_roundtrip crash files.
+/// Automatically test all `sql_roundtrip` crash files.
 ///
 /// Crash files contain `arbitrary`-encoded `(FuzzSchemas, String)` tuples.
 /// Files that fail to deserialize are skipped (legacy or corrupt inputs).

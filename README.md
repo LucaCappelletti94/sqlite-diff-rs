@@ -2,16 +2,16 @@
 
 [![Crates.io](https://img.shields.io/crates/v/sqlite-diff-rs.svg)](https://crates.io/crates/sqlite-diff-rs)
 [![Documentation](https://docs.rs/sqlite-diff-rs/badge.svg)](https://docs.rs/sqlite-diff-rs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE)
 
-A Rust library for building SQLite [changeset and patchset](https://www.sqlite.org/sessionintro.html) binary formats programmatically.
+A Rust library for building `SQLite` [changeset and patchset](https://www.sqlite.org/sessionintro.html) binary formats programmatically.
 
 
 ## Overview
 
-SQLite's [session extension](https://www.sqlite.org/session.html) provides a powerful mechanism for tracking and applying database changes. This crate enables you to **construct changeset/patchset binary data without requiring SQLite** — useful for:
+`SQLite`'s [session extension](https://www.sqlite.org/session.html) provides a powerful mechanism for tracking and applying database changes. This crate enables you to **construct changeset/patchset binary data without requiring `SQLite`** — useful for:
 
-- **Offline sync**: Build changesets on a server to apply to client SQLite databases
+- **Offline sync**: Build changesets on a server to apply to client `SQLite` databases
 - **Testing**: Generate test fixtures for changeset processing code
 - **CDC pipelines**: Produce the binary input for `sqlite3_changeset_apply()` from your own change events
 
@@ -45,4 +45,4 @@ a **smaller, forward-only** encoding that cannot be reversed.
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE) for details.

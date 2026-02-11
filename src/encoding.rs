@@ -1,6 +1,6 @@
-//! Binary encoding utilities for SQLite changeset format.
+//! Binary encoding utilities for `SQLite` changeset format.
 //!
-//! SQLite uses specific binary encodings for varints and value serialization.
+//! `SQLite` uses specific binary encodings for varints and value serialization.
 
 pub(crate) mod constants;
 pub(crate) mod serial;

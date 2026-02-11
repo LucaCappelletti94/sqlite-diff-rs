@@ -1,3 +1,5 @@
+#![allow(clippy::unreadable_literal)] // Test fixture IDs are more readable without separators
+
 //! Benchmark comparing changeset/patchset generation methods.
 //!
 //! Compares three approaches:
@@ -113,6 +115,7 @@ const OPERATIONS: &[&str] = &[
 ];
 
 /// Create table schemas programmatically.
+#[allow(clippy::type_complexity)]
 fn create_schemas() -> (
     TableSchema<&'static str>,
     TableSchema<&'static str>,
@@ -304,7 +307,7 @@ static COMMENT_ROWS: &[&[Val]] = &[
     ],
 ];
 
-/// Static user update data: (old_row, new_row)
+/// Static user update data: (`old_row`, `new_row`)
 static USER_UPDATES: &[(&[Val], &[Val])] = &[
     (
         &[
@@ -348,7 +351,7 @@ static USER_UPDATES: &[(&[Val], &[Val])] = &[
     ),
 ];
 
-/// Static post update data: (old_row, new_row)
+/// Static post update data: (`old_row`, `new_row`)
 static POST_UPDATES: &[(&[Val], &[Val])] = &[
     (
         &[
@@ -439,7 +442,7 @@ static USER_DELETE: &[Val] = &[
     Val::Null,
 ];
 
-/// Static patchset update data: (column_index, new_value)
+/// Static patchset update data: (`column_index`, `new_value`)
 static PATCH_USER_UPDATES: &[&[(usize, Val)]] = &[
     &[(0, Val::Integer(1)), (4, Val::Integer(1002000))],
     &[(0, Val::Integer(2)), (4, Val::Integer(1002100))],
@@ -513,7 +516,7 @@ fn add_inserts_to_changeset<'a>(
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -522,7 +525,7 @@ fn add_inserts_to_changeset<'a>(
     for row in POST_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(posts.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -531,7 +534,7 @@ fn add_inserts_to_changeset<'a>(
     for row in TAG_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(tags.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -540,7 +543,7 @@ fn add_inserts_to_changeset<'a>(
     for row in POST_TAG_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(post_tags.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -549,7 +552,7 @@ fn add_inserts_to_changeset<'a>(
     for row in COMMENT_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(comments.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -596,21 +599,21 @@ fn add_deletes_to_changeset<'a>(
     // Delete comment
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(comments.clone());
     for (i, val) in COMMENT_DELETE.iter().enumerate() {
-        delete = delete.set(i, val.clone()).unwrap();
+        delete = delete.set(i, *val).unwrap();
     }
     builder = builder.delete(delete);
 
     // Delete post-tag
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(post_tags.clone());
     for (i, val) in POST_TAG_DELETE.iter().enumerate() {
-        delete = delete.set(i, val.clone()).unwrap();
+        delete = delete.set(i, *val).unwrap();
     }
     builder = builder.delete(delete);
 
     // Delete user
     let mut delete: ChangeDelete<_, &str, &[u8]> = ChangeDelete::from(users.clone());
     for (i, val) in USER_DELETE.iter().enumerate() {
-        delete = delete.set(i, val.clone()).unwrap();
+        delete = delete.set(i, *val).unwrap();
     }
     builder = builder.delete(delete);
 
@@ -644,7 +647,7 @@ fn add_inserts_to_patchset<'a>(
     for row in USER_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -653,7 +656,7 @@ fn add_inserts_to_patchset<'a>(
     for row in POST_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(posts.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -662,7 +665,7 @@ fn add_inserts_to_patchset<'a>(
     for row in TAG_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(tags.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -671,7 +674,7 @@ fn add_inserts_to_patchset<'a>(
     for row in POST_TAG_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(post_tags.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -680,7 +683,7 @@ fn add_inserts_to_patchset<'a>(
     for row in COMMENT_ROWS {
         let mut insert: Insert<_, &str, &[u8]> = Insert::from(comments.clone());
         for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, val.clone()).unwrap();
+            insert = insert.set(i, *val).unwrap();
         }
         builder = builder.insert(insert);
     }
@@ -698,7 +701,7 @@ fn add_updates_to_patchset<'a>(
     for cols in PATCH_USER_UPDATES {
         let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(users.clone());
         for (i, val) in *cols {
-            update = update.set(*i, val.clone()).unwrap();
+            update = update.set(*i, *val).unwrap();
         }
         builder = builder.update(update);
     }
@@ -707,7 +710,7 @@ fn add_updates_to_patchset<'a>(
     for cols in PATCH_POST_UPDATES {
         let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(posts.clone());
         for (i, val) in *cols {
-            update = update.set(*i, val.clone()).unwrap();
+            update = update.set(*i, *val).unwrap();
         }
         builder = builder.update(update);
     }
@@ -753,7 +756,7 @@ fn builder_patchset() -> Vec<u8> {
     builder.build()
 }
 
-/// Create SimpleTable schemas for use with the SQL parser.
+/// Create `SimpleTable` schemas for use with the SQL parser.
 fn create_simple_table_schemas() -> (
     SimpleTable,
     SimpleTable,

@@ -1,19 +1,19 @@
-//! DiffSet builder for constructing changeset/patchset binary data.
+//! `DiffSet` builder for constructing changeset/patchset binary data.
 //!
-//! This module provides [`DiffSetBuilder`] for building SQLite session extension
+//! This module provides [`DiffSetBuilder`] for building `SQLite` session extension
 //! compatible changesets and patchsets. The builder tracks row state and consolidates
-//! operations according to SQLite's changegroup semantics.
+//! operations according to `SQLite`'s changegroup semantics.
 //!
 //! # Terminology
 //!
 //! - **Changeset**: Full row data for all operations (invertible)
 //! - **Patchset**: Minimal data (PK only for deletes, changed columns for updates)
-//! - **DiffSet**: Generic term for either changeset or patchset
+//! - **`DiffSet`**: Generic term for either changeset or patchset
 //!
 //! # Consolidation Rules
 //!
 //! When multiple operations affect the same row (by primary key), they are
-//! consolidated according to SQLite's `sqlite3changegroup_add()` semantics:
+//! consolidated according to `SQLite`'s `sqlite3changegroup_add()` semantics:
 //!
 //! | Existing | New | Result |
 //! |----------|--------|--------|
@@ -35,14 +35,14 @@ use core::fmt::Debug;
 use core::hash::Hash;
 
 use crate::{
+    SchemaWithPK,
     builders::{
-        format::Format, ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete,
-        PatchsetFormat, Update,
+        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
+        format::Format,
     },
     encoding::{
-        encode_defined_value, encode_undefined, encode_value, markers, op_codes, MaybeValue, Value,
+        MaybeValue, Value, encode_defined_value, encode_undefined, encode_value, markers, op_codes,
     },
-    SchemaWithPK,
 };
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
@@ -64,14 +64,14 @@ type TableVec<F, T, S, B> = Vec<(T, RowVec<F, S, B>)>;
 // SQLite session extension hash simulation
 // ============================================================================
 
-/// The core hash-combine step used throughout SQLite's session extension.
+/// The core hash-combine step used throughout `SQLite`'s session extension.
 ///
 /// Matches the C macro: `#define HASH_APPEND(hash, add) ((hash) << 3) ^ (hash) ^ (unsigned int)(add)`
 const fn hash_append(h: u32, add: u32) -> u32 {
     (h << 3) ^ h ^ add
 }
 
-/// Hash a 64-bit integer using SQLite's `sessionHashAppendI64`.
+/// Hash a 64-bit integer using `SQLite`'s `sessionHashAppendI64`.
 ///
 /// Hashes the lower 32 bits first, then the upper 32 bits.
 #[allow(clippy::cast_sign_loss)]
@@ -82,7 +82,7 @@ fn session_hash_append_i64(h: u32, i: i64) -> u32 {
     hash_append(h, hi)
 }
 
-/// Hash a blob using SQLite's `sessionHashAppendBlob`.
+/// Hash a blob using `SQLite`'s `sessionHashAppendBlob`.
 ///
 /// Applies `HASH_APPEND` to each byte.
 fn session_hash_append_blob(mut h: u32, data: &[u8]) -> u32 {
@@ -92,10 +92,10 @@ fn session_hash_append_blob(mut h: u32, data: &[u8]) -> u32 {
     h
 }
 
-/// Hash a primary key using SQLite's `sessionPreupdateHash` algorithm.
+/// Hash a primary key using `SQLite`'s `sessionPreupdateHash` algorithm.
 ///
 /// For each PK value: `h = HASH_APPEND(h, type_code)`, then hash the value.
-/// Type codes match SQLite: INTEGER=1, FLOAT=2, TEXT=3, BLOB=4.
+/// Type codes match `SQLite`: INTEGER=1, FLOAT=2, TEXT=3, BLOB=4.
 fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
     let mut h: u32 = 0;
     for value in pk {
@@ -106,7 +106,7 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
             }
             Value::Real(f) => {
                 h = hash_append(h, 2); // SQLITE_FLOAT
-                                       // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
+                // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
                 let i = i64::from_ne_bytes(f.to_ne_bytes());
                 h = session_hash_append_i64(h, i);
             }
@@ -127,14 +127,14 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
     h
 }
 
-/// Simulate SQLite's session extension hash table to determine row output order.
+/// Simulate `SQLite`'s session extension hash table to determine row output order.
 ///
-/// SQLite's session extension tracks changes in a hash table where:
+/// `SQLite`'s session extension tracks changes in a hash table where:
 /// - New entries are prepended to their bucket (most recent at list head)
 /// - The table starts at 256 buckets and doubles when entries ≥ buckets/2
 /// - Changeset iteration walks buckets 0..n-1, following each linked list
 ///
-/// This function returns indices into `rows` in the order that SQLite's
+/// This function returns indices into `rows` in the order that `SQLite`'s
 /// changeset/patchset output would contain them.
 fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
     rows: &IndexMap<Vec<Value<S, B>>, V>,
@@ -287,7 +287,7 @@ fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
 /// Builder for constructing changeset or patchset binary data.
 ///
 /// `DiffSetBuilder` tracks rows in DML insertion order. When [`build`](Self::build)
-/// is called, it simulates SQLite's session-extension hash table to produce
+/// is called, it simulates `SQLite`'s session-extension hash table to produce
 /// byte-identical output.
 ///
 /// For parsed (frozen) data that should be emitted in its original order,
@@ -299,13 +299,13 @@ pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
     pub(crate) tables: TableMap<F, T, S, B>,
 }
 
-/// Custom PartialEq that ignores tables with empty operations.
+/// Custom `PartialEq` that ignores tables with empty operations.
 ///
-/// Tables with no operations are not serialized (skipped in build()), so after
+/// Tables with no operations are not serialized (skipped in `build()`), so after
 /// roundtrip they won't exist. This makes empty tables semantically equivalent
 /// to non-existent tables for comparison purposes.
 ///
-/// Verified: SQLite's session extension does NOT include empty table entries in
+/// Verified: `SQLite`'s session extension does NOT include empty table entries in
 /// changesets/patchsets when all operations cancel out. Our builder keeps them
 /// in memory to preserve table ordering, but they are correctly excluded here
 /// and in `build()`.
@@ -349,10 +349,10 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 }
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(builder: &DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
@@ -361,10 +361,10 @@ impl<
 }
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(builder: DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
@@ -519,16 +519,16 @@ pub trait DiffOps<T: SchemaWithPK, S, B>: Sized {
 
     /// Add an UPDATE operation.
     fn update(self, update: Update<T, Self::Format, S, B>)
-        -> DiffSetBuilder<Self::Format, T, S, B>;
+    -> DiffSetBuilder<Self::Format, T, S, B>;
 }
 
 // -- DiffOps for DiffSetBuilder<ChangesetFormat> ------------------------------
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > DiffOps<T, S, B> for DiffSetBuilder<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffOps<T, S, B> for DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     type Format = ChangesetFormat;
     type DeleteArg = ChangeDelete<T, S, B>;
@@ -625,10 +625,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 // -- DiffOps for DiffSet<ChangesetFormat> -------------------------------------
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > DiffOps<T, S, B> for DiffSet<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffOps<T, S, B> for DiffSet<ChangesetFormat, T, S, B>
 {
     type Format = ChangesetFormat;
     type DeleteArg = ChangeDelete<T, S, B>;
@@ -706,14 +706,19 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
 // ============================================================================
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > DiffSetBuilder<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     /// Build the changeset binary data.
     ///
-    /// Returns the binary representation compatible with SQLite's session extension.
+    /// Returns the binary representation compatible with `SQLite`'s session extension.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic under normal usage. Internal indexing is guaranteed
+    /// to be within bounds.
     #[must_use]
     pub fn build(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -766,7 +771,12 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 {
     /// Build the patchset binary data.
     ///
-    /// Returns the binary representation compatible with SQLite's session extension.
+    /// Returns the binary representation compatible with `SQLite`'s session extension.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic under normal usage. Internal indexing is guaranteed
+    /// to be within bounds.
     #[must_use]
     pub fn build(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -824,10 +834,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 use crate::builders::operation::Reverse;
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > Reverse for DiffSetBuilder<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> Reverse for DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     type Output = DiffSetBuilder<ChangesetFormat, T, S, B>;
 
@@ -853,16 +863,16 @@ impl<
 /// A frozen changeset or patchset whose rows are emitted in stored order.
 ///
 /// `DiffSet` is produced by the binary parser (via [`ParsedDiffSet`](crate::parser::ParsedDiffSet))
-/// or by calling [`DiffSetBuilder::freeze`].  Unlike [`DiffSetBuilder`], it
-/// stores tables and rows in a plain `Vec`, reflecting the fact that no
-/// further mutation or PK-based lookup is needed.
+/// or by converting from a [`DiffSetBuilder`] using `Into::into`.  Unlike
+/// [`DiffSetBuilder`], it stores tables and rows in a plain `Vec`, reflecting
+/// the fact that no further mutation or PK-based lookup is needed.
 ///
 /// [`build`](Self::build) serializes rows in the order they are stored — no
 /// session hash-table simulation is applied.  This preserves the original
 /// row order of parsed binary data across roundtrips.
 ///
-/// To modify a `DiffSet`, convert it back to a [`DiffSetBuilder`] with
-/// [`into_builder`](Self::into_builder).
+/// To modify a `DiffSet`, convert it back to a [`DiffSetBuilder`] using
+/// `Into::into`.
 #[derive(Debug, Clone)]
 pub struct DiffSet<F: Format<S, B>, T: SchemaWithPK, S, B> {
     /// Tables and their rows, stored in order.  Each row is a `(pk, operation)` pair.
@@ -924,10 +934,10 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 // -- Changeset build (DiffSet) ------------------------------------------------
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > DiffSet<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> DiffSet<ChangesetFormat, T, S, B>
 {
     /// Serialize the changeset to binary.
     ///
@@ -1036,10 +1046,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 // -- From<DiffSet> for Vec<u8> ------------------------------------------------
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > From<&DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<&DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(diffset: &DiffSet<ChangesetFormat, T, S, B>) -> Self {
@@ -1048,10 +1058,10 @@ impl<
 }
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > From<DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> From<DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(diffset: DiffSet<ChangesetFormat, T, S, B>) -> Self {
@@ -1080,10 +1090,10 @@ impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone 
 // -- Reverse for DiffSet<ChangesetFormat> -------------------------------------
 
 impl<
-        T: SchemaWithPK,
-        S: Clone + Debug + Hash + Eq + AsRef<str>,
-        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-    > Reverse for DiffSet<ChangesetFormat, T, S, B>
+    T: SchemaWithPK,
+    S: Clone + Debug + Hash + Eq + AsRef<str>,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+> Reverse for DiffSet<ChangesetFormat, T, S, B>
 {
     type Output = DiffSet<ChangesetFormat, T, S, B>;
 
@@ -1193,9 +1203,11 @@ mod tests {
             &self,
             values: &impl crate::IndexableValues<Text = S, Binary = B>,
         ) -> alloc::vec::Vec<Value<S, B>> {
-            alloc::vec![values
-                .get(self.pk_column)
-                .expect("primary key column index out of bounds — values shorter than schema")]
+            alloc::vec![
+                values
+                    .get(self.pk_column)
+                    .expect("primary key column index out of bounds — values shorter than schema")
+            ]
         }
     }
 

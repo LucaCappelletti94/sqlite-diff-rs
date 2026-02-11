@@ -542,21 +542,19 @@ mod tests {
     #[test]
     fn test_identifiers() {
         let mut lexer = Lexer::new("users my_table _private");
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Identifier("users"));
         assert_eq!(
             lexer.next().unwrap().kind,
-            TokenKind::Identifier("users".into())
+            TokenKind::Identifier("my_table")
         );
         assert_eq!(
             lexer.next().unwrap().kind,
-            TokenKind::Identifier("my_table".into())
-        );
-        assert_eq!(
-            lexer.next().unwrap().kind,
-            TokenKind::Identifier("_private".into())
+            TokenKind::Identifier("_private")
         );
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_numbers() {
         let mut lexer = Lexer::new("42 -100 3.14 1e10");
         assert_eq!(lexer.next().unwrap().kind, TokenKind::IntegerLiteral(42));

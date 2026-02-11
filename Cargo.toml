@@ -16,7 +16,38 @@ members = [
 	"integration-tests/frontend",
 	"integration-tests/payload-size-bench",
 	"integration-tests/apply-bench-report",
+	"integration-tests/wal2json",
+	"integration-tests/pg-walstream",
 ]
+
+[workspace.lints.rust]
+missing_docs = "forbid"
+unused_macro_rules = "forbid"
+unconditional_recursion = "forbid"
+unreachable_patterns = "forbid"
+unused_import_braces = "forbid"
+unused_must_use = "forbid"
+deprecated = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "forbid"
+bare_urls = "forbid"
+invalid_codeblock_attributes = "forbid"
+invalid_html_tags = "forbid"
+missing_crate_level_docs = "forbid"
+unescaped_backticks = "forbid"
+redundant_explicit_links = "forbid"
+invalid_rust_codeblocks = "forbid"
+
+[workspace.lints.clippy]
+unreadable_literal = "allow"
+missing_panics_doc = "allow"
+new_ret_no_self = "allow"
+struct_excessive_bools = "allow"
+should_panic_without_expect = "allow"
+doc_markdown = "allow"
+clone_on_copy = "forbid"
+pedantic = { level = "deny", priority = -1 }
 
 [dependencies]
 thiserror = "2"
@@ -27,6 +58,9 @@ rusqlite = { version = "0.37", features = [
 	"session",
 ], optional = true }
 arbitrary = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
+pg_walstream = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
 rusqlite = { version = "0.37", features = ["bundled", "session", "backup"] }
@@ -36,38 +70,21 @@ uuid = { version = "1", features = ["v7"] }
 hex = "0.4"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["user-hooks"]
+
 [features]
 default = []
 testing = ["dep:rusqlite", "dep:arbitrary"]
+wal2json = ["dep:serde", "dep:serde_json"]
+pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
+debezium = ["dep:serde", "dep:serde_json"]
+maxwell = ["dep:serde", "dep:serde_json"]
 
-[lints.rust]
-missing_docs = "forbid"
-unused_macro_rules = "forbid"
-unconditional_recursion = "forbid"
-unreachable_patterns = "forbid"
-unused_import_braces = "forbid"
-unused_must_use = "forbid"
-deprecated = "deny"
-
-[lints.rustdoc]
-broken_intra_doc_links = "forbid"
-bare_urls = "forbid"
-invalid_codeblock_attributes = "forbid"
-invalid_html_tags = "forbid"
-missing_crate_level_docs = "forbid"
-unescaped_backticks = "forbid"
-redundant_explicit_links = "forbid"
-invalid_rust_codeblocks = "forbid"
-
-[lints.clippy]
-unreadable_literal = "allow"
-missing_panics_doc = "allow"
-new_ret_no_self = "allow"
-struct_excessive_bools = "allow"
-should_panic_without_expect = "allow"
-doc_markdown = "allow"
-clone_on_copy = "forbid"
-pedantic = { level = "deny", priority = -1 }
+[lints]
+workspace = true
 
 [[bench]]
 name = "builder_vs_rusqlite"
@@ -78,6 +95,26 @@ required-features = ["testing"]
 name = "apply_benchmark"
 harness = false
 required-features = ["testing"]
+
+[[bench]]
+name = "wal2json_benchmark"
+harness = false
+required-features = ["wal2json"]
+
+[[bench]]
+name = "pg_walstream_benchmark"
+harness = false
+required-features = ["pg-walstream"]
+
+[[bench]]
+name = "debezium_benchmark"
+harness = false
+required-features = ["debezium"]
+
+[[bench]]
+name = "maxwell_benchmark"
+harness = false
+required-features = ["maxwell"]
 
 [profile.release]
 lto = true

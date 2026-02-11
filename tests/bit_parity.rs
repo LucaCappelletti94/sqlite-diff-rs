@@ -1,7 +1,7 @@
 //! Bit-for-bit parity tests between our library and rusqlite's session extension.
 //!
 //! These tests verify that our changeset/patchset binary output is **byte-identical**
-//! to what SQLite's session extension produces for the same sequence of operations.
+//! to what `SQLite`'s session extension produces for the same sequence of operations.
 //!
 //! Previous tests only compared at the semantic level (via `ParsedDiffSet::PartialEq`),
 //! which uses `HashMap` comparison and thus ignores:

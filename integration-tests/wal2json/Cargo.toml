@@ -1,0 +1,12 @@
+[package]
+name = "wal2json-integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+sqlite-diff-rs = { path = "../..", features = ["wal2json"] }
+testcontainers = "0.27"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
+serde_json = "1"

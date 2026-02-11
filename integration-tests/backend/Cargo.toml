@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[lints.clippy]
+new_without_default = "allow"
+collapsible_if = "allow"
+
 [dependencies]
 chat-shared = { path = "../shared" }
 sqlite-diff-rs = { path = "../.." }

@@ -3,7 +3,7 @@
 //! This module provides a lightweight SQL parser that only handles the minimal
 //! syntax needed for changeset/patchset operations:
 //! - `INSERT` statements
-//! - `UPDATE` statements  
+//! - `UPDATE` statements
 //! - `DELETE` statements
 //!
 //! This is intentionally limited compared to a full SQL parser like `sqlparser`,

@@ -109,8 +109,8 @@ format, enabling:
 - Testing (generate changeset/patchset fixtures programmatically)
 - CDC pipelines (produce binary changesets from custom change events)
 
-**Crate name**: `sqlite-diff-rs` (on crates.io)  
-**Edition**: 2024, **License**: MIT  
+**Crate name**: `sqlite-diff-rs` (on crates.io)
+**Edition**: 2024, **License**: MIT
 **Repository**: <https://github.com/LucaCappelletti94/sqlite-diff-rs>
 
 ### Key Design Decisions

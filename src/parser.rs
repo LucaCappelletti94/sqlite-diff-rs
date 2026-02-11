@@ -1,6 +1,6 @@
-//! Parser for SQLite changeset/patchset binary format.
+//! Parser for `SQLite` changeset/patchset binary format.
 //!
-//! This module provides functionality to parse SQLite session extension
+//! This module provides functionality to parse `SQLite` session extension
 //! changesets and patchsets from their binary representation into
 //! [`DiffSetBuilder`] instances.
 //!
@@ -204,7 +204,7 @@ impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWit
 /// A parsed changeset or patchset.
 ///
 /// This represents a frozen (immutable) diffset produced by the binary parser.
-/// To modify it, convert it to a [`DiffSetBuilder`] via [`DiffSet::into_builder`].
+/// To modify it, convert it to a [`DiffSetBuilder`] using `Into::into`.
 #[derive(Debug, Clone, Eq)]
 pub enum ParsedDiffSet {
     /// A parsed changeset.
@@ -429,7 +429,7 @@ fn parse_table_header(
     Ok((TableSchema::new(name, column_count, pk_flags), format, pos))
 }
 
-/// Parse operation header (op_code + indirect flag).
+/// Parse operation header (`op_code` + indirect flag).
 fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, usize), ParseError> {
     if data.len() < 2 {
         return Err(ParseError::UnexpectedEof(base_pos));
@@ -553,8 +553,8 @@ fn parse_patchset_operation(
 
 /// Expand PK-only values to full row with None (undefined) for non-PK columns.
 ///
-/// The pk_flags are raw bytes where non-zero means the column is part of the PK.
-/// PK values are expected in the order they appear in pk_flags (not sorted by ordinal).
+/// The `pk_flags` are raw bytes where non-zero means the column is part of the PK.
+/// PK values are expected in the order they appear in `pk_flags` (not sorted by ordinal).
 fn expand_pk_values(
     pk_flags: &[u8],
     pk_values: Vec<MaybeValue<String, Vec<u8>>>,

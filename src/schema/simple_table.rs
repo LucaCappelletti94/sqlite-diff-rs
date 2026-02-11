@@ -93,7 +93,7 @@ impl SimpleTable {
         self.schema.pk_indices()
     }
 
-    /// Get the inner TableSchema.
+    /// Get the inner `TableSchema`.
     #[must_use]
     pub fn inner(&self) -> &TableSchema<String> {
         &self.schema

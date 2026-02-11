@@ -184,6 +184,34 @@ The pure-Rust builder avoids SQLite's session machinery overhead, enabling signi
 
 ---
 
+## CDC Format Conversion Performance
+
+`sqlite-diff-rs` supports conversion from common Change Data Capture (CDC) formats to SQLite patchsets, enabling PostgreSQL-to-SQLite replication pipelines.
+
+### Throughput Benchmarks
+
+Benchmarks measure parsing CDC JSON messages and converting to patchset operations. Each benchmark uses realistic multi-column table operations with various data types.
+
+| Format | Throughput | Notes |
+|--------|------------|-------|
+| **pg_walstream** | 350–477 MiB/s | PostgreSQL logical replication format |
+| **Debezium** | 310–313 MiB/s | Kafka Connect CDC format |
+| **wal2json** | 303–311 MiB/s | PostgreSQL wal2json plugin (v1/v2) |
+| **Maxwell** | 236–239 MiB/s | MySQL CDC format |
+
+### Supported Formats
+
+| Format | Feature Flag | Source Database | Use Case |
+|--------|--------------|-----------------|----------|
+| wal2json | `wal2json` | PostgreSQL | Direct logical replication |
+| pg_walstream | `pg-walstream` | PostgreSQL | Streaming replication |
+| Debezium | `debezium` | PostgreSQL/MySQL | Kafka-based CDC pipelines |
+| Maxwell | `maxwell` | MySQL | Lightweight MySQL CDC |
+
+All conversions are zero-copy where possible, parsing directly into patchset operations without intermediate allocations.
+
+---
+
 ## Compile Time & Artifact Size
 
 Cold-build benchmarks comparing rusqlite (bundled SQLite C library) vs sqlite-diff-rs (pure Rust).

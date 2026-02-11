@@ -22,7 +22,7 @@ pub(crate) enum Operation<F: Format<S, B>, S, B> {
     Insert(Vec<Value<S, B>>),
     /// A row was deleted. Stores format-specific delete data:
     /// - Changeset: `Vec<Value<S, B>>` (full old-row values)
-    /// - Patchset: `()` (PK is stored as the IndexMap key)
+    /// - Patchset: `()` (PK is stored as the `IndexMap` key)
     Delete(F::DeleteData),
     /// A row was updated. Stores `(old, new)` pairs per column.
     /// - Changeset: `(MaybeValue<S, B>, MaybeValue<S, B>)` per column (None = undefined)
@@ -30,7 +30,7 @@ pub(crate) enum Operation<F: Format<S, B>, S, B> {
     Update(Vec<(F::Old, MaybeValue<S, B>)>),
 }
 
-/// Implement PartialEq for Operation where needed.
+/// Implement `PartialEq` for Operation where needed.
 impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
     for Operation<F, S, B>
 where

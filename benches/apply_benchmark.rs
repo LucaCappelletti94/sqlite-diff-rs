@@ -1,4 +1,6 @@
-//! Benchmark measuring the time to **apply** changes to an SQLite database.
+#![allow(clippy::unreadable_literal)] // Test fixture IDs are more readable without separators
+
+//! Benchmark measuring the time to **apply** changes to an `SQLite` database.
 //!
 //! Compares four application methods:
 //! 1. Executing raw SQL statements via rusqlite (`sql` — autocommit per stmt)
@@ -11,8 +13,8 @@
 //! - **populated**: database has 1000+ rows per table
 //!
 //! Two primary-key strategies:
-//! - **int_pk**: sequential INTEGER primary keys
-//! - **uuid_pk**: UUIDv7 stored as 16-byte BLOB primary keys
+//! - **`int_pk`**: sequential INTEGER primary keys
+//! - **`uuid_pk`**: `UUIDv7` stored as 16-byte BLOB primary keys
 //!
 //! Batch sizes: 30, 100, 1000 operations (mixed INSERT/UPDATE/DELETE).
 //!
@@ -184,12 +186,12 @@ const DATA_TABLES: &[&str] = &["users", "posts", "comments", "tags", "post_tags"
 enum IdKind {
     /// Sequential integer IDs (1, 2, 3, …).
     Integer,
-    /// UUIDv7 stored as 16-byte BLOB.
+    /// `UUIDv7` stored as 16-byte BLOB.
     Uuid,
 }
 
 impl IdKind {
-    /// The SQLite column type that replaces `$ID` in the schema template.
+    /// The `SQLite` column type that replaces `$ID` in the schema template.
     fn sql_type(self) -> &'static str {
         match self {
             Self::Integer => "INTEGER",
@@ -246,18 +248,18 @@ impl rusqlite::types::ToSql for Id {
 // ID generation
 // ---------------------------------------------------------------------------
 
-/// Timestamp range for UUIDv7: 2000-01-01 to 2020-01-01 (ms since Unix epoch).
-const TS_START_MS: u64 = 946684800_000;
-const TS_END_MS: u64 = 1577836800_000;
+/// Timestamp range for `UUIDv7`: 2000-01-01 to 2020-01-01 (ms since Unix epoch).
+const TS_START_MS: u64 = 946_684_800_000;
+const TS_END_MS: u64 = 1_577_836_800_000;
 
-/// Generate `count` sorted UUIDv7 values with timestamps sampled uniformly
+/// Generate `count` sorted `UUIDv7` values with timestamps sampled uniformly
 /// between 2000 and 2020.
 fn generate_uuidv7s(count: usize, rng: &mut StdRng) -> Vec<Uuid> {
     let mut uuids: Vec<Uuid> = (0..count)
         .map(|_| {
             let ms = rng.random_range(TS_START_MS..TS_END_MS);
             let secs = ms / 1000;
-            let nanos = ((ms % 1000) * 1_000_000) as u32;
+            let nanos = (ms % 1000) as u32 * 1_000_000;
             let ts = uuid::Timestamp::from_unix(uuid::NoContext, secs, nanos);
             Uuid::new_v7(ts)
         })
@@ -269,6 +271,7 @@ fn generate_uuidv7s(count: usize, rng: &mut StdRng) -> Vec<Uuid> {
 /// Generate `n` IDs of the given kind.
 fn generate_ids(n: usize, kind: IdKind, rng: &mut StdRng) -> Vec<Id> {
     match kind {
+        #[allow(clippy::cast_possible_wrap)]
         IdKind::Integer => (1..=n as i64).map(Id::Int).collect(),
         IdKind::Uuid => generate_uuidv7s(n, rng)
             .into_iter()
@@ -287,6 +290,7 @@ impl IdCounter {
     fn new(kind: IdKind, existing_count: usize) -> Self {
         Self {
             kind,
+            #[allow(clippy::cast_possible_wrap)]
             next_int: existing_count as i64 + 1,
         }
     }
@@ -440,9 +444,9 @@ fn populate_db(conn: &Connection, n: usize, kind: IdKind, rng: &mut StdRng) -> I
         let mut stmt = conn
             .prepare_cached("INSERT INTO post_tags (post_id, tag_id) VALUES (?1, ?2)")
             .unwrap();
-        for i in 0..n {
+        for post in &posts {
             let tid = tags[rng.random_range(0..n)];
-            stmt.execute(params![posts[i], tid]).unwrap();
+            stmt.execute(params![post, tid]).unwrap();
         }
     }
 
@@ -502,6 +506,7 @@ fn pick_random(ids: &[Id], rng: &mut StdRng) -> Option<Id> {
 ///
 /// The changeset/patchset bytes are produced by rusqlite's session extension,
 /// guaranteeing a bit-accurate binary format.
+#[allow(clippy::too_many_lines)]
 fn generate_scenario(
     template_db: &Connection,
     config: &DbConfig,
@@ -668,7 +673,9 @@ fn generate_scenario(
             //
             // When foreign_keys is ON we restrict DELETEs to the `comments`
             // table (a leaf — nothing references it) to avoid FK violations.
-            let deleted = if !existing.users.is_empty() {
+            let deleted = if existing.users.is_empty() {
+                false
+            } else {
                 let sql = if config.foreign_keys {
                     // FK-safe: only delete from the leaf table.
                     let id = pick_random(&existing.comments, rng).unwrap();
@@ -693,8 +700,6 @@ fn generate_scenario(
                 let _ = conn.execute(&sql, []);
                 sql_parts.push(sql);
                 true
-            } else {
-                false
             };
 
             if !deleted {
@@ -755,7 +760,7 @@ fn apply_sql(conn: &Connection, sql: &str) {
 // Benchmarks
 // ---------------------------------------------------------------------------
 
-/// Register the four bench functions (sql, sql_tx, patchset, changeset) for
+/// Register the four bench functions (sql, `sql_tx`, patchset, changeset) for
 /// a single `(template, config, scenario)` combination.
 fn register_benches(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
