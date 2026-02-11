@@ -1,0 +1,56 @@
+name: Fuzz
+
+on:
+  schedule:
+    # Run nightly at 3:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Fuzzing duration in seconds per target"
+        required: false
+        default: "300"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - roundtrip
+          - sql_roundtrip
+          - apply_roundtrip
+          - reverse_idempotent
+          - differential
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run fuzzer
+        run: |
+          DURATION="${{ github.event.inputs.duration || '300' }}"
+          cd fuzz
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=$DURATION
+        continue-on-error: true
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 30
