@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 sqlite-diff-rs = { path = "../..", features = ["pg-walstream"] }
-pg_walstream = { git = "https://github.com/LucaCappelletti94/pg-walstream.git", branch = "feat/add-arbitrary-support" }
+pg_walstream = "0.3.0"
 testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"

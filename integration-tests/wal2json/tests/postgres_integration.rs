@@ -510,48 +510,8 @@ async fn run_v2_format_test(version: &str) {
     drop_replication_slot(&client, "test_slot").await;
 }
 
-// PostgreSQL 14 tests
-#[tokio::test]
-async fn test_insert_pg14() {
-    run_insert_test("14").await;
-}
-
-#[tokio::test]
-async fn test_update_pg14() {
-    run_update_test("14").await;
-}
-
-#[tokio::test]
-async fn test_delete_pg14() {
-    run_delete_test("14").await;
-}
-
-#[tokio::test]
-async fn test_multiple_operations_pg14() {
-    run_multiple_operations_test("14").await;
-}
-
-#[tokio::test]
-async fn test_null_values_pg14() {
-    run_null_values_test("14").await;
-}
-
-#[tokio::test]
-async fn test_various_types_pg14() {
-    run_various_types_test("14").await;
-}
-
-#[tokio::test]
-async fn test_v1_format_pg14() {
-    run_v1_format_test("14").await;
-}
-
-#[tokio::test]
-async fn test_v2_format_pg14() {
-    run_v2_format_test("14").await;
-}
-
-// PostgreSQL 15 tests
+// PostgreSQL 15 tests (only version with wal2json Docker image available)
+// For newer PostgreSQL versions (16+), use pg_walstream with pgoutput instead.
 #[tokio::test]
 async fn test_insert_pg15() {
     run_insert_test("15").await;
@@ -590,86 +550,4 @@ async fn test_v1_format_pg15() {
 #[tokio::test]
 async fn test_v2_format_pg15() {
     run_v2_format_test("15").await;
-}
-
-// PostgreSQL 16 tests
-#[tokio::test]
-async fn test_insert_pg16() {
-    run_insert_test("16").await;
-}
-
-#[tokio::test]
-async fn test_update_pg16() {
-    run_update_test("16").await;
-}
-
-#[tokio::test]
-async fn test_delete_pg16() {
-    run_delete_test("16").await;
-}
-
-#[tokio::test]
-async fn test_multiple_operations_pg16() {
-    run_multiple_operations_test("16").await;
-}
-
-#[tokio::test]
-async fn test_null_values_pg16() {
-    run_null_values_test("16").await;
-}
-
-#[tokio::test]
-async fn test_various_types_pg16() {
-    run_various_types_test("16").await;
-}
-
-#[tokio::test]
-async fn test_v1_format_pg16() {
-    run_v1_format_test("16").await;
-}
-
-#[tokio::test]
-async fn test_v2_format_pg16() {
-    run_v2_format_test("16").await;
-}
-
-// PostgreSQL 17 tests
-#[tokio::test]
-async fn test_insert_pg17() {
-    run_insert_test("17").await;
-}
-
-#[tokio::test]
-async fn test_update_pg17() {
-    run_update_test("17").await;
-}
-
-#[tokio::test]
-async fn test_delete_pg17() {
-    run_delete_test("17").await;
-}
-
-#[tokio::test]
-async fn test_multiple_operations_pg17() {
-    run_multiple_operations_test("17").await;
-}
-
-#[tokio::test]
-async fn test_null_values_pg17() {
-    run_null_values_test("17").await;
-}
-
-#[tokio::test]
-async fn test_various_types_pg17() {
-    run_various_types_test("17").await;
-}
-
-#[tokio::test]
-async fn test_v1_format_pg17() {
-    run_v1_format_test("17").await;
-}
-
-#[tokio::test]
-async fn test_v2_format_pg17() {
-    run_v2_format_test("17").await;
 }

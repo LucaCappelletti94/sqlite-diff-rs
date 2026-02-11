@@ -15,17 +15,25 @@ pub const POSTGRES_PORT: u16 = 5432;
 
 /// Start a PostgreSQL container with wal2json support.
 ///
-/// Uses Debezium PostgreSQL images which include wal2json pre-installed.
+/// Uses `bfontaine/postgres-wal2json` for PG 15+ which includes wal2json pre-installed.
 ///
 /// # Arguments
 ///
-/// * `version` - PostgreSQL version tag (e.g., "14", "15", "16", "17", "18")
+/// * `version` - PostgreSQL version tag (e.g., "15")
 ///
 /// # Returns
 ///
 /// A running container and the host port mapped to PostgreSQL.
+///
+/// # Supported Versions
+///
+/// Currently only PostgreSQL 15 is supported via `bfontaine/postgres-wal2json:15-bookworm`.
+/// For older versions or pgoutput-based CDC, use the `pg_walstream` feature instead.
 pub async fn start_postgres(version: &str) -> (ContainerAsync<GenericImage>, u16) {
-    let image = GenericImage::new("quay.io/debezium/postgres", version)
+    // Use bfontaine/postgres-wal2json which includes wal2json extension
+    // Currently only PG 15 is available: "15-bookworm"
+    let tag = format!("{version}-bookworm");
+    let image = GenericImage::new("bfontaine/postgres-wal2json", &tag)
         .with_wait_for(WaitFor::message_on_stderr(
             "database system is ready to accept connections",
         ))
