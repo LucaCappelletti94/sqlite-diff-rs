@@ -1,146 +1,223 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 448" width="720" height="448">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" width="720" height="380">
   <defs>
-    <marker id="ag" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto"><polygon points="0,0 10,3.5 0,7" fill="#43A047"/></marker>
-    <marker id="ar" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto"><polygon points="0,0 10,3.5 0,7" fill="#E53935"/></marker>
-    <marker id="ao" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto"><polygon points="0,0 10,3.5 0,7" fill="#FF6F00"/></marker>
+    <marker id="arrow-green" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="7" markerHeight="5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#2e7d32"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="7" markerHeight="5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#c62828"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="7" markerHeight="5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#e65100"/>
+    </marker>
+    <clipPath id="clip-left">
+      <rect x="12" y="48" width="318" height="270" rx="8"/>
+    </clipPath>
+    <clipPath id="clip-right">
+      <rect x="390" y="48" width="318" height="270" rx="8"/>
+    </clipPath>
   </defs>
   <style>
-    text{font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif}
-    .m{font-family:'JetBrains Mono','Fira Code','Cascadia Code','SF Mono',Menlo,Consolas,monospace}
+    text { font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+    .mono { font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace; font-size: 7.5px; }
+    .label { font-size: 8px; }
+    .section-title { font-size: 9px; font-weight: 600; }
+    .panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+    .marker-text { font-size: 8px; opacity: 0.7; }
   </style>
 
-  <!-- background -->
-  <rect width="720" height="448" fill="#fefefe"/>
+  <!-- Background -->
+  <rect width="720" height="380" fill="#fafafa"/>
 
-  <!-- title -->
-  <text x="360" y="26" text-anchor="middle" font-size="16" font-weight="700" fill="#333">SQLite Session Extension — Binary Wire Formats</text>
-  <text x="360" y="43" text-anchor="middle" font-size="10" fill="#888">Byte-level layout of Changeset ('T') vs Patchset ('P') records</text>
+  <!-- Title -->
+  <text x="360" y="22" text-anchor="middle" font-size="14" font-weight="700" fill="#212121">SQLite Session Extension Binary Formats</text>
+  <text x="360" y="38" text-anchor="middle" font-size="9" fill="#757575">Changeset vs Patchset wire layout</text>
 
-  <!-- ============ LEFT PANEL: CHANGESET ============ -->
-  <rect x="15" y="58" width="319" height="330" rx="7" fill="#c5d5ea" stroke="#4a6fa5" stroke-width="1.5"/>
-  <rect x="16" y="89" width="317" height="298" fill="#e8eef7"/>
-  <text x="130" y="77" text-anchor="middle" font-size="12" font-weight="700" fill="#2c3e6b">CHANGESET</text>
-  <text x="260" y="77" text-anchor="middle" font-size="9" fill="#6a89b0">marker 'T' = 0x54</text>
+  <!-- ===================== LEFT PANEL: CHANGESET ===================== -->
+  <g>
+    <!-- Panel background -->
+    <rect x="12" y="48" width="318" height="270" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="1.2"/>
 
-  <!-- header -->
-  <text x="22" y="106" font-size="9.5" font-weight="600" fill="#4a6fa5">Table Header</text>
-  <rect x="22"  y="114" width="51"  height="24" rx="3" fill="#b3c6e7" stroke="#4a6fa5" stroke-width="1"/>
-  <text x="47"  y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1a237e"><tspan class="m">'T'</tspan> 0x54</text>
-  <rect x="77"  y="114" width="51"  height="24" rx="3" fill="#b3c6e7" stroke="#4a6fa5" stroke-width="1"/>
-  <text x="102" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1a237e" class="m">col_cnt</text>
-  <rect x="132" y="114" width="79"  height="24" rx="3" fill="#b3c6e7" stroke="#4a6fa5" stroke-width="1"/>
-  <text x="171" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1a237e" class="m">pk_flags[0..N]</text>
-  <rect x="215" y="114" width="112" height="24" rx="3" fill="#b3c6e7" stroke="#4a6fa5" stroke-width="1"/>
-  <text x="271" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1a237e"><tspan class="m">table_name</tspan> + NUL</text>
+    <!-- Header bar -->
+    <rect x="12" y="48" width="318" height="28" rx="8" fill="#1976d2" clip-path="url(#clip-left)"/>
+    <rect x="12" y="68" width="318" height="8" fill="#1976d2"/>
 
-  <line x1="22" y1="145" x2="327" y2="145" stroke="#c0cee0" stroke-width="0.5"/>
+    <text x="171" y="66" text-anchor="middle" class="panel-title" fill="#fff">CHANGESET</text>
+    <text x="280" y="66" text-anchor="middle" class="marker-text" fill="#bbdefb">'T' = 0x54</text>
 
-  <!-- INSERT -->
-  <text x="22" y="158" font-size="9.5" font-weight="700" fill="#2e7d32">INSERT <tspan font-weight="400" font-size="9">(0x12)</tspan></text>
-  <rect x="22"  y="165" width="36"  height="24" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="1"/>
-  <text x="40"  y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">0x12</text>
-  <rect x="62"  y="165" width="36"  height="24" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="1"/>
-  <text x="80"  y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">0x00</text>
-  <rect x="102" y="165" width="225" height="24" rx="3" fill="#c8e6c9" stroke="#388e3c" stroke-width="1"/>
-  <text x="214" y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20">value[0] … value[N-1]  <tspan font-weight="700">ALL columns</tspan></text>
+    <!-- Table Header Section -->
+    <text x="20" y="92" class="section-title" fill="#1565c0">Table Header</text>
+    <g transform="translate(20, 98)">
+      <rect width="44" height="22" rx="3" fill="#bbdefb" stroke="#1976d2" stroke-width="0.8"/>
+      <text x="22" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#0d47a1">'T'</text>
 
-  <line x1="22" y1="196" x2="327" y2="196" stroke="#c0cee0" stroke-width="0.5"/>
+      <rect x="48" width="44" height="22" rx="3" fill="#bbdefb" stroke="#1976d2" stroke-width="0.8"/>
+      <text x="70" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#0d47a1">nCol</text>
 
-  <!-- DELETE -->
-  <text x="22" y="209" font-size="9.5" font-weight="700" fill="#c62828">DELETE <tspan font-weight="400" font-size="9">(0x09)</tspan></text>
-  <rect x="22"  y="216" width="36"  height="24" rx="3" fill="#ef9a9a" stroke="#c62828" stroke-width="1"/>
-  <text x="40"  y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c" class="m">0x09</text>
-  <rect x="62"  y="216" width="36"  height="24" rx="3" fill="#ef9a9a" stroke="#c62828" stroke-width="1"/>
-  <text x="80"  y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c" class="m">0x00</text>
-  <rect x="102" y="216" width="225" height="24" rx="3" fill="#ffcdd2" stroke="#c62828" stroke-width="1"/>
-  <text x="214" y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c">old[0] … old[N-1]  <tspan font-weight="700">ALL columns</tspan></text>
+      <rect x="96" width="70" height="22" rx="3" fill="#bbdefb" stroke="#1976d2" stroke-width="0.8"/>
+      <text x="131" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#0d47a1">pk_flags[]</text>
 
-  <line x1="22" y1="247" x2="327" y2="247" stroke="#c0cee0" stroke-width="0.5"/>
+      <rect x="170" width="132" height="22" rx="3" fill="#bbdefb" stroke="#1976d2" stroke-width="0.8"/>
+      <text x="236" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#0d47a1">table_name\0</text>
+    </g>
 
-  <!-- UPDATE -->
-  <text x="22" y="260" font-size="9.5" font-weight="700" fill="#e65100">UPDATE <tspan font-weight="400" font-size="9">(0x17)</tspan></text>
-  <rect x="22"  y="267" width="36"  height="24" rx="3" fill="#ffe082" stroke="#f57c00" stroke-width="1"/>
-  <text x="40"  y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100" class="m">0x17</text>
-  <rect x="62"  y="267" width="36"  height="24" rx="3" fill="#ffe082" stroke="#f57c00" stroke-width="1"/>
-  <text x="80"  y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100" class="m">0x00</text>
-  <rect x="102" y="267" width="110" height="24" rx="3" fill="#fff9c4" stroke="#f57c00" stroke-width="1"/>
-  <text x="157" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100">old[0..N] <tspan font-weight="700">ALL old</tspan></text>
-  <rect x="216" y="267" width="111" height="24" rx="3" fill="#fff3e0" stroke="#f57c00" stroke-width="1"/>
-  <text x="271" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100">new[0..N] <tspan font-weight="700">ALL new</tspan></text>
+    <!-- INSERT -->
+    <text x="20" y="140" class="section-title" fill="#2e7d32">INSERT</text>
+    <text x="62" y="140" class="label" fill="#66bb6a">0x12</text>
+    <g transform="translate(20, 146)">
+      <rect width="32" height="20" rx="3" fill="#a5d6a7" stroke="#43a047" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">0x12</text>
 
-  <!-- footer -->
-  <text x="174" y="330" text-anchor="middle" font-size="9" font-style="italic" fill="#777">Reversible — old values let you undo every operation</text>
+      <rect x="36" width="32" height="20" rx="3" fill="#a5d6a7" stroke="#43a047" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">0x00</text>
 
-  <!-- ============ RIGHT PANEL: PATCHSET ============ -->
-  <rect x="371" y="58" width="334" height="330" rx="7" fill="#b5d9b8" stroke="#2d8a4e" stroke-width="1.5"/>
-  <rect x="372" y="89" width="332" height="298" fill="#e8f5e9"/>
-  <text x="495" y="77" text-anchor="middle" font-size="12" font-weight="700" fill="#1b5e20">PATCHSET</text>
-  <text x="630" y="77" text-anchor="middle" font-size="9" fill="#4caf50">marker 'P' = 0x50</text>
+      <rect x="72" width="230" height="20" rx="3" fill="#c8e6c9" stroke="#43a047" stroke-width="0.8"/>
+      <text x="187" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#1b5e20">new_val[0..N-1] — <tspan font-weight="600">ALL columns</tspan></text>
+    </g>
 
-  <!-- header -->
-  <text x="379" y="106" font-size="9.5" font-weight="600" fill="#2d8a4e">Table Header</text>
-  <rect x="379" y="114" width="51"  height="24" rx="3" fill="#81c784" stroke="#2d8a4e" stroke-width="1"/>
-  <text x="404" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20"><tspan class="m">'P'</tspan> 0x50</text>
-  <rect x="434" y="114" width="51"  height="24" rx="3" fill="#81c784" stroke="#2d8a4e" stroke-width="1"/>
-  <text x="459" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">col_cnt</text>
-  <rect x="489" y="114" width="79"  height="24" rx="3" fill="#81c784" stroke="#2d8a4e" stroke-width="1"/>
-  <text x="528" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">pk_flags[0..N]</text>
-  <rect x="572" y="114" width="126" height="24" rx="3" fill="#81c784" stroke="#2d8a4e" stroke-width="1"/>
-  <text x="635" y="126" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20"><tspan class="m">table_name</tspan> + NUL</text>
+    <!-- DELETE -->
+    <text x="20" y="186" class="section-title" fill="#c62828">DELETE</text>
+    <text x="62" y="186" class="label" fill="#ef5350">0x09</text>
+    <g transform="translate(20, 192)">
+      <rect width="32" height="20" rx="3" fill="#ef9a9a" stroke="#e53935" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#b71c1c">0x09</text>
 
-  <line x1="379" y1="145" x2="698" y2="145" stroke="#a8d5ab" stroke-width="0.5"/>
+      <rect x="36" width="32" height="20" rx="3" fill="#ef9a9a" stroke="#e53935" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#b71c1c">0x00</text>
 
-  <!-- INSERT — same -->
-  <text x="379" y="158" font-size="9.5" font-weight="700" fill="#2e7d32">INSERT <tspan font-weight="400" font-size="9">(0x12) — same</tspan></text>
-  <rect x="379" y="165" width="36"  height="24" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="1"/>
-  <text x="397" y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">0x12</text>
-  <rect x="419" y="165" width="36"  height="24" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="1"/>
-  <text x="437" y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20" class="m">0x00</text>
-  <rect x="459" y="165" width="239" height="24" rx="3" fill="#c8e6c9" stroke="#388e3c" stroke-width="1"/>
-  <text x="578" y="177" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#1b5e20">value[0] … value[N-1]  <tspan font-weight="700">ALL columns</tspan></text>
+      <rect x="72" width="230" height="20" rx="3" fill="#ffcdd2" stroke="#e53935" stroke-width="0.8"/>
+      <text x="187" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#b71c1c">old_val[0..N-1] — <tspan font-weight="600">ALL columns</tspan></text>
+    </g>
 
-  <line x1="379" y1="196" x2="698" y2="196" stroke="#a8d5ab" stroke-width="0.5"/>
+    <!-- UPDATE -->
+    <text x="20" y="232" class="section-title" fill="#e65100">UPDATE</text>
+    <text x="62" y="232" class="label" fill="#ff9800">0x17</text>
+    <g transform="translate(20, 238)">
+      <rect width="32" height="20" rx="3" fill="#ffe082" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#e65100">0x17</text>
 
-  <!-- DELETE — PK only -->
-  <text x="379" y="209" font-size="9.5" font-weight="700" fill="#c62828">DELETE <tspan font-weight="400" font-size="9">(0x09)</tspan> — <tspan font-weight="700">PK only</tspan></text>
-  <rect x="379" y="216" width="36"  height="24" rx="3" fill="#ef9a9a" stroke="#c62828" stroke-width="1"/>
-  <text x="397" y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c" class="m">0x09</text>
-  <rect x="419" y="216" width="36"  height="24" rx="3" fill="#ef9a9a" stroke="#c62828" stroke-width="1"/>
-  <text x="437" y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c" class="m">0x00</text>
-  <rect x="459" y="216" width="165" height="24" rx="3" fill="#ffcdd2" stroke="#c62828" stroke-width="1"/>
-  <text x="541" y="228" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#b71c1c">pk_val[0] … <tspan font-weight="700">PK only</tspan></text>
-  <rect x="628" y="216" width="70"  height="24" rx="3" fill="#ffebee" stroke="#e57373" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="663" y="228" text-anchor="middle" dominant-baseline="central" font-size="8" font-style="italic" fill="#e57373">omitted</text>
+      <rect x="36" width="32" height="20" rx="3" fill="#ffe082" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#e65100">0x00</text>
 
-  <line x1="379" y1="247" x2="698" y2="247" stroke="#a8d5ab" stroke-width="0.5"/>
+      <rect x="72" width="112" height="20" rx="3" fill="#fff8e1" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="128" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#e65100">old[0..N] <tspan font-weight="600">ALL</tspan></text>
 
-  <!-- UPDATE — sparse -->
-  <text x="379" y="260" font-size="9.5" font-weight="700" fill="#e65100">UPDATE <tspan font-weight="400" font-size="9">(0x17)</tspan> — <tspan font-weight="700">sparse</tspan></text>
-  <rect x="379" y="267" width="36"  height="24" rx="3" fill="#ffe082" stroke="#f57c00" stroke-width="1"/>
-  <text x="397" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100" class="m">0x17</text>
-  <rect x="419" y="267" width="36"  height="24" rx="3" fill="#ffe082" stroke="#f57c00" stroke-width="1"/>
-  <text x="437" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100" class="m">0x00</text>
-  <rect x="459" y="267" width="118" height="24" rx="3" fill="#fff9c4" stroke="#f57c00" stroke-width="1"/>
-  <text x="518" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100">PK=val, rest=<tspan class="m">0x00</tspan></text>
-  <rect x="581" y="267" width="117" height="24" rx="3" fill="#fff3e0" stroke="#f57c00" stroke-width="1"/>
-  <text x="639" y="279" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#e65100">chg=val, rest=<tspan class="m">0x00</tspan></text>
+      <rect x="188" width="114" height="20" rx="3" fill="#fff3e0" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="245" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#e65100">new[0..N] <tspan font-weight="600">ALL</tspan></text>
+    </g>
 
-  <!-- footer -->
-  <text x="538" y="330" text-anchor="middle" font-size="9" font-style="italic" fill="#777">Compact, forward-only — smaller wire size, cannot reverse</text>
+    <!-- Footer -->
+    <text x="171" y="290" text-anchor="middle" font-size="8" font-style="italic" fill="#5c6bc0">Reversible: full old state enables undo</text>
+  </g>
 
-  <!-- ============ ARROWS ============ -->
-  <line x1="336" y1="177" x2="368" y2="177" stroke="#43A047" stroke-width="1.5" stroke-dasharray="2 2" marker-end="url(#ag)"/>
-  <text x="352" y="163" text-anchor="middle" font-size="7.5" font-weight="600" fill="#43A047">identical</text>
+  <!-- ===================== RIGHT PANEL: PATCHSET ===================== -->
+  <g>
+    <!-- Panel background -->
+    <rect x="390" y="48" width="318" height="270" rx="8" fill="#e8f5e9" stroke="#388e3c" stroke-width="1.2"/>
 
-  <line x1="336" y1="228" x2="368" y2="228" stroke="#E53935" stroke-width="1.5" stroke-dasharray="5 2" marker-end="url(#ar)"/>
-  <text x="352" y="214" text-anchor="middle" font-size="7.5" font-weight="600" fill="#E53935">PK only</text>
+    <!-- Header bar -->
+    <rect x="390" y="48" width="318" height="28" rx="8" fill="#388e3c" clip-path="url(#clip-right)"/>
+    <rect x="390" y="68" width="318" height="8" fill="#388e3c"/>
 
-  <line x1="336" y1="279" x2="368" y2="279" stroke="#FF6F00" stroke-width="1.5" stroke-dasharray="5 2" marker-end="url(#ao)"/>
-  <text x="352" y="265" text-anchor="middle" font-size="7.5" font-weight="600" fill="#FF6F00">sparse</text>
+    <text x="549" y="66" text-anchor="middle" class="panel-title" fill="#fff">PATCHSET</text>
+    <text x="658" y="66" text-anchor="middle" class="marker-text" fill="#a5d6a7">'P' = 0x50</text>
 
-  <!-- ============ BOTTOM LEGEND ============ -->
-  <text x="360" y="410" text-anchor="middle" font-size="9" fill="#666">
-    <tspan font-weight="600">Value encoding:</tspan>  <tspan class="m">0x00</tspan> Undef · <tspan class="m">0x01</tspan> INT 8B · <tspan class="m">0x02</tspan> REAL 8B · <tspan class="m">0x03</tspan> TEXT varint+UTF-8 · <tspan class="m">0x04</tspan> BLOB varint+raw · <tspan class="m">0x05</tspan> NULL</text>
-  <text x="360" y="428" text-anchor="middle" font-size="9" fill="#888">
-    <tspan font-weight="600">Key:</tspan>  Changeset = ALL old values (reversible)  |  Patchset = PK-only old values (compact, forward-only)</text>
+    <!-- Table Header Section -->
+    <text x="398" y="92" class="section-title" fill="#2e7d32">Table Header</text>
+    <g transform="translate(398, 98)">
+      <rect width="44" height="22" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="0.8"/>
+      <text x="22" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">'P'</text>
+
+      <rect x="48" width="44" height="22" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="0.8"/>
+      <text x="70" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">nCol</text>
+
+      <rect x="96" width="70" height="22" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="0.8"/>
+      <text x="131" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">pk_flags[]</text>
+
+      <rect x="170" width="132" height="22" rx="3" fill="#a5d6a7" stroke="#388e3c" stroke-width="0.8"/>
+      <text x="236" y="11" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">table_name\0</text>
+    </g>
+
+    <!-- INSERT (same) -->
+    <text x="398" y="140" class="section-title" fill="#2e7d32">INSERT</text>
+    <text x="440" y="140" class="label" fill="#66bb6a">0x12 — same</text>
+    <g transform="translate(398, 146)">
+      <rect width="32" height="20" rx="3" fill="#a5d6a7" stroke="#43a047" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">0x12</text>
+
+      <rect x="36" width="32" height="20" rx="3" fill="#a5d6a7" stroke="#43a047" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#1b5e20">0x00</text>
+
+      <rect x="72" width="230" height="20" rx="3" fill="#c8e6c9" stroke="#43a047" stroke-width="0.8"/>
+      <text x="187" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#1b5e20">new_val[0..N-1] — <tspan font-weight="600">ALL columns</tspan></text>
+    </g>
+
+    <!-- DELETE (PK only) -->
+    <text x="398" y="186" class="section-title" fill="#c62828">DELETE</text>
+    <text x="443" y="186" class="label" fill="#ef5350">0x09 — <tspan font-weight="600">PK only</tspan></text>
+    <g transform="translate(398, 192)">
+      <rect width="32" height="20" rx="3" fill="#ef9a9a" stroke="#e53935" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#b71c1c">0x09</text>
+
+      <rect x="36" width="32" height="20" rx="3" fill="#ef9a9a" stroke="#e53935" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#b71c1c">0x00</text>
+
+      <rect x="72" width="150" height="20" rx="3" fill="#ffcdd2" stroke="#e53935" stroke-width="0.8"/>
+      <text x="147" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#b71c1c">pk_val[] — <tspan font-weight="600">PK only</tspan></text>
+
+      <rect x="226" width="76" height="20" rx="3" fill="#fce4ec" stroke="#e57373" stroke-width="0.8" stroke-dasharray="3 2"/>
+      <text x="264" y="10" text-anchor="middle" dominant-baseline="central" class="label" font-style="italic" fill="#e57373">omitted</text>
+    </g>
+
+    <!-- UPDATE (sparse) -->
+    <text x="398" y="232" class="section-title" fill="#e65100">UPDATE</text>
+    <text x="445" y="232" class="label" fill="#ff9800">0x17 — <tspan font-weight="600">sparse</tspan></text>
+    <g transform="translate(398, 238)">
+      <rect width="32" height="20" rx="3" fill="#ffe082" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="16" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#e65100">0x17</text>
+
+      <rect x="36" width="32" height="20" rx="3" fill="#ffe082" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="52" y="10" text-anchor="middle" dominant-baseline="central" class="mono" fill="#e65100">0x00</text>
+
+      <rect x="72" width="112" height="20" rx="3" fill="#fff8e1" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="128" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#e65100">PK + <tspan class="mono">0x00</tspan></text>
+
+      <rect x="188" width="114" height="20" rx="3" fill="#fff3e0" stroke="#ffa000" stroke-width="0.8"/>
+      <text x="245" y="10" text-anchor="middle" dominant-baseline="central" class="label" fill="#e65100">changed + <tspan class="mono">0x00</tspan></text>
+    </g>
+
+    <!-- Footer -->
+    <text x="549" y="290" text-anchor="middle" font-size="8" font-style="italic" fill="#66bb6a">Compact: minimal data, forward-only</text>
+  </g>
+
+  <!-- ===================== CENTER ARROWS ===================== -->
+  <g transform="translate(340, 0)">
+    <!-- INSERT arrow -->
+    <line x1="0" y1="156" x2="38" y2="156" stroke="#2e7d32" stroke-width="1.2" stroke-dasharray="2 2" marker-end="url(#arrow-green)"/>
+    <text x="19" y="148" text-anchor="middle" font-size="7" font-weight="600" fill="#2e7d32">same</text>
+
+    <!-- DELETE arrow -->
+    <line x1="0" y1="202" x2="38" y2="202" stroke="#c62828" stroke-width="1.2" stroke-dasharray="4 2" marker-end="url(#arrow-red)"/>
+    <text x="19" y="194" text-anchor="middle" font-size="7" font-weight="600" fill="#c62828">PK only</text>
+
+    <!-- UPDATE arrow -->
+    <line x1="0" y1="248" x2="38" y2="248" stroke="#e65100" stroke-width="1.2" stroke-dasharray="4 2" marker-end="url(#arrow-orange)"/>
+    <text x="19" y="240" text-anchor="middle" font-size="7" font-weight="600" fill="#e65100">sparse</text>
+  </g>
+
+  <!-- ===================== BOTTOM LEGEND ===================== -->
+  <rect x="12" y="328" width="696" height="44" rx="6" fill="#f5f5f5" stroke="#e0e0e0" stroke-width="0.8"/>
+
+  <text x="360" y="346" text-anchor="middle" font-size="8" fill="#616161">
+    <tspan font-weight="600">Value encoding:</tspan>
+    <tspan class="mono" dx="6">0x00</tspan> undefined
+    <tspan dx="8" class="mono">0x01</tspan> INT64
+    <tspan dx="8" class="mono">0x02</tspan> FLOAT64
+    <tspan dx="8" class="mono">0x03</tspan> TEXT
+    <tspan dx="8" class="mono">0x04</tspan> BLOB
+    <tspan dx="8" class="mono">0x05</tspan> NULL
+  </text>
+
+  <text x="360" y="362" text-anchor="middle" font-size="8" fill="#9e9e9e">
+    Changeset stores ALL old values (reversible) | Patchset stores PK-only old values (compact, ~23% smaller)
+  </text>
 </svg>

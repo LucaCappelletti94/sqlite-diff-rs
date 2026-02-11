@@ -1,0 +1,602 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 900 1800" width="900" height="1800">
+  <defs>
+    <linearGradient id="header-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#2d5a87"/>
+    </linearGradient>
+    <symbol id="icon-shield" viewBox="0 0 512 512">
+      <path d="M256 0c4.6 0 9.2 1 13.4 2.9L457.7 82.8c22 9.3 38.4 31 38.3 57.2c-.5 99.2-41.3 280.7-213.6 363.2c-16.7 8-36.1 8-52.8 0C57.3 420.7 16.5 239.2 16 140c-.1-26.2 16.3-47.9 38.3-57.2L242.7 2.9C246.8 1 251.4 0 256 0z"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 512 512">
+      <path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM369 209L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z"/>
+    </symbol>
+  </defs>
+
+  <style>
+    text { font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif; }
+    .mono { font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace; }
+    .title { font-size: 24px; font-weight: 700; fill: #fff; letter-spacing: -0.5px; }
+    .subtitle { font-size: 13px; fill: rgba(255,255,255,0.9); }
+    .section-title { font-size: 14px; font-weight: 700; fill: #1e293b; letter-spacing: -0.3px; }
+    .body { font-size: 11px; fill: #475569; line-height: 1.4; }
+    .label { font-size: 10px; fill: #64748b; }
+    .value { font-size: 10px; fill: #1e293b; font-weight: 600; }
+    .small { font-size: 9px; fill: #64748b; }
+    .tiny { font-size: 8px; fill: #94a3b8; }
+  </style>
+
+  <!-- Background -->
+  <rect width="900" height="1800" fill="#f8fafc"/>
+
+  <!-- Header -->
+  <rect width="900" height="100" fill="url(#header-grad)"/>
+  <text x="450" y="32" text-anchor="middle" class="title">SQLite Changeset &amp; Patchset Format</text>
+  <text x="450" y="52" text-anchor="middle" class="subtitle">Binary wire format for database change synchronization</text>
+  <text x="450" y="72" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.8)">Format specification: SQLite 3.9.0 (October 2015)</text>
+  <text x="450" y="88" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.6)">sqlite-diff-rs: Pure Rust implementation (2024) — github.com/LucaCappelletti94/sqlite-diff-rs</text>
+
+  <!-- Overview Section -->
+  <g transform="translate(32, 118)">
+    <text x="0" y="0" class="section-title">Overview</text>
+    <rect x="0" y="12" width="836" height="82" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+    <foreignObject x="16" y="20" width="804" height="68">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 11px; color: #475569; text-align: justify; line-height: 1.4;">
+        SQLite's session extension defines two binary formats for database mutations: <strong>changesets</strong> (<em>reversible</em>, full old/new state) and <strong>patchsets</strong> (<em>compact</em>, forward-only). Unlike Protobuf, CBOR, or JSON schemas, these formats require <strong>no application-layer struct definitions</strong> — the binary is directly applicable via <code style="font-family: monospace; background: #f1f5f9; padding: 1px 3px; border-radius: 2px;">sqlite3changeset_apply()</code>. <em>No codegen, no version compatibility issues, no SQL injection vectors.</em> The session extension is included in SQLite amalgamation but can be compiled out with SQLITE_OMIT_SESSION.
+      </div>
+    </foreignObject>
+  </g>
+
+  <!-- Binary Format Structure -->
+  <g transform="translate(32, 230)">
+    <text x="0" y="0" class="section-title">Binary Format Structure</text>
+
+    <!-- Changeset Panel -->
+    <g transform="translate(0, 18)">
+      <rect width="320" height="200" rx="6" fill="#fff" stroke="#3b82f6" stroke-width="1.5"/>
+      <rect width="320" height="28" rx="6" fill="#3b82f6"/>
+      <rect y="22" width="320" height="6" fill="#3b82f6"/>
+      <text x="160" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">CHANGESET (0x54 = 'T')</text>
+
+      <g transform="translate(12, 44)">
+        <text x="0" y="0" class="label" font-weight="600">Table Header</text>
+        <g transform="translate(0, 10)">
+          <rect width="28" height="16" rx="2" fill="#dbeafe" stroke="#93c5fd"/>
+          <text x="14" y="11" text-anchor="middle" class="mono tiny" fill="#1e40af">'T'</text>
+          <rect x="32" width="32" height="16" rx="2" fill="#dbeafe" stroke="#93c5fd"/>
+          <text x="48" y="11" text-anchor="middle" class="mono tiny" fill="#1e40af">nCol</text>
+          <rect x="68" width="50" height="16" rx="2" fill="#dbeafe" stroke="#93c5fd"/>
+          <text x="93" y="11" text-anchor="middle" class="mono tiny" fill="#1e40af">pk_flags</text>
+          <rect x="122" width="162" height="16" rx="2" fill="#dbeafe" stroke="#93c5fd"/>
+          <text x="203" y="11" text-anchor="middle" class="mono tiny" fill="#1e40af">table_name\0</text>
+        </g>
+
+        <text x="0" y="44" class="label" font-weight="600" fill="#16a34a">INSERT (0x12)</text>
+        <g transform="translate(0, 54)">
+          <rect width="28" height="14" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#166534">0x12</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#166534">0x00</text>
+          <rect x="64" width="220" height="14" rx="2" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="174" y="10" text-anchor="middle" class="tiny" fill="#166534">new_values[0..N] — all cols</text>
+        </g>
+
+        <text x="0" y="84" class="label" font-weight="600" fill="#dc2626">DELETE (0x09)</text>
+        <g transform="translate(0, 94)">
+          <rect width="28" height="14" rx="2" fill="#fee2e2" stroke="#fca5a5"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#991b1b">0x09</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#fee2e2" stroke="#fca5a5"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#991b1b">0x00</text>
+          <rect x="64" width="220" height="14" rx="2" fill="#fef2f2" stroke="#fca5a5"/>
+          <text x="174" y="10" text-anchor="middle" class="tiny" fill="#991b1b">old_values[0..N] — all cols</text>
+        </g>
+
+        <text x="0" y="124" class="label" font-weight="600" fill="#ea580c">UPDATE (0x17)</text>
+        <g transform="translate(0, 134)">
+          <rect width="28" height="14" rx="2" fill="#ffedd5" stroke="#fdba74"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#9a3412">0x17</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#ffedd5" stroke="#fdba74"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#9a3412">0x00</text>
+          <rect x="64" width="110" height="14" rx="2" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="119" y="10" text-anchor="middle" class="tiny" fill="#9a3412">old[0..N]</text>
+          <rect x="178" width="106" height="14" rx="2" fill="#fffbeb" stroke="#fde68a"/>
+          <text x="231" y="10" text-anchor="middle" class="tiny" fill="#9a3412">new[0..N]</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Patchset Panel -->
+    <g transform="translate(336, 18)">
+      <rect width="320" height="200" rx="6" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
+      <rect width="320" height="28" rx="6" fill="#16a34a"/>
+      <rect y="22" width="320" height="6" fill="#16a34a"/>
+      <text x="160" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">PATCHSET (0x50 = 'P')</text>
+
+      <g transform="translate(12, 44)">
+        <text x="0" y="0" class="label" font-weight="600">Table Header (identical)</text>
+        <g transform="translate(0, 10)">
+          <rect width="28" height="16" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="14" y="11" text-anchor="middle" class="mono tiny" fill="#166534">'P'</text>
+          <rect x="32" width="32" height="16" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="48" y="11" text-anchor="middle" class="mono tiny" fill="#166534">nCol</text>
+          <rect x="68" width="50" height="16" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="93" y="11" text-anchor="middle" class="mono tiny" fill="#166534">pk_flags</text>
+          <rect x="122" width="162" height="16" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="203" y="11" text-anchor="middle" class="mono tiny" fill="#166534">table_name\0</text>
+        </g>
+
+        <text x="0" y="44" class="label" font-weight="600" fill="#16a34a">INSERT (0x12) — identical</text>
+        <g transform="translate(0, 54)">
+          <rect width="28" height="14" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#166534">0x12</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#dcfce7" stroke="#86efac"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#166534">0x00</text>
+          <rect x="64" width="220" height="14" rx="2" fill="#f0fdf4" stroke="#86efac"/>
+          <text x="174" y="10" text-anchor="middle" class="tiny" fill="#166534">new_values[0..N] — all cols</text>
+        </g>
+
+        <text x="0" y="84" class="label" font-weight="600" fill="#dc2626">DELETE (0x09) — PK only</text>
+        <g transform="translate(0, 94)">
+          <rect width="28" height="14" rx="2" fill="#fee2e2" stroke="#fca5a5"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#991b1b">0x09</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#fee2e2" stroke="#fca5a5"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#991b1b">0x00</text>
+          <rect x="64" width="100" height="14" rx="2" fill="#fef2f2" stroke="#fca5a5"/>
+          <text x="114" y="10" text-anchor="middle" class="tiny" fill="#991b1b">pk_values[]</text>
+          <rect x="168" width="116" height="14" rx="2" fill="#fafafa" stroke="#d4d4d4" stroke-dasharray="2 1"/>
+          <text x="226" y="10" text-anchor="middle" class="tiny" fill="#a3a3a3" font-style="italic">omitted</text>
+        </g>
+
+        <text x="0" y="124" class="label" font-weight="600" fill="#ea580c">UPDATE (0x17) — sparse</text>
+        <g transform="translate(0, 134)">
+          <rect width="28" height="14" rx="2" fill="#ffedd5" stroke="#fdba74"/>
+          <text x="14" y="10" text-anchor="middle" class="mono tiny" fill="#9a3412">0x17</text>
+          <rect x="32" width="28" height="14" rx="2" fill="#ffedd5" stroke="#fdba74"/>
+          <text x="46" y="10" text-anchor="middle" class="mono tiny" fill="#9a3412">0x00</text>
+          <rect x="64" width="110" height="14" rx="2" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="119" y="10" text-anchor="middle" class="tiny" fill="#9a3412">PK + undef</text>
+          <rect x="178" width="106" height="14" rx="2" fill="#fffbeb" stroke="#fde68a"/>
+          <text x="231" y="10" text-anchor="middle" class="tiny" fill="#9a3412">changed</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Value encoding legend - RIGHT SIDE -->
+    <g transform="translate(672, 18)">
+      <rect width="164" height="200" rx="6" fill="#334155"/>
+      <text x="82" y="22" text-anchor="middle" font-size="10" font-weight="600" fill="#e2e8f0">Value Types</text>
+      <g transform="translate(16, 40)">
+        <text x="0" y="0" class="mono tiny" fill="#94a3b8">0x00</text>
+        <text x="36" y="0" class="tiny" fill="#cbd5e1">undefined</text>
+        <text x="0" y="20" class="mono tiny" fill="#94a3b8">0x01</text>
+        <text x="36" y="20" class="tiny" fill="#cbd5e1">INT64</text>
+        <text x="0" y="40" class="mono tiny" fill="#94a3b8">0x02</text>
+        <text x="36" y="40" class="tiny" fill="#cbd5e1">FLOAT64</text>
+        <text x="0" y="60" class="mono tiny" fill="#94a3b8">0x03</text>
+        <text x="36" y="60" class="tiny" fill="#cbd5e1">TEXT (varint len)</text>
+        <text x="0" y="80" class="mono tiny" fill="#94a3b8">0x04</text>
+        <text x="36" y="80" class="tiny" fill="#cbd5e1">BLOB (varint len)</text>
+        <text x="0" y="100" class="mono tiny" fill="#94a3b8">0x05</text>
+        <text x="36" y="100" class="tiny" fill="#cbd5e1">NULL</text>
+      </g>
+      <line x1="16" y1="170" x2="148" y2="170" stroke="#475569"/>
+      <text x="82" y="188" text-anchor="middle" class="tiny" fill="#94a3b8">SQLite serial types</text>
+    </g>
+  </g>
+
+  <!-- Payload Size Section -->
+  <g transform="translate(32, 480)">
+    <text x="0" y="0" class="section-title">Payload Size — 1,000 Operations (60% INSERT, 25% UPDATE, 15% DELETE)</text>
+
+    <!-- Main table -->
+    <g transform="translate(0, 18)">
+      <rect width="500" height="188" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+
+      <!-- Header -->
+      <rect width="500" height="26" rx="6" fill="#f1f5f9"/>
+      <rect y="20" width="500" height="6" fill="#f1f5f9"/>
+      <text x="20" y="17" class="label" font-weight="600">Format</text>
+      <text x="180" y="17" class="label" font-weight="600" text-anchor="end">Uncompressed</text>
+      <text x="270" y="17" class="label" font-weight="600" text-anchor="end">Overhead</text>
+      <text x="380" y="17" class="label" font-weight="600" text-anchor="end">Zstd Compressed</text>
+      <text x="470" y="17" class="label" font-weight="600" text-anchor="end">Ratio</text>
+
+      <!-- Raw baseline -->
+      <g transform="translate(0, 38)">
+        <text x="20" y="10" class="small">Raw content (baseline)</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">522,830</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#64748b">—</text>
+        <text x="380" y="10" class="small" text-anchor="end" fill="#64748b">—</text>
+        <text x="470" y="10" class="small" text-anchor="end" fill="#64748b">—</text>
+      </g>
+
+      <!-- Protobuf -->
+      <g transform="translate(0, 58)">
+        <text x="20" y="10" class="small" font-weight="600" fill="#7c3aed">Protobuf</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">533,092</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#16a34a">+2.0%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end">138,696</text>
+        <text x="470" y="10" class="small" text-anchor="end">3.84×</text>
+      </g>
+
+      <!-- Patchset -->
+      <g transform="translate(0, 78)">
+        <rect x="4" y="-4" width="492" height="18" rx="3" fill="#ecfdf5"/>
+        <text x="20" y="10" class="small" font-weight="700" fill="#059669">Patchset</text>
+        <text x="180" y="10" class="mono small" text-anchor="end" font-weight="600">538,761</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#16a34a" font-weight="600">+3.0%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end" font-weight="600">144,503</text>
+        <text x="470" y="10" class="small" text-anchor="end" font-weight="600" fill="#b91c1c">3.73×</text>
+      </g>
+
+      <!-- CBOR -->
+      <g transform="translate(0, 100)">
+        <text x="20" y="10" class="small">CBOR</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">566,175</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#ea580c">+8.3%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end">138,057</text>
+        <text x="470" y="10" class="small" text-anchor="end">4.10×</text>
+      </g>
+
+      <!-- JSON -->
+      <g transform="translate(0, 120)">
+        <text x="20" y="10" class="small">JSON</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">626,285</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#dc2626">+19.8%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end">141,607</text>
+        <text x="470" y="10" class="small" text-anchor="end">4.42×</text>
+      </g>
+
+      <!-- SQL -->
+      <g transform="translate(0, 140)">
+        <text x="20" y="10" class="small">SQL</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">636,285</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#dc2626">+21.7%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end">140,952</text>
+        <text x="470" y="10" class="small" text-anchor="end">4.51×</text>
+      </g>
+
+      <!-- Changeset -->
+      <g transform="translate(0, 160)">
+        <text x="20" y="10" class="small">Changeset</text>
+        <text x="180" y="10" class="mono small" text-anchor="end">652,646</text>
+        <text x="270" y="10" class="small" text-anchor="end" fill="#dc2626">+24.8%</text>
+        <text x="380" y="10" class="mono small" text-anchor="end">148,584</text>
+        <text x="470" y="10" class="small" text-anchor="end">4.39×</text>
+      </g>
+
+    </g>
+
+    <!-- Compression Warning Box -->
+    <g transform="translate(520, 18)">
+      <rect width="316" height="88" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
+      <text x="16" y="18" class="label" font-weight="700" fill="#92400e">Compression Trade-off</text>
+      <foreignObject x="16" y="26" width="284" height="58">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #a16207; text-align: justify; line-height: 1.4;">
+          Patchset has the lowest compression ratio (3.73×) due to its already-compact binary encoding. Text formats compress better (4.5×) but start 20% larger. After zstd compression, SQL and JSON are actually smaller than Patchset.
+        </div>
+      </foreignObject>
+    </g>
+
+    <!-- Post-compression ranking -->
+    <g transform="translate(520, 118)">
+      <rect width="150" height="88" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="12" y="18" class="label" font-weight="700">After Zstd (size)</text>
+      <text x="12" y="34" class="small">1. CBOR</text>
+      <text x="138" y="34" class="mono tiny" text-anchor="end">138 KB</text>
+      <text x="12" y="50" class="small">2. Protobuf</text>
+      <text x="138" y="50" class="mono tiny" text-anchor="end">139 KB</text>
+      <text x="12" y="66" class="small">3. SQL</text>
+      <text x="138" y="66" class="mono tiny" text-anchor="end">141 KB</text>
+      <text x="12" y="82" class="small" fill="#b91c1c">5. Patchset</text>
+      <text x="138" y="82" class="mono tiny" text-anchor="end" fill="#b91c1c">145 KB</text>
+    </g>
+
+    <!-- Compression time -->
+    <g transform="translate(686, 118)">
+      <rect width="150" height="88" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="12" y="18" class="label" font-weight="700">Compress + Decompress</text>
+      <text x="12" y="34" class="small">Protobuf</text>
+      <text x="138" y="34" class="mono tiny" text-anchor="end">8.0 ms</text>
+      <text x="12" y="50" class="small">CBOR</text>
+      <text x="138" y="50" class="mono tiny" text-anchor="end">8.1 ms</text>
+      <text x="12" y="66" class="small" fill="#059669">Patchset</text>
+      <text x="138" y="66" class="mono tiny" text-anchor="end" fill="#059669">8.2 ms</text>
+      <text x="12" y="82" class="small">SQL</text>
+      <text x="138" y="82" class="mono tiny" text-anchor="end">8.7 ms</text>
+    </g>
+  </g>
+
+  <!-- Apply Performance Section with Chart -->
+  <g transform="translate(32, 718)">
+    <text x="0" y="0" class="section-title">Apply Performance — Scaling Analysis (Integer PK, Populated Database)</text>
+
+    <!-- Chart container -->
+    <g transform="translate(0, 18)">
+      <rect width="836" height="240" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+
+      <!-- Legend - LEFT SIDE, in chart area -->
+      <g transform="translate(100, 40)">
+        <rect x="-8" y="-8" width="148" height="80" rx="4" fill="#fff" stroke="#e2e8f0"/>
+        <line x1="8" y1="12" x2="28" y2="12" stroke="#E74C3C" stroke-width="2"/>
+        <text x="36" y="15" class="small">SQL (autocommit)</text>
+        <line x1="8" y1="28" x2="28" y2="28" stroke="#E6A000" stroke-width="2"/>
+        <text x="36" y="31" class="small">SQL (transaction)</text>
+        <line x1="8" y1="44" x2="28" y2="44" stroke="#3498DB" stroke-width="2.5"/>
+        <text x="36" y="47" class="small">Changeset</text>
+        <line x1="8" y1="60" x2="28" y2="60" stroke="#2ECC71" stroke-width="2.5"/>
+        <text x="36" y="63" class="small" font-weight="600">Patchset</text>
+      </g>
+
+      <!-- Chart area -->
+      <g transform="translate(70, 20)">
+        <!-- Y-axis labels -->
+        <text x="-12" y="4" text-anchor="end" class="small">2.5 ms</text>
+        <text x="-12" y="40" text-anchor="end" class="small">2.0 ms</text>
+        <text x="-12" y="76" text-anchor="end" class="small">1.5 ms</text>
+        <text x="-12" y="112" text-anchor="end" class="small">1.0 ms</text>
+        <text x="-12" y="148" text-anchor="end" class="small">0.5 ms</text>
+        <text x="-12" y="184" text-anchor="end" class="small">0</text>
+
+        <!-- Grid lines -->
+        <line x1="0" y1="0" x2="680" y2="0" stroke="#f1f5f9" stroke-width="1"/>
+        <line x1="0" y1="36" x2="680" y2="36" stroke="#f1f5f9" stroke-width="1"/>
+        <line x1="0" y1="72" x2="680" y2="72" stroke="#f1f5f9" stroke-width="1"/>
+        <line x1="0" y1="108" x2="680" y2="108" stroke="#f1f5f9" stroke-width="1"/>
+        <line x1="0" y1="144" x2="680" y2="144" stroke="#f1f5f9" stroke-width="1"/>
+        <line x1="0" y1="180" x2="680" y2="180" stroke="#e2e8f0" stroke-width="1"/>
+
+        <!-- X-axis labels -->
+        <text x="0" y="196" text-anchor="middle" class="small">30</text>
+        <text x="100" y="196" text-anchor="middle" class="small">100</text>
+        <text x="200" y="196" text-anchor="middle" class="small">200</text>
+        <text x="340" y="196" text-anchor="middle" class="small">400</text>
+        <text x="480" y="196" text-anchor="middle" class="small">600</text>
+        <text x="580" y="196" text-anchor="middle" class="small">800</text>
+        <text x="680" y="196" text-anchor="middle" class="small">1000</text>
+
+        <!-- SQL (autocommit) line - Red -->
+        <polyline fill="none" stroke="#E74C3C" stroke-width="2"
+          points="0,175 100,166 200,152 340,122 480,88 580,55 680,12"/>
+        <circle cx="0" cy="175" r="3" fill="#E74C3C"/>
+        <circle cx="100" cy="166" r="3" fill="#E74C3C"/>
+        <circle cx="200" cy="152" r="3" fill="#E74C3C"/>
+        <circle cx="340" cy="122" r="3" fill="#E74C3C"/>
+        <circle cx="480" cy="88" r="3" fill="#E74C3C"/>
+        <circle cx="580" cy="55" r="3" fill="#E74C3C"/>
+        <circle cx="680" cy="12" r="3" fill="#E74C3C"/>
+
+        <!-- SQL (transaction) line - Orange -->
+        <polyline fill="none" stroke="#E6A000" stroke-width="2"
+          points="0,175 100,168 200,156 340,132 480,106 580,76 680,42"/>
+        <circle cx="0" cy="175" r="3" fill="#E6A000"/>
+        <circle cx="100" cy="168" r="3" fill="#E6A000"/>
+        <circle cx="200" cy="156" r="3" fill="#E6A000"/>
+        <circle cx="340" cy="132" r="3" fill="#E6A000"/>
+        <circle cx="480" cy="106" r="3" fill="#E6A000"/>
+        <circle cx="580" cy="76" r="3" fill="#E6A000"/>
+        <circle cx="680" cy="42" r="3" fill="#E6A000"/>
+
+        <!-- Changeset line - Blue -->
+        <polyline fill="none" stroke="#3498DB" stroke-width="2.5"
+          points="0,173 100,169 200,164 340,156 480,146 580,138 680,130"/>
+        <circle cx="0" cy="173" r="3" fill="#3498DB"/>
+        <circle cx="100" cy="169" r="3" fill="#3498DB"/>
+        <circle cx="200" cy="164" r="3" fill="#3498DB"/>
+        <circle cx="340" cy="156" r="3" fill="#3498DB"/>
+        <circle cx="480" cy="146" r="3" fill="#3498DB"/>
+        <circle cx="580" cy="138" r="3" fill="#3498DB"/>
+        <circle cx="680" cy="130" r="3" fill="#3498DB"/>
+
+        <!-- Patchset line - Green -->
+        <polyline fill="none" stroke="#2ECC71" stroke-width="2.5"
+          points="0,174 100,170 200,166 340,158 480,150 580,142 680,136"/>
+        <circle cx="0" cy="174" r="3" fill="#2ECC71"/>
+        <circle cx="100" cy="170" r="3" fill="#2ECC71"/>
+        <circle cx="200" cy="166" r="3" fill="#2ECC71"/>
+        <circle cx="340" cy="158" r="3" fill="#2ECC71"/>
+        <circle cx="480" cy="150" r="3" fill="#2ECC71"/>
+        <circle cx="580" cy="142" r="3" fill="#2ECC71"/>
+        <circle cx="680" cy="136" r="3" fill="#2ECC71"/>
+      </g>
+
+      <!-- Axis labels -->
+      <text x="418" y="230" text-anchor="middle" class="label">Number of Operations</text>
+      <text x="20" y="140" text-anchor="middle" class="label" transform="rotate(-90, 20, 140)">Median Time</text>
+    </g>
+
+    <!-- Caption -->
+    <foreignObject x="0" y="266" width="836" height="60">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #64748b; text-align: justify; line-height: 1.4;">
+        <strong>Apply</strong> = execute changes against database. Patchset/Changeset use <code style="font-family: monospace; background: #f1f5f9; padding: 1px 2px; border-radius: 2px;">sqlite3changeset_apply()</code> which processes binary operations <em>directly</em>. SQL executes INSERT/UPDATE/DELETE statements parsed by SQLite. <strong>Autocommit</strong> = each statement commits immediately. <strong>Transaction</strong> = all wrapped in BEGIN/COMMIT. Mixed workload: 60% INSERT, 25% UPDATE, 15% DELETE. At 1000 ops: Patchset <strong>606 µs</strong> vs SQL 2.35 ms — <strong style="color: #059669;">3.9× faster</strong>. <em>Criterion.rs, in-memory SQLite, 95% CI.</em>
+      </div>
+    </foreignObject>
+  </g>
+
+  <!-- Build Performance Section -->
+  <g transform="translate(32, 1058)">
+    <text x="0" y="0" class="section-title">Build Performance — sqlite-diff-rs vs rusqlite (C bindings)</text>
+
+    <g transform="translate(0, 18)">
+      <!-- Generation speed -->
+      <rect width="198" height="92" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="99" y="22" text-anchor="middle" class="label" font-weight="700">Changeset Generation</text>
+      <text x="99" y="52" text-anchor="middle" font-size="28" font-weight="700" fill="#4f46e5">30×</text>
+      <text x="99" y="70" text-anchor="middle" class="small">faster (6.9 µs vs 204 µs)</text>
+      <text x="99" y="84" text-anchor="middle" class="tiny" fill="#94a3b8">Pure Rust builder API</text>
+
+      <!-- Compile time -->
+      <g transform="translate(214, 0)">
+        <rect width="198" height="92" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="99" y="22" text-anchor="middle" class="label" font-weight="700">Release Compile Time</text>
+        <text x="99" y="52" text-anchor="middle" font-size="28" font-weight="700" fill="#4f46e5">6×</text>
+        <text x="99" y="70" text-anchor="middle" class="small">faster (7.1s vs 42.4s)</text>
+        <text x="99" y="84" text-anchor="middle" class="tiny" fill="#94a3b8">No C compilation required</text>
+      </g>
+
+      <!-- Artifact size -->
+      <g transform="translate(428, 0)">
+        <rect width="198" height="92" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="99" y="22" text-anchor="middle" class="label" font-weight="700">Release Artifact Size</text>
+        <text x="99" y="52" text-anchor="middle" font-size="28" font-weight="700" fill="#4f46e5">6×</text>
+        <text x="99" y="70" text-anchor="middle" class="small">smaller (383 KB vs 2.19 MB)</text>
+        <text x="99" y="84" text-anchor="middle" class="tiny" fill="#94a3b8">Minimal dependencies</text>
+      </g>
+
+      <!-- SQL Parsing -->
+      <g transform="translate(642, 0)">
+        <rect width="194" height="92" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="97" y="22" text-anchor="middle" class="label" font-weight="700">SQL Statement Parsing</text>
+        <text x="97" y="52" text-anchor="middle" font-size="28" font-weight="700" fill="#4f46e5">26 µs</text>
+        <text x="97" y="70" text-anchor="middle" class="small">per patchset from SQL</text>
+        <text x="97" y="84" text-anchor="middle" class="tiny" fill="#94a3b8">sql_parser benchmark</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Crate Properties Section -->
+  <g transform="translate(32, 1186)">
+    <text x="0" y="0" class="section-title">Crate Properties — Quality Assurance</text>
+
+    <g transform="translate(0, 18)">
+      <!-- Bit Parity Testing -->
+      <rect width="268" height="84" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+      <use href="#icon-check" x="12" y="10" width="22" height="22" fill="#059669"/>
+      <text x="42" y="24" font-size="11" font-weight="700" fill="#065f46">Bit Parity Tested</text>
+      <foreignObject x="12" y="32" width="244" height="48">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #047857; text-align: justify; line-height: 1.4;">
+          Output verified <strong>byte-for-byte identical</strong> to SQLite's native session extension for all supported operations across all value types and edge cases.
+        </div>
+      </foreignObject>
+
+      <!-- Extensively Fuzzed -->
+      <g transform="translate(284, 0)">
+        <rect width="268" height="84" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+        <use href="#icon-check" x="12" y="10" width="22" height="22" fill="#059669"/>
+        <text x="42" y="24" font-size="11" font-weight="700" fill="#065f46">Extensively Fuzzed</text>
+        <foreignObject x="12" y="32" width="244" height="48">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #047857; text-align: justify; line-height: 1.4;">
+            <strong>5 fuzz targets</strong> covering roundtrip parsing, SQL conversion, apply operations, <em>differential testing</em> against SQLite, and reverse idempotency.
+          </div>
+        </foreignObject>
+      </g>
+
+      <!-- no_std Compatible -->
+      <g transform="translate(568, 0)">
+        <rect width="268" height="84" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+        <use href="#icon-check" x="12" y="10" width="22" height="22" fill="#059669"/>
+        <text x="42" y="24" font-size="11" font-weight="700" fill="#065f46">no_std Compatible</text>
+        <foreignObject x="12" y="32" width="244" height="48">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #047857; text-align: justify; line-height: 1.4;">
+            Works in <strong>embedded systems</strong> and <strong>WASM</strong> environments without std library. <em>Zero unsafe code.</em> Optional alloc feature for heap-based operations.
+          </div>
+        </foreignObject>
+      </g>
+    </g>
+  </g>
+
+  <!-- Security and Key Advantage -->
+  <g transform="translate(32, 1306)">
+    <!-- Security -->
+    <rect width="410" height="76" rx="6" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+    <use href="#icon-shield" x="12" y="10" width="24" height="24" fill="#059669"/>
+    <text x="44" y="24" font-size="11" font-weight="700" fill="#065f46">SQL Injection: Eliminated by Design</text>
+    <foreignObject x="44" y="30" width="354" height="42">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 10px; color: #047857; text-align: justify; line-height: 1.4;">
+        Binary changesets contain <strong>no parseable SQL</strong>. Malformed input causes parse errors, <em>not query execution</em>. <strong>Zero attack surface</strong> for injection.
+      </div>
+    </foreignObject>
+
+    <!-- Key Advantage -->
+    <g transform="translate(426, 0)">
+      <rect width="410" height="76" rx="6" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/>
+      <use href="#icon-check" x="12" y="10" width="24" height="24" fill="#7c3aed"/>
+      <text x="44" y="24" font-size="11" font-weight="700" fill="#5b21b6">No Application-Layer Serialization</text>
+      <foreignObject x="44" y="30" width="354" height="42">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 10px; color: #6b21a8; text-align: justify; line-height: 1.4;">
+          Unlike Protobuf (.proto), CBOR (structs), or JSON (schema), patchsets are <strong>directly applicable</strong> via <code style="font-family: monospace; background: #ede9fe; padding: 1px 3px; border-radius: 2px;">sqlite3changeset_apply()</code>. <em>Less code = fewer bugs.</em>
+        </div>
+      </foreignObject>
+    </g>
+  </g>
+
+  <!-- Summary: Strengths and Limitations -->
+  <g transform="translate(32, 1404)">
+    <text x="0" y="0" class="section-title">Summary</text>
+
+    <!-- Strengths -->
+    <g transform="translate(0, 18)">
+      <rect width="410" height="150" rx="6" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+      <text x="205" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="#065f46">Strengths</text>
+      <line x1="16" y1="28" x2="394" y2="28" stroke="#86efac"/>
+      <text x="24" y="46" class="small" fill="#047857">• Smallest uncompressed payload (+3% overhead vs raw)</text>
+      <text x="24" y="64" class="small" fill="#047857">• 3.4–3.9× faster apply than SQL execution at scale</text>
+      <text x="24" y="82" class="small" fill="#047857">• Zero application-layer serialization code required</text>
+      <text x="24" y="100" class="small" fill="#047857">• SQL injection impossible by design (binary format)</text>
+      <text x="24" y="118" class="small" fill="#047857">• 30× faster generation, 6× faster compile, 6× smaller</text>
+      <text x="24" y="136" class="small" fill="#047857">• Bit parity tested, extensively fuzzed, no_std compatible</text>
+    </g>
+
+    <!-- Limitations -->
+    <g transform="translate(426, 18)">
+      <rect width="410" height="150" rx="6" fill="#fef2f2" stroke="#fecaca" stroke-width="1"/>
+      <text x="205" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="#991b1b">Limitations</text>
+      <line x1="16" y1="28" x2="394" y2="28" stroke="#fecaca"/>
+      <text x="24" y="46" class="small" fill="#b91c1c">• Worst compression ratio (3.73× vs 4.5× for text formats)</text>
+      <text x="24" y="64" class="small" fill="#b91c1c">• After zstd: SQL/JSON/CBOR are smaller than Patchset</text>
+      <text x="24" y="82" class="small" fill="#b91c1c">• SQLite-specific, not portable to other databases</text>
+      <text x="24" y="100" class="small" fill="#b91c1c">• Binary format, not human-readable for debugging</text>
+      <text x="24" y="118" class="small" fill="#b91c1c">• Session extension can be compiled out (OMIT_SESSION)</text>
+      <text x="24" y="136" class="small" fill="#b91c1c">• Requires understanding of SQLite session semantics</text>
+    </g>
+  </g>
+
+  <!-- When to Use -->
+  <g transform="translate(32, 1590)">
+    <text x="0" y="0" class="section-title">When to Use</text>
+
+    <g transform="translate(0, 18)">
+      <!-- Patchset -->
+      <rect width="268" height="84" rx="6" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+      <text x="16" y="24" font-size="11" font-weight="700" fill="#065f46">Use Patchset</text>
+      <text x="16" y="44" class="small" fill="#047857">• Bandwidth-constrained environments (mobile, IoT)</text>
+      <text x="16" y="60" class="small" fill="#047857">• Forward-only sync where rollback is not needed</text>
+      <text x="16" y="76" class="small" fill="#047857">• Uncompressed or lightly-compressed wire transmission</text>
+
+      <!-- Changeset -->
+      <g transform="translate(284, 0)">
+        <rect width="268" height="84" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+        <text x="16" y="24" font-size="11" font-weight="700" fill="#1e40af">Use Changeset</text>
+        <text x="16" y="44" class="small" fill="#1d4ed8">• Undo/rollback functionality required</text>
+        <text x="16" y="60" class="small" fill="#1d4ed8">• Conflict detection with full old/new context</text>
+        <text x="16" y="76" class="small" fill="#1d4ed8">• Audit trail and history tracking applications</text>
+      </g>
+
+      <!-- Alternatives -->
+      <g transform="translate(568, 0)">
+        <rect width="268" height="84" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
+        <text x="16" y="24" font-size="11" font-weight="700" fill="#92400e">Consider Alternatives</text>
+        <text x="16" y="44" class="small" fill="#b45309">• Cross-database portability required → Protobuf</text>
+        <text x="16" y="60" class="small" fill="#b45309">• Heavy zstd compression in use → SQL/JSON</text>
+        <text x="16" y="76" class="small" fill="#b45309">• Human debugging and inspection → JSON</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Session Extension Note -->
+  <g transform="translate(32, 1712)">
+    <rect width="836" height="44" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+    <foreignObject x="16" y="10" width="804" height="28">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 9px; color: #64748b; text-align: justify; line-height: 1.4;">
+        <strong>Session Extension Note:</strong> SQLite's session extension is included in the amalgamation <em>by default</em> but can be compiled out with <code style="font-family: SF Mono, JetBrains Mono, Consolas, monospace; background: #e2e8f0; padding: 1px 3px; border-radius: 2px;">-DSQLITE_OMIT_SESSION=1</code>. <em>Not all SQLite deployments have it enabled</em> (e.g., some mobile or embedded builds may omit it for size reasons).
+      </div>
+    </foreignObject>
+  </g>
+
+  <!-- Footer -->
+  <g transform="translate(32, 1772)">
+    <line x1="0" y1="0" x2="836" y2="0" stroke="#e2e8f0"/>
+    <text x="0" y="18" class="tiny" fill="#94a3b8">sqlite-diff-rs</text>
+    <text x="418" y="18" text-anchor="middle" class="tiny" fill="#94a3b8">Pure Rust implementation of SQLite changeset/patchset format</text>
+    <text x="836" y="18" text-anchor="end" class="tiny" fill="#64748b">github.com/LucaCappelletti94/sqlite-diff-rs</text>
+  </g>
+</svg>

@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use crate::{
-    DynTable, SchemaWithPK,
-    builders::{ChangesetFormat, PatchsetFormat, format::Format},
+    builders::{format::Format, ChangesetFormat, PatchsetFormat},
     encoding::{MaybeValue, Value},
+    DynTable, SchemaWithPK,
 };
 
 #[derive(Debug, Clone)]
@@ -21,11 +21,11 @@ pub struct Update<T, F: Format<S, B>, S, B> {
 }
 
 impl<
-    T: DynTable + PartialEq,
-    F: Format<S, B>,
-    S: PartialEq + AsRef<str>,
-    B: PartialEq + AsRef<[u8]>,
-> PartialEq for Update<T, F, S, B>
+        T: DynTable + PartialEq,
+        F: Format<S, B>,
+        S: PartialEq + AsRef<str>,
+        B: PartialEq + AsRef<[u8]>,
+    > PartialEq for Update<T, F, S, B>
 where
     F::Old: PartialEq,
 {
@@ -185,19 +185,12 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
     ///     .set_null(1).unwrap();
     /// ```
     #[inline]
-    pub fn set_null(mut self, col_idx: usize) -> Result<Self, crate::errors::Error>
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error>
     where
         S: Default,
         B: Default,
     {
-        if col_idx >= self.values.len() {
-            return Err(crate::errors::Error::ColumnIndexOutOfBounds(
-                col_idx,
-                self.values.len(),
-            ));
-        }
-        self.values[col_idx] = (Some(Value::Null), Some(Value::Null));
-        Ok(self)
+        self.set(col_idx, Value::Null, Value::Null)
     }
 }
 

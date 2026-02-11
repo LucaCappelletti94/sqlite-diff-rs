@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-FEATURES=("rusqlite" "builder" "sqlparser")
+FEATURES=("rusqlite" "builder")
 PROFILES=("debug" "release")
 CRATE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH_TARGET_BASE="$CRATE_DIR/target-bench"

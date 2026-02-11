@@ -1,10 +1,11 @@
 //! Compile-time and artifact-size benchmark crate.
 //!
 //! This crate exists solely to measure compilation time and compiled binary size
-//! for three different approaches to generating SQLite changesets and patchsets:
+//! for two different approaches to generating SQLite changesets and patchsets:
 //!
-//! - **`rusqlite`** feature: Uses rusqlite's native session extension API.
-//! - **`builder`** feature: Uses sqlite-diff-rs's programmatic builder API.
+//! - **`rusqlite`** feature: Uses rusqlite's native session extension API
+//!   (requires compiling the bundled SQLite C library).
+//! - **`builder`** feature: Uses sqlite-diff-rs's pure-Rust builder API.
 //!
 //! Each feature gate exposes a module with `changeset() -> Vec<u8>` and
 //! `patchset() -> Vec<u8>` functions that produce identical output using the

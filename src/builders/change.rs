@@ -35,14 +35,14 @@ use core::fmt::Debug;
 use core::hash::Hash;
 
 use crate::{
-    SchemaWithPK,
     builders::{
-        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
-        format::Format,
+        format::Format, ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete,
+        PatchsetFormat, Update,
     },
     encoding::{
-        MaybeValue, Value, encode_defined_value, encode_undefined, encode_value, markers, op_codes,
+        encode_defined_value, encode_undefined, encode_value, markers, op_codes, MaybeValue, Value,
     },
+    SchemaWithPK,
 };
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
@@ -106,7 +106,7 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
             }
             Value::Real(f) => {
                 h = hash_append(h, 2); // SQLITE_FLOAT
-                // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
+                                       // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
                 let i = i64::from_ne_bytes(f.to_ne_bytes());
                 h = session_hash_append_i64(h, i);
             }
@@ -242,6 +242,44 @@ fn patchset_pk_mapping<T: SchemaWithPK>(table: &T) -> (Vec<u8>, Vec<Option<usize
     (pk_flags, pk_col_to_pk_pos)
 }
 
+/// Encode patchset DELETE old values: PK columns get their values, non-PK columns are skipped.
+fn encode_patchset_delete_values<S: AsRef<str>, B: AsRef<[u8]>>(
+    out: &mut Vec<u8>,
+    pk_flags: &[u8],
+    pk_col_to_pk_pos: &[Option<usize>],
+    pk: &[Value<S, B>],
+) {
+    for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+        if pk_flag > 0 {
+            if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                encode_value(out, Some(&pk[pk_pos]));
+            } else {
+                encode_value::<S, B>(out, None);
+            }
+        }
+    }
+}
+
+/// Encode patchset UPDATE old values: PK columns get their values, non-PK columns are undefined.
+fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
+    out: &mut Vec<u8>,
+    pk_flags: &[u8],
+    pk_col_to_pk_pos: &[Option<usize>],
+    pk: &[Value<S, B>],
+) {
+    for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+        if pk_flag > 0 {
+            if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                encode_defined_value(out, &pk[pk_pos]);
+            } else {
+                encode_undefined(out);
+            }
+        } else {
+            encode_undefined(out);
+        }
+    }
+}
+
 // ============================================================================
 // DiffSetBuilder — mutable builder (DML insertion order, hash-simulated build)
 // ============================================================================
@@ -311,10 +349,10 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 }
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > From<&DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(builder: &DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
@@ -323,10 +361,10 @@ impl<
 }
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > From<DiffSetBuilder<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(builder: DiffSetBuilder<ChangesetFormat, T, S, B>) -> Self {
@@ -481,16 +519,16 @@ pub trait DiffOps<T: SchemaWithPK, S, B>: Sized {
 
     /// Add an UPDATE operation.
     fn update(self, update: Update<T, Self::Format, S, B>)
-    -> DiffSetBuilder<Self::Format, T, S, B>;
+        -> DiffSetBuilder<Self::Format, T, S, B>;
 }
 
 // -- DiffOps for DiffSetBuilder<ChangesetFormat> ------------------------------
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffOps<T, S, B> for DiffSetBuilder<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > DiffOps<T, S, B> for DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     type Format = ChangesetFormat;
     type DeleteArg = ChangeDelete<T, S, B>;
@@ -587,10 +625,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 // -- DiffOps for DiffSet<ChangesetFormat> -------------------------------------
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffOps<T, S, B> for DiffSet<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > DiffOps<T, S, B> for DiffSet<ChangesetFormat, T, S, B>
 {
     type Format = ChangesetFormat;
     type DeleteArg = ChangeDelete<T, S, B>;
@@ -668,10 +706,10 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
 // ============================================================================
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSetBuilder<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     /// Build the changeset binary data.
     ///
@@ -755,33 +793,17 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                     Operation::Delete(()) => {
                         out.push(op_codes::DELETE);
                         out.push(0);
-                        // Patchset DELETE: write PK values in column order
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, Some(&pk[pk_pos]));
-                                } else {
-                                    encode_value::<S, B>(&mut out, None);
-                                }
-                            }
-                        }
+                        encode_patchset_delete_values(&mut out, &pk_flags, &pk_col_to_pk_pos, pk);
                     }
                     Operation::Update(values) => {
                         out.push(op_codes::UPDATE);
                         out.push(0);
-                        // Patchset UPDATE old values: PK columns get their values from pk,
-                        // non-PK columns are undefined.
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_defined_value(&mut out, &pk[pk_pos]);
-                                } else {
-                                    encode_undefined(&mut out);
-                                }
-                            } else {
-                                encode_undefined(&mut out);
-                            }
-                        }
+                        encode_patchset_update_old_values(
+                            &mut out,
+                            &pk_flags,
+                            &pk_col_to_pk_pos,
+                            pk,
+                        );
                         // Write new values
                         for ((), new) in values {
                             encode_value(&mut out, new.as_ref());
@@ -802,10 +824,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 use crate::builders::operation::Reverse;
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> Reverse for DiffSetBuilder<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > Reverse for DiffSetBuilder<ChangesetFormat, T, S, B>
 {
     type Output = DiffSetBuilder<ChangesetFormat, T, S, B>;
 
@@ -902,10 +924,10 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 // -- Changeset build (DiffSet) ------------------------------------------------
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSet<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > DiffSet<ChangesetFormat, T, S, B>
 {
     /// Serialize the changeset to binary.
     ///
@@ -988,30 +1010,17 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
                     Operation::Delete(()) => {
                         out.push(op_codes::DELETE);
                         out.push(0);
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_value(&mut out, Some(&pk[pk_pos]));
-                                } else {
-                                    encode_value::<S, B>(&mut out, None);
-                                }
-                            }
-                        }
+                        encode_patchset_delete_values(&mut out, &pk_flags, &pk_col_to_pk_pos, pk);
                     }
                     Operation::Update(values) => {
                         out.push(op_codes::UPDATE);
                         out.push(0);
-                        for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                            if pk_flag > 0 {
-                                if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                                    encode_defined_value(&mut out, &pk[pk_pos]);
-                                } else {
-                                    encode_undefined(&mut out);
-                                }
-                            } else {
-                                encode_undefined(&mut out);
-                            }
-                        }
+                        encode_patchset_update_old_values(
+                            &mut out,
+                            &pk_flags,
+                            &pk_col_to_pk_pos,
+                            pk,
+                        );
                         for ((), new) in values {
                             encode_value(&mut out, new.as_ref());
                         }
@@ -1027,10 +1036,10 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 // -- From<DiffSet> for Vec<u8> ------------------------------------------------
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> From<&DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > From<&DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(diffset: &DiffSet<ChangesetFormat, T, S, B>) -> Self {
@@ -1039,10 +1048,10 @@ impl<
 }
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> From<DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > From<DiffSet<ChangesetFormat, T, S, B>> for Vec<u8>
 {
     #[inline]
     fn from(diffset: DiffSet<ChangesetFormat, T, S, B>) -> Self {
@@ -1071,10 +1080,10 @@ impl<T: SchemaWithPK, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone 
 // -- Reverse for DiffSet<ChangesetFormat> -------------------------------------
 
 impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> Reverse for DiffSet<ChangesetFormat, T, S, B>
+        T: SchemaWithPK,
+        S: Clone + Debug + Hash + Eq + AsRef<str>,
+        B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
+    > Reverse for DiffSet<ChangesetFormat, T, S, B>
 {
     type Output = DiffSet<ChangesetFormat, T, S, B>;
 
@@ -1184,11 +1193,9 @@ mod tests {
             &self,
             values: &impl crate::IndexableValues<Text = S, Binary = B>,
         ) -> alloc::vec::Vec<Value<S, B>> {
-            alloc::vec![
-                values
-                    .get(self.pk_column)
-                    .expect("primary key column index out of bounds — values shorter than schema")
-            ]
+            alloc::vec![values
+                .get(self.pk_column)
+                .expect("primary key column index out of bounds — values shorter than schema")]
         }
     }
 
