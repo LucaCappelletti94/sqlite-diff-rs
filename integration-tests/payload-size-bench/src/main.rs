@@ -302,3 +302,135 @@ fn main() {
     )
     .ok();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that exercises all format and compressor code paths.
+    /// Uses small batch sizes to keep test fast while ensuring coverage.
+    #[test]
+    fn test_all_formats_and_compressors() {
+        let formats = all_formats();
+        let compressors = all_compressors();
+
+        // Small batch sizes to exercise the code paths
+        for n in [1, 5, 10] {
+            let (raw_bytes, uncompressed, compression_data) =
+                collect_mixed_workload(n, &formats, &compressors);
+
+            assert!(raw_bytes > 0, "raw_bytes should be non-zero for n={n}");
+            assert_eq!(
+                uncompressed.len(),
+                formats.len(),
+                "should have one entry per format"
+            );
+            assert_eq!(
+                compression_data.len(),
+                formats.len(),
+                "should have compression data per format"
+            );
+
+            for (fmt_idx, fmt) in formats.iter().enumerate() {
+                assert!(
+                    uncompressed[fmt_idx] > 0,
+                    "uncompressed size should be > 0 for {} at n={n}",
+                    fmt.name()
+                );
+                assert_eq!(
+                    compression_data[fmt_idx].len(),
+                    compressors.len(),
+                    "should have data per compressor for {}",
+                    fmt.name()
+                );
+
+                for (comp_idx, comp) in compressors.iter().enumerate() {
+                    let (compressed_bytes, _mean_us, _stddev_us) =
+                        compression_data[fmt_idx][comp_idx];
+                    assert!(
+                        compressed_bytes > 0,
+                        "compressed size should be > 0 for {} with {} at n={n}",
+                        fmt.name(),
+                        comp.name()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test BenchmarkResults serialization.
+    #[test]
+    fn test_results_serialization() {
+        let formats = all_formats();
+        let compressors = all_compressors();
+
+        let format_names: Vec<String> = formats.iter().map(|f| f.name().to_string()).collect();
+        let compressor_names: Vec<String> =
+            compressors.iter().map(|c| c.name().to_string()).collect();
+
+        let mut results = BenchmarkResults::new(format_names, compressor_names, TIMING_ITERATIONS);
+
+        let (raw_bytes, uncompressed, compression_data) =
+            collect_mixed_workload(5, &formats, &compressors);
+        results.add_mixed_workload(5, raw_bytes, uncompressed, compression_data);
+
+        let json = results.to_json();
+        assert!(!json.is_empty(), "JSON output should not be empty");
+        assert!(
+            json.contains("mixed_workload"),
+            "JSON should contain mixed_workload"
+        );
+    }
+
+    /// Test plot generation (to temp directory).
+    #[test]
+    fn test_plot_generation() {
+        let formats = all_formats();
+        let format_slice: Vec<&str> = formats.iter().map(|f| f.name()).collect();
+
+        let temp_dir = std::env::temp_dir().join("payload-size-bench-test");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // Simple data for plot
+        let ops_data: Vec<(f64, Vec<f64>)> = vec![
+            (1.0, vec![100.0; format_slice.len()]),
+            (5.0, vec![500.0; format_slice.len()]),
+        ];
+
+        let result = plots::line_chart(
+            &ops_data,
+            &format_slice,
+            "X Label",
+            "Y Label",
+            &temp_dir.join("test_plot.svg"),
+        );
+        assert!(result.is_ok(), "plot generation should succeed");
+
+        // Test stacked chart
+        let time_data: Vec<(f64, Vec<f64>, Vec<f64>)> = vec![
+            (
+                1.0,
+                vec![10.0; format_slice.len()],
+                vec![1.0; format_slice.len()],
+            ),
+            (
+                5.0,
+                vec![50.0; format_slice.len()],
+                vec![5.0; format_slice.len()],
+            ),
+        ];
+
+        let result = plots::stacked_size_and_time(
+            &ops_data,
+            &time_data,
+            &format_slice,
+            "X Label",
+            "Title",
+            &temp_dir.join("test_stacked.svg"),
+        );
+        assert!(result.is_ok(), "stacked plot generation should succeed");
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+}
