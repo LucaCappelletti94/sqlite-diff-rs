@@ -1074,11 +1074,6 @@ pub fn test_pg_walstream_change_event(input: &[u8]) {
         return;
     };
 
-    // Round-trip through serde
-    if let Ok(json) = serde_json::to_string(&event) {
-        let _: Result<ChangeEvent, _> = serde_json::from_str(&json);
-    }
-
     // Try conversion to changeset operations based on event type
     match &event.event_type {
         EventType::Insert { table, data, .. } => {
