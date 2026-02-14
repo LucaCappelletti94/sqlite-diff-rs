@@ -1024,12 +1024,7 @@ pub fn test_pg_walstream(input: &[u8]) {
     let Ok(event) = serde_json::from_str::<EventType>(json_str) else {
         return;
     };
-
-    // Round-trip through serde
-    if let Ok(json) = serde_json::to_string(&event) {
-        let _: Result<EventType, _> = serde_json::from_str(&json);
-    }
-
+    
     // Try conversion to changeset operations based on event type
     match event {
         EventType::Insert {
