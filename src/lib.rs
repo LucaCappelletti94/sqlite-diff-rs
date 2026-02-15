@@ -8,7 +8,7 @@ extern crate alloc;
 pub mod builders;
 #[cfg(feature = "debezium")]
 pub mod debezium;
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub mod differential_testing;
 pub(crate) mod encoding;
 pub mod errors;
@@ -18,7 +18,7 @@ pub mod parser;
 #[cfg(feature = "pg-walstream")]
 pub mod pg_walstream;
 pub mod schema;
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(feature = "wal2json")]
 pub mod wal2json;

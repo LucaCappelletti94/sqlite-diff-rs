@@ -20,6 +20,7 @@
 //! tests deserialize them via [`arbitrary::Unstructured`] before calling the
 //! shared test function. If deserialization fails the file is silently skipped
 //! (it may be a legacy file from before the structured-input migration).
+#![cfg(feature = "testing")]
 
 use sqlite_diff_rs::testing::{
     FuzzSchemas, TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip,
