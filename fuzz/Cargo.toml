@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 honggfuzz = "0.5"
 sqlite-diff-rs = { path = "../", features = ["testing", "wal2json", "pg-walstream", "debezium", "maxwell"] }
-rusqlite = { version = "0.37", features = [
+rusqlite = { version = "0.38", features = [
 	"bundled",
 	"session",
 ] }
