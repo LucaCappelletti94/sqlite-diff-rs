@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Feature: rusqlite — uses rusqlite's session extension directly
-rusqlite = { version = "0.37", features = [
+rusqlite = { version = "0.38", features = [
     "bundled",
     "session",
 ], optional = true }
