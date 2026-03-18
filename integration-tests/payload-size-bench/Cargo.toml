@@ -22,5 +22,5 @@ plotters = { version = "0.3", default-features = false, features = ["svg_backend
 flate2 = "1"
 prost = "0.14.3"
 zstd = "0.13"
-lz4_flex = "0.12"
+lz4_flex = "0.13"
 rand = "0.10"
