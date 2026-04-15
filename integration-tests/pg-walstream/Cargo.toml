@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 sqlite-diff-rs = { path = "../..", features = ["pg-walstream"] }
-pg_walstream = "0.3.0"
+pg_walstream = "0.5.1"
 testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
