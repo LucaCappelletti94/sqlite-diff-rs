@@ -20,7 +20,7 @@
 //! (`PRAGMA foreign_keys=ON`).
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use rand::Rng;
+use rand::RngExt;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rusqlite::Connection;

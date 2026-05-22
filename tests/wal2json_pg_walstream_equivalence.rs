@@ -77,16 +77,39 @@ fn make_wal2json_v1_delete(
     }
 }
 
+/// Convert a `serde_json::Value` to the PostgreSQL-style text form used by
+/// `pg_walstream` 0.6, so the resulting `ColumnValue` decodes to the same
+/// `Value` enum variant as the matching `serde_json::Value` does for wal2json.
+fn json_to_column_value(v: &serde_json::Value) -> pg_walstream::ColumnValue {
+    use pg_walstream::ColumnValue as CV;
+    match v {
+        serde_json::Value::Null => CV::Null,
+        serde_json::Value::Bool(b) => CV::text(if *b { "t" } else { "f" }),
+        serde_json::Value::Number(n) => CV::text(&n.to_string()),
+        serde_json::Value::String(s) => CV::text(s),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => CV::text(&v.to_string()),
+    }
+}
+
+/// Build a `RowData` from a `HashMap<String, serde_json::Value>`.
+fn json_map_to_row_data(map: HashMap<String, serde_json::Value>) -> pg_walstream::RowData {
+    let mut row = pg_walstream::RowData::with_capacity(map.len());
+    for (k, v) in map {
+        row.push(std::sync::Arc::from(k.as_str()), json_to_column_value(&v));
+    }
+    row
+}
+
 /// Create a `pg_walstream` insert event with the given data.
 fn make_pg_walstream_insert(
     table: &str,
     data: HashMap<String, serde_json::Value>,
 ) -> pg_walstream::EventType {
     pg_walstream::EventType::Insert {
-        schema: "public".to_string(),
-        table: table.to_string(),
+        schema: std::sync::Arc::from("public"),
+        table: std::sync::Arc::from(table),
         relation_oid: 12345,
-        data,
+        data: json_map_to_row_data(data),
     }
 }
 
@@ -98,13 +121,16 @@ fn make_pg_walstream_update(
     key_columns: Vec<String>,
 ) -> pg_walstream::EventType {
     pg_walstream::EventType::Update {
-        schema: "public".to_string(),
-        table: table.to_string(),
+        schema: std::sync::Arc::from("public"),
+        table: std::sync::Arc::from(table),
         relation_oid: 12345,
-        old_data,
-        new_data,
+        old_data: old_data.map(json_map_to_row_data),
+        new_data: json_map_to_row_data(new_data),
         replica_identity: pg_walstream::ReplicaIdentity::Default,
-        key_columns,
+        key_columns: key_columns
+            .into_iter()
+            .map(|s| std::sync::Arc::from(s.as_str()))
+            .collect(),
     }
 }
 
@@ -115,12 +141,15 @@ fn make_pg_walstream_delete(
     key_columns: Vec<String>,
 ) -> pg_walstream::EventType {
     pg_walstream::EventType::Delete {
-        schema: "public".to_string(),
-        table: table.to_string(),
+        schema: std::sync::Arc::from("public"),
+        table: std::sync::Arc::from(table),
         relation_oid: 12345,
-        old_data,
+        old_data: json_map_to_row_data(old_data),
         replica_identity: pg_walstream::ReplicaIdentity::Default,
-        key_columns,
+        key_columns: key_columns
+            .into_iter()
+            .map(|s| std::sync::Arc::from(s.as_str()))
+            .collect(),
     }
 }
 

@@ -1010,8 +1010,10 @@ pub fn test_pg_walstream(input: &[u8]) {
             ..
         } => {
             if !data.is_empty() {
-                let col_names: Vec<&str> = data.keys().map(String::as_str).collect();
-                let schema = SimpleTable::new(table, &col_names, &[0]);
+                let names: alloc::vec::Vec<alloc::string::String> =
+                    data.iter().map(|(k, _)| k.as_ref().to_string()).collect();
+                let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
+                let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
                 // Clone event since we need ownership
                 let event_clone = event.clone();
                 let _: Result<Insert<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
@@ -1022,8 +1024,12 @@ pub fn test_pg_walstream(input: &[u8]) {
             ref old_data,
             ..
         } if !old_data.is_empty() => {
-            let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
-            let schema = SimpleTable::new(table, &col_names, &[0]);
+            let names: alloc::vec::Vec<alloc::string::String> = old_data
+                .iter()
+                .map(|(k, _)| k.as_ref().to_string())
+                .collect();
+            let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
+            let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
             let event_clone = event.clone();
             let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
         }
@@ -1052,16 +1058,22 @@ pub fn test_pg_walstream_change_event(input: &[u8]) {
     match &event.event_type {
         EventType::Insert { table, data, .. } => {
             if !data.is_empty() {
-                let col_names: Vec<&str> = data.keys().map(String::as_str).collect();
-                let schema = SimpleTable::new(table, &col_names, &[0]);
+                let names: alloc::vec::Vec<alloc::string::String> =
+                    data.iter().map(|(k, _)| k.as_ref().to_string()).collect();
+                let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
+                let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
                 let _: Result<Insert<_, String, Vec<u8>>, _> = (event, schema).try_into();
             }
         }
         EventType::Delete {
             table, old_data, ..
         } if !old_data.is_empty() => {
-            let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
-            let schema = SimpleTable::new(table, &col_names, &[0]);
+            let names: alloc::vec::Vec<alloc::string::String> = old_data
+                .iter()
+                .map(|(k, _)| k.as_ref().to_string())
+                .collect();
+            let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
+            let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
             let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, schema).try_into();
         }
         _ => {}

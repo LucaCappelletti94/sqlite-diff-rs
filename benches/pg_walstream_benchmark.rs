@@ -7,126 +7,120 @@
 //! the conversion step (not parsing, which happens at the protocol level).
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use pg_walstream::{ChangeEvent, EventType, Lsn, ReplicaIdentity};
+use pg_walstream::{ChangeEvent, ColumnValue, EventType, Lsn, ReplicaIdentity, RowData};
 use sqlite_diff_rs::{ChangeDelete, ChangesetFormat, Insert, PatchDelete, SimpleTable, Update};
-use std::collections::HashMap;
 use std::hint::black_box;
+use std::sync::Arc;
+
+/// Build a `RowData` from `(name, ColumnValue)` pairs.
+fn row(pairs: &[(&str, ColumnValue)]) -> RowData {
+    let mut data = RowData::with_capacity(pairs.len());
+    for (name, value) in pairs {
+        data.push(Arc::from(*name), value.clone());
+    }
+    data
+}
+
+fn key_cols(names: &[&str]) -> Vec<Arc<str>> {
+    names.iter().map(|s| Arc::from(*s)).collect()
+}
 
 /// Create a simple INSERT event
 fn insert_simple() -> EventType {
-    let mut data = HashMap::new();
-    data.insert("id".into(), serde_json::json!(1));
-    data.insert("name".into(), serde_json::json!("Alice"));
-    data.insert("email".into(), serde_json::json!("alice@example.com"));
-
     EventType::Insert {
-        schema: "public".into(),
-        table: "users".into(),
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
         relation_oid: 12345,
-        data,
+        data: row(&[
+            ("id", ColumnValue::text("1")),
+            ("name", ColumnValue::text("Alice")),
+            ("email", ColumnValue::text("alice@example.com")),
+        ]),
     }
 }
 
 /// Create a large INSERT event with many columns
 fn insert_large() -> EventType {
-    let mut data = HashMap::new();
-    data.insert("id".into(), serde_json::json!(12345));
-    data.insert("customer_id".into(), serde_json::json!(9876));
-    data.insert(
-        "order_date".into(),
-        serde_json::json!("2024-01-15T10:30:00Z"),
-    );
-    data.insert("status".into(), serde_json::json!("pending"));
-    data.insert("total_amount".into(), serde_json::json!(1234.56));
-    data.insert(
-        "shipping_address".into(),
-        serde_json::json!("123 Main Street, Anytown, ST 12345, USA"),
-    );
-    data.insert(
-        "billing_address".into(),
-        serde_json::json!("456 Oak Avenue, Somewhere, ST 67890, USA"),
-    );
-    data.insert(
-        "notes".into(),
-        serde_json::json!("Please deliver between 9am and 5pm. Ring doorbell twice."),
-    );
-    data.insert(
-        "created_at".into(),
-        serde_json::json!("2024-01-15T10:30:00Z"),
-    );
-    data.insert(
-        "updated_at".into(),
-        serde_json::json!("2024-01-15T10:30:00Z"),
-    );
-    data.insert("is_express".into(), serde_json::json!(true));
-    data.insert("discount_code".into(), serde_json::json!("SAVE20"));
-    data.insert("tax_amount".into(), serde_json::json!(98.76));
-    data.insert("shipping_cost".into(), serde_json::json!(15.99));
-    data.insert("tracking_number".into(), serde_json::Value::Null);
-
     EventType::Insert {
-        schema: "public".into(),
-        table: "orders".into(),
+        schema: Arc::from("public"),
+        table: Arc::from("orders"),
         relation_oid: 12346,
-        data,
+        data: row(&[
+            ("id", ColumnValue::text("12345")),
+            ("customer_id", ColumnValue::text("9876")),
+            ("order_date", ColumnValue::text("2024-01-15T10:30:00Z")),
+            ("status", ColumnValue::text("pending")),
+            ("total_amount", ColumnValue::text("1234.56")),
+            (
+                "shipping_address",
+                ColumnValue::text("123 Main Street, Anytown, ST 12345, USA"),
+            ),
+            (
+                "billing_address",
+                ColumnValue::text("456 Oak Avenue, Somewhere, ST 67890, USA"),
+            ),
+            (
+                "notes",
+                ColumnValue::text("Please deliver between 9am and 5pm. Ring doorbell twice."),
+            ),
+            ("created_at", ColumnValue::text("2024-01-15T10:30:00Z")),
+            ("updated_at", ColumnValue::text("2024-01-15T10:30:00Z")),
+            ("is_express", ColumnValue::text("t")),
+            ("discount_code", ColumnValue::text("SAVE20")),
+            ("tax_amount", ColumnValue::text("98.76")),
+            ("shipping_cost", ColumnValue::text("15.99")),
+            ("tracking_number", ColumnValue::Null),
+        ]),
     }
 }
 
 /// Create an UPDATE event
 fn update_event() -> EventType {
-    let mut old_data = HashMap::new();
-    old_data.insert("id".into(), serde_json::json!(1));
-    old_data.insert("name".into(), serde_json::json!("Alice"));
-    old_data.insert("email".into(), serde_json::json!("alice@example.com"));
-
-    let mut new_data = HashMap::new();
-    new_data.insert("id".into(), serde_json::json!(1));
-    new_data.insert("name".into(), serde_json::json!("Bob"));
-    new_data.insert("email".into(), serde_json::json!("bob@example.com"));
-
     EventType::Update {
-        schema: "public".into(),
-        table: "users".into(),
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
         relation_oid: 12345,
-        old_data: Some(old_data),
-        new_data,
+        old_data: Some(row(&[
+            ("id", ColumnValue::text("1")),
+            ("name", ColumnValue::text("Alice")),
+            ("email", ColumnValue::text("alice@example.com")),
+        ])),
+        new_data: row(&[
+            ("id", ColumnValue::text("1")),
+            ("name", ColumnValue::text("Bob")),
+            ("email", ColumnValue::text("bob@example.com")),
+        ]),
         replica_identity: ReplicaIdentity::Full,
-        key_columns: vec!["id".into()],
+        key_columns: key_cols(&["id"]),
     }
 }
 
 /// Create a DELETE event
 fn delete_event() -> EventType {
-    let mut old_data = HashMap::new();
-    old_data.insert("id".into(), serde_json::json!(1));
-    old_data.insert("name".into(), serde_json::json!("Alice"));
-    old_data.insert("email".into(), serde_json::json!("alice@example.com"));
-
     EventType::Delete {
-        schema: "public".into(),
-        table: "users".into(),
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
         relation_oid: 12345,
-        old_data,
+        old_data: row(&[
+            ("id", ColumnValue::text("1")),
+            ("name", ColumnValue::text("Alice")),
+            ("email", ColumnValue::text("alice@example.com")),
+        ]),
         replica_identity: ReplicaIdentity::Full,
-        key_columns: vec!["id".into()],
+        key_columns: key_cols(&["id"]),
     }
 }
 
 /// Create an INSERT event for batch testing
 fn insert_for_batch(i: usize) -> EventType {
-    let mut data = HashMap::new();
-    data.insert("id".into(), serde_json::json!(i));
-    data.insert("name".into(), serde_json::json!(format!("User{i}")));
-    data.insert(
-        "email".into(),
-        serde_json::json!(format!("user{i}@example.com")),
-    );
-
+    let id_text = ColumnValue::text(&i.to_string());
+    let name_text = ColumnValue::text(&format!("User{i}"));
+    let email_text = ColumnValue::text(&format!("user{i}@example.com"));
     EventType::Insert {
-        schema: "public".into(),
-        table: "users".into(),
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
         relation_oid: 12345,
-        data,
+        data: row(&[("id", id_text), ("name", name_text), ("email", email_text)]),
     }
 }
 

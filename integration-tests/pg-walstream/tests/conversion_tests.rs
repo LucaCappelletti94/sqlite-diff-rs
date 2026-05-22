@@ -226,35 +226,38 @@ fn test_invalid_event_type_error() {
 }
 
 #[test]
-fn test_unsupported_json_array() {
+fn test_json_array_preserved_as_text() {
+    // pg_walstream 0.6 delivers column values as PostgreSQL wire-format text.
+    // Complex types like arrays and JSON arrive as strings; the conversion
+    // no longer errors on them.
     let table = SimpleTable::new("data", &["id", "tags"], &[0]);
     let event = make_insert_event(
         "public",
         "data",
         hashmap! {
             "id" => json!(1),
-            "tags" => json!(["a", "b", "c"]), // Arrays not supported
+            "tags" => json!(["a", "b", "c"]),
         },
     );
 
     let result: Result<Insert<_, String, Vec<u8>>, _> = (event, table).try_into();
-    assert!(matches!(result, Err(ConversionError::UnsupportedType(_))));
+    assert!(result.is_ok(), "expected conversion to succeed");
 }
 
 #[test]
-fn test_unsupported_json_object() {
+fn test_json_object_preserved_as_text() {
     let table = SimpleTable::new("data", &["id", "metadata"], &[0]);
     let event = make_insert_event(
         "public",
         "data",
         hashmap! {
             "id" => json!(1),
-            "metadata" => json!({"key": "value"}), // Objects not supported
+            "metadata" => json!({"key": "value"}),
         },
     );
 
     let result: Result<Insert<_, String, Vec<u8>>, _> = (event, table).try_into();
-    assert!(matches!(result, Err(ConversionError::UnsupportedType(_))));
+    assert!(result.is_ok(), "expected conversion to succeed");
 }
 
 // ============================================================================
