@@ -658,4 +658,79 @@ mod tests {
         assert_eq!(msg.table, reparsed.table);
         assert_eq!(msg.data, reparsed.data);
     }
+
+    // ---- Additional branch coverage ----
+
+    #[test]
+    fn test_update_invalid_operation() {
+        let table = products_table();
+        let msg = parse(INSERT_JSON).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidOperation(_))));
+    }
+
+    #[test]
+    fn test_update_table_mismatch() {
+        let table = users_table();
+        let msg = parse(UPDATE_JSON).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_changedelete_invalid_operation() {
+        let table = products_table();
+        let msg = parse(INSERT_JSON).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidOperation(_))));
+    }
+
+    #[test]
+    fn test_changedelete_table_mismatch() {
+        let table = users_table();
+        let msg = parse(DELETE_JSON).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_patchdelete_invalid_operation() {
+        let table = products_table();
+        let msg = parse(INSERT_JSON).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidOperation(_))));
+    }
+
+    #[test]
+    fn test_patchdelete_table_mismatch() {
+        let table = users_table();
+        let msg = parse(DELETE_JSON).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_update_no_old_values() {
+        // An update without an "old" map: every column path uses
+        // new value for both old and new (the no-change branch).
+        let json = r#"{"database":"db","table":"t","type":"update","data":{"id":1,"v":2}}"#;
+        let table = SimpleTable::new("t", &["id", "v"], &[0]);
+        let msg = parse(json).unwrap();
+        let update: crate::ChangeUpdate<_, String, Vec<u8>> = (&msg, &table).try_into().unwrap();
+        let values = update.values();
+        assert_eq!(values.len(), 2);
+        // For columns with no "old" entry, old and new should match.
+        assert_eq!(values[0].0, Some(Value::Integer(1)));
+        assert_eq!(values[0].1, Some(Value::Integer(1)));
+    }
+
+    #[test]
+    fn test_float_value() {
+        let json = r#"{"database":"db","table":"t","type":"insert","data":{"id":1,"price":9.99}}"#;
+        let table = SimpleTable::new("t", &["id", "price"], &[0]);
+        let msg = parse(json).unwrap();
+        let insert: Insert<_, String, Vec<u8>> = (&msg, &table).try_into().unwrap();
+        let values = insert.into_values();
+        assert_eq!(values[1], Value::Real(9.99));
+    }
 }

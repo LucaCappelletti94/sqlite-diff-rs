@@ -139,3 +139,50 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> PatchDelete<T, S, B> {
         Self { table, pk }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ChangeDelete, PatchDelete};
+    use crate::DynTable;
+    use crate::encoding::Value;
+    use crate::errors::Error;
+    use crate::schema::SimpleTable;
+    use alloc::string::String;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    fn users() -> SimpleTable {
+        SimpleTable::new("users", &["id", "name"], &[0])
+    }
+
+    #[test]
+    fn test_change_delete_set_out_of_bounds() {
+        let err = ChangeDelete::<_, String, Vec<u8>>::from(users())
+            .set(5, 1i64)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(5, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_change_delete_set_null_out_of_bounds() {
+        let err = ChangeDelete::<_, String, Vec<u8>>::from(users())
+            .set_null(2)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_patch_delete_as_ref_returns_table() {
+        let table = users();
+        let delete: PatchDelete<_, String, Vec<u8>> =
+            PatchDelete::new(table.clone(), vec![Value::Integer(1)]);
+        let t: &SimpleTable = delete.as_ref();
+        assert_eq!(t.name(), "users");
+    }
+}

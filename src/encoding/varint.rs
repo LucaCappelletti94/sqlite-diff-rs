@@ -164,6 +164,40 @@ mod tests {
         assert_eq!(varint_len(128), 2);
         assert_eq!(varint_len(16383), 2);
         assert_eq!(varint_len(16384), 3);
+        assert_eq!(varint_len(2_097_151), 3);
+        assert_eq!(varint_len(2_097_152), 4);
+        assert_eq!(varint_len(268_435_455), 4);
+        assert_eq!(varint_len(268_435_456), 5);
+        assert_eq!(varint_len(34_359_738_367), 5);
+        assert_eq!(varint_len(34_359_738_368), 6);
+        assert_eq!(varint_len(4_398_046_511_103), 6);
+        assert_eq!(varint_len(4_398_046_511_104), 7);
+        assert_eq!(varint_len(562_949_953_421_311), 7);
+        assert_eq!(varint_len(562_949_953_421_312), 8);
+        assert_eq!(varint_len(72_057_594_037_927_935), 8);
+        assert_eq!(varint_len(72_057_594_037_927_936), 9);
+        assert_eq!(varint_len(9_223_372_036_854_775_807), 9);
+        assert_eq!(varint_len(9_223_372_036_854_775_808), 10);
+        assert_eq!(varint_len(u64::MAX), 10);
+    }
+
+    #[test]
+    fn test_decode_varint_empty() {
+        assert_eq!(decode_varint(&[]), None);
+    }
+
+    #[test]
+    fn test_decode_varint_too_long() {
+        // 11 bytes all with continuation bit set: cannot decode (varint max is 10 bytes).
+        let too_long = [0x80u8; 11];
+        assert_eq!(decode_varint(&too_long), None);
+    }
+
+    #[test]
+    fn test_decode_varint_truncated() {
+        // A continuation byte followed by EOF returns None.
+        let truncated = [0x80u8];
+        assert_eq!(decode_varint(&truncated), None);
     }
 
     #[test]

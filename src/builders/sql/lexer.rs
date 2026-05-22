@@ -599,4 +599,75 @@ mod tests {
         assert_eq!(lexer.next().unwrap().kind, TokenKind::Semicolon);
         assert_eq!(lexer.next().unwrap().kind, TokenKind::Equals);
     }
+
+    /// All TokenKind variants in canonical order, used to exercise static_name and AsRef.
+    fn all_variants() -> Vec<(TokenKind<'static>, &'static str)> {
+        vec![
+            (TokenKind::Insert, "INSERT"),
+            (TokenKind::Into, "INTO"),
+            (TokenKind::Values, "VALUES"),
+            (TokenKind::Update, "UPDATE"),
+            (TokenKind::Set, "SET"),
+            (TokenKind::Delete, "DELETE"),
+            (TokenKind::From, "FROM"),
+            (TokenKind::Where, "WHERE"),
+            (TokenKind::And, "AND"),
+            (TokenKind::Primary, "PRIMARY"),
+            (TokenKind::Key, "KEY"),
+            (TokenKind::Null, "NULL"),
+            (TokenKind::Integer, "INTEGER"),
+            (TokenKind::Int, "INT"),
+            (TokenKind::Real, "REAL"),
+            (TokenKind::Text, "TEXT"),
+            (TokenKind::Blob, "BLOB"),
+            (TokenKind::Not, "NOT"),
+            (TokenKind::IntegerLiteral(0), "<integer>"),
+            (TokenKind::RealLiteral(0.0), "<real>"),
+            (TokenKind::BlobLiteral(vec![]), "<blob>"),
+            (TokenKind::LParen, "("),
+            (TokenKind::RParen, ")"),
+            (TokenKind::Comma, ","),
+            (TokenKind::Semicolon, ";"),
+            (TokenKind::Equals, "="),
+            (TokenKind::Minus, "-"),
+            (TokenKind::Eof, "<eof>"),
+        ]
+    }
+
+    #[test]
+    fn test_static_name_covers_all_variants() {
+        for (kind, expected) in all_variants() {
+            assert_eq!(
+                kind.static_name(),
+                expected,
+                "static_name mismatch for {kind:?}"
+            );
+        }
+        // String and Identifier variants carry payload, test separately.
+        assert_eq!(
+            TokenKind::StringLiteral(alloc::borrow::Cow::Borrowed("x")).static_name(),
+            "<string>"
+        );
+        assert_eq!(TokenKind::Identifier("foo").static_name(), "<identifier>");
+    }
+
+    #[test]
+    fn test_as_ref_covers_keyword_and_symbol_variants() {
+        for (kind, expected) in all_variants() {
+            assert_eq!(
+                <TokenKind<'_> as AsRef<str>>::as_ref(&kind),
+                expected,
+                "AsRef mismatch for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_as_ref_string_and_identifier_payload() {
+        let s = TokenKind::StringLiteral(alloc::borrow::Cow::Borrowed("hello"));
+        assert_eq!(<TokenKind<'_> as AsRef<str>>::as_ref(&s), "hello");
+
+        let i = TokenKind::Identifier("user_table");
+        assert_eq!(<TokenKind<'_> as AsRef<str>>::as_ref(&i), "user_table");
+    }
 }

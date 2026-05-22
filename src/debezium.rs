@@ -962,4 +962,88 @@ mod tests {
 
         assert_eq!(values[0], Value::Integer(1));
     }
+
+    // ---- Additional branch coverage ----
+
+    #[test]
+    fn test_parse_truncate_op() {
+        let json = r#"{"before":null,"after":null,"source":{"table":"t"},"op":"t"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        assert_eq!(env.op, Op::Truncate);
+    }
+
+    #[test]
+    fn test_parse_message_op() {
+        let json = r#"{"before":null,"after":null,"source":{"table":"t"},"op":"m"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        assert_eq!(env.op, Op::Message);
+    }
+
+    #[test]
+    fn test_insert_invalid_op_truncate() {
+        let table = SimpleTable::new("t", &["id"], &[0]);
+        let json = r#"{"before":null,"after":null,"source":{"table":"t"},"op":"t"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<Insert<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidOperation(_))));
+    }
+
+    #[test]
+    fn test_insert_missing_after() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"before":null,"after":null,"source":{"table":"users"},"op":"c"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<Insert<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(
+            result,
+            Err(ConversionError::MissingData("after", _))
+        ));
+    }
+
+    #[test]
+    fn test_update_missing_after() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"before":{"id":1},"after":null,"source":{"table":"users"},"op":"u"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(
+            result,
+            Err(ConversionError::MissingData("after", _))
+        ));
+    }
+
+    #[test]
+    fn test_update_without_before_uses_set_new() {
+        let table = SimpleTable::new("t", &["id", "v"], &[0]);
+        let json = r#"{"before":null,"after":{"id":1,"v":2},"source":{"table":"t"},"op":"u"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let update: crate::ChangeUpdate<_, String, Vec<u8>> = (&env, &table).try_into().unwrap();
+        let values = update.values();
+        // No "before" data, so old should be None (set via set_new).
+        assert!(values[0].0.is_none());
+        assert_eq!(values[0].1, Some(Value::Integer(1)));
+    }
+
+    #[test]
+    fn test_delete_missing_before() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"before":null,"after":null,"source":{"table":"users"},"op":"d"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(
+            result,
+            Err(ConversionError::MissingData("before", _))
+        ));
+    }
+
+    #[test]
+    fn test_envelope_without_source_table_passes() {
+        // When source.table is absent, no table mismatch check happens.
+        let table = SimpleTable::new("anything", &["id"], &[0]);
+        let json = r#"{"before":null,"after":{"id":1},"source":{},"op":"c"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let insert: Insert<_, String, Vec<u8>> = (&env, &table).try_into().unwrap();
+        let values = insert.into_values();
+        assert_eq!(values[0], Value::Integer(1));
+    }
 }

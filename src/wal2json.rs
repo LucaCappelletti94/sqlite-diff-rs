@@ -650,7 +650,7 @@ mod arbitrary_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SimpleTable;
+    use crate::{DynTable, SimpleTable};
 
     #[test]
     fn test_parse_v2_insert() {
@@ -827,5 +827,95 @@ mod tests {
 
         let result: Result<Insert<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
         assert!(matches!(result, Err(ConversionError::UnsupportedType(_))));
+    }
+
+    // ---- Additional branch coverage ----
+
+    #[test]
+    fn test_v1_update_conversion() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"update","schema":"public","table":"users","columnnames":["id","name"],"columntypes":["integer","text"],"columnvalues":[1,"Bob"]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let update: crate::ChangeUpdate<_, String, Vec<u8>> =
+            (&tx.change[0], &table).try_into().unwrap();
+        let values = update.values();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[1].1, Some(Value::Text("Bob".into())));
+    }
+
+    #[test]
+    fn test_v1_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"insert","schema":"public","table":"users","columnnames":["id","name"],"columntypes":["integer","text"],"columnvalues":[1,"Alice"]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let result: Result<Insert<_, String, Vec<u8>>, _> = (&tx.change[0], &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v1_patch_delete_conversion() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users","columnnames":[],"columntypes":[],"columnvalues":[],"oldkeys":{"keynames":["id"],"keytypes":["integer"],"keyvalues":[42]}}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let delete: PatchDelete<_, String, Vec<u8>> = (&tx.change[0], &table).try_into().unwrap();
+        assert_eq!(delete.as_ref().name(), "users");
+    }
+
+    #[test]
+    fn test_v1_patch_delete_missing_oldkeys() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users","columnnames":[],"columntypes":[],"columnvalues":[]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&tx.change[0], &table).try_into();
+        assert!(matches!(result, Err(ConversionError::MissingColumns)));
+    }
+
+    #[test]
+    fn test_v1_delete_no_oldkeys_uses_columnvalues() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users","columnnames":["id","name"],"columntypes":["integer","text"],"columnvalues":[7,"Eve"]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let delete: ChangeDelete<_, String, Vec<u8>> = (&tx.change[0], &table).try_into().unwrap();
+        let values = delete.into_values();
+        assert_eq!(values[0], Value::Integer(7));
+        assert_eq!(values[1], Value::Text("Eve".into()));
+    }
+
+    #[test]
+    fn test_v2_update_conversion() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"action":"U","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1},{"name":"name","type":"text","value":"Bob"}],"identity":[{"name":"id","type":"integer","value":1}]}"#;
+        let msg = parse_v2(json).unwrap();
+        let update: crate::ChangeUpdate<_, String, Vec<u8>> = (&msg, &table).try_into().unwrap();
+        let values = update.values();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[1].1, Some(Value::Text("Bob".into())));
+    }
+
+    #[test]
+    fn test_v2_patch_delete_conversion() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"action":"D","schema":"public","table":"users","identity":[{"name":"id","type":"integer","value":42}]}"#;
+        let msg = parse_v2(json).unwrap();
+        let delete: PatchDelete<_, String, Vec<u8>> = (&msg, &table).try_into().unwrap();
+        assert_eq!(delete.as_ref().name(), "users");
+    }
+
+    #[test]
+    fn test_v2_insert_missing_columns() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"action":"I","schema":"public","table":"users"}"#;
+        let msg = parse_v2(json).unwrap();
+        let result: Result<Insert<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::MissingColumns)));
+    }
+
+    #[test]
+    fn test_v2_delete_missing_identity() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"action":"D","schema":"public","table":"users"}"#;
+        let msg = parse_v2(json).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::MissingColumns)));
     }
 }

@@ -534,4 +534,24 @@ mod tests {
             .unwrap();
         assert_eq!(builder.len(), 1);
     }
+
+    #[test]
+    fn test_digest_keyword_column_names() {
+        // Each reserved keyword is a column name. This forces expect_identifier
+        // to take every keyword arm. The names registered on the schema match
+        // the uppercase constants the parser returns for those arms.
+        let cols = [
+            "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "FROM", "WHERE", "AND",
+            "PRIMARY", "KEY", "NULL", "INTEGER", "INT", "REAL", "TEXT", "BLOB", "NOT",
+        ];
+        let t = SimpleTable::new("kwords", &cols, &[0]);
+        let mut builder = make_builder(&[t]);
+        builder
+            .digest_sql(
+                "INSERT INTO kwords (insert, into, values, update, set, delete, from, where, and, primary, key, null, integer, int, real, text, blob, not) \
+                 VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)",
+            )
+            .unwrap();
+        assert_eq!(builder.len(), 1);
+    }
 }

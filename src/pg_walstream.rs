@@ -578,4 +578,108 @@ mod tests {
         let values = insert.into_values();
         assert_eq!(values[0], Value::Integer(1));
     }
+
+    // ---- Additional branch coverage ----
+
+    #[test]
+    fn test_update_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let mut new_data = HashMap::new();
+        new_data.insert("id".into(), serde_json::json!(1));
+        let event = make_update_event("users", None, new_data, vec!["id".into()]);
+        let result: Result<Update<_, ChangesetFormat, String, Vec<u8>>, _> =
+            (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_update_invalid_event_type() {
+        let table = SimpleTable::new("users", &["id"], &[0]);
+        let mut data = HashMap::new();
+        data.insert("id".into(), serde_json::json!(1));
+        let event = make_insert_event("users", data);
+        let result: Result<Update<_, ChangesetFormat, String, Vec<u8>>, _> =
+            (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidEventType(_))));
+    }
+
+    #[test]
+    fn test_update_without_old_data_uses_set_new() {
+        let table = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut new_data = HashMap::new();
+        new_data.insert("id".into(), serde_json::json!(1));
+        new_data.insert("v".into(), serde_json::json!(2));
+        let event = make_update_event("t", None, new_data, vec!["id".into()]);
+        let update: Update<_, ChangesetFormat, String, Vec<u8>> =
+            (event, table).try_into().unwrap();
+        let values = update.values();
+        // No old_data, so old should be None (set via set_new).
+        assert!(values.iter().any(|v| v.0.is_none() && v.1.is_some()));
+    }
+
+    #[test]
+    fn test_delete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id"], &[0]);
+        let mut old_data = HashMap::new();
+        old_data.insert("id".into(), serde_json::json!(1));
+        let event = make_delete_event("users", old_data, vec!["id".into()]);
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_delete_invalid_event_type() {
+        let table = SimpleTable::new("users", &["id"], &[0]);
+        let mut data = HashMap::new();
+        data.insert("id".into(), serde_json::json!(1));
+        let event = make_insert_event("users", data);
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidEventType(_))));
+    }
+
+    #[test]
+    fn test_patch_delete_invalid_event_type() {
+        let table = SimpleTable::new("users", &["id"], &[0]);
+        let mut data = HashMap::new();
+        data.insert("id".into(), serde_json::json!(1));
+        let event = make_insert_event("users", data);
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::InvalidEventType(_))));
+    }
+
+    #[test]
+    fn test_patch_delete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id"], &[0]);
+        let mut old_data = HashMap::new();
+        old_data.insert("id".into(), serde_json::json!(1));
+        let event = make_delete_event("users", old_data, vec!["id".into()]);
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_patch_delete_missing_key_value() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        // key_columns says id is the PK but old_data does not include it.
+        let mut old_data = HashMap::new();
+        old_data.insert("name".into(), serde_json::json!("Alice"));
+        let event = make_delete_event("users", old_data, vec!["id".into()]);
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (event, table).try_into();
+        assert!(matches!(result, Err(ConversionError::MissingData)));
+    }
+
+    #[test]
+    fn test_change_event_delete_wrapper() {
+        let table = SimpleTable::new("users", &["id"], &[0]);
+        let mut old_data = HashMap::new();
+        old_data.insert("id".into(), serde_json::json!(7));
+        let change_event = ChangeEvent {
+            event_type: make_delete_event("users", old_data, vec!["id".into()]),
+            lsn: Lsn::from(0),
+            metadata: None,
+        };
+        let delete: ChangeDelete<_, String, Vec<u8>> = (change_event, table).try_into().unwrap();
+        let values = delete.into_values();
+        assert_eq!(values[0], Value::Integer(7));
+    }
 }

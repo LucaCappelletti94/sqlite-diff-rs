@@ -722,4 +722,92 @@ mod tests {
         let expected: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Integer(100)];
         assert_eq!(pk, expected);
     }
+
+    // ---- Error path tests ----
+
+    #[test]
+    fn test_parse_invalid_table_marker() {
+        let data = [0xFFu8, 1, 1, b't', 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::InvalidTableMarker(0xFF, 0)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_unexpected_eof_in_table_header() {
+        // 'T' marker but no column count
+        let data = *b"T";
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedEof(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_parse_unexpected_eof_in_pk_flags() {
+        // 'T', column count 3, but only 1 PK flag byte
+        let data = [b'T', 3, 1];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedEof(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_parse_unterminated_table_name() {
+        // 'T', 1 column, pk_flags [1], then "abc" with no null terminator
+        let data = [b'T', 1, 1, b'a', b'b', b'c'];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::UnterminatedTableName),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_invalid_utf8_in_table_name() {
+        // 'T', 1 column, pk_flags [1], then 0xFF (invalid UTF-8), then null
+        let data = [b'T', 1, 1, 0xFF, 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::InvalidTableName(_)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_mixed_formats_changeset_then_patchset() {
+        // First table 'T' (changeset), then second table 'P' (patchset)
+        let mut data = vec![b'T', 1, 1, b'a', 0];
+        // Now a 'P' table header without preceding operations
+        data.extend_from_slice(&[b'P', 1, 1, b'b', 0]);
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ParseError::MixedFormats {
+                    expected: FormatMarker::Changeset,
+                    found: FormatMarker::Patchset,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_mixed_formats_patchset_then_changeset() {
+        let mut data = vec![b'P', 1, 1, b'a', 0];
+        data.extend_from_slice(&[b'T', 1, 1, b'b', 0]);
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ParseError::MixedFormats {
+                    expected: FormatMarker::Patchset,
+                    found: FormatMarker::Changeset,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
 }

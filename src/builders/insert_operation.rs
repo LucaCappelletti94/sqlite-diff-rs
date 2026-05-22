@@ -124,3 +124,38 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Insert<T, S, B> {
         self.set(col_idx, Value::Null)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Insert;
+    use crate::errors::Error;
+    use crate::schema::SimpleTable;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
+    fn users() -> SimpleTable {
+        SimpleTable::new("users", &["id", "name"], &[0])
+    }
+
+    #[test]
+    fn test_insert_set_out_of_bounds() {
+        let err = Insert::<_, String, Vec<u8>>::from(users())
+            .set(99, 1i64)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(99, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_insert_set_null_out_of_bounds() {
+        let err = Insert::<_, String, Vec<u8>>::from(users())
+            .set_null(2)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
+            "got {err:?}"
+        );
+    }
+}
