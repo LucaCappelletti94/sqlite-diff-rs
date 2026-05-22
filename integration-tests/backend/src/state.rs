@@ -106,11 +106,11 @@ mod tests {
 
         state.users.lock().unwrap().push(user.clone());
 
-        let found = state.find_user_by_id(&vec![1u8; 16]);
+        let found = state.find_user_by_id(&[1u8; 16]);
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Alice");
 
-        let not_found = state.find_user_by_id(&vec![2u8; 16]);
+        let not_found = state.find_user_by_id(&[2u8; 16]);
         assert!(not_found.is_none());
     }
 

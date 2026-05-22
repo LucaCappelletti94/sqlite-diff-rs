@@ -629,13 +629,14 @@ mod tests {
     #[test]
     fn test_parse_n_values_float() {
         // 0x02 = Float, followed by 8 bytes big-endian
+        const SAMPLE: f64 = 2.5;
         let mut data = vec![0x02];
-        data.extend_from_slice(&3.14f64.to_be_bytes());
+        data.extend_from_slice(&SAMPLE.to_be_bytes());
 
         let (values, len) = parse_n_values(&data, 1).unwrap();
         assert_eq!(len, 9);
         if let Value::Real(v) = values[0] {
-            assert!((v - 3.14).abs() < 0.001);
+            assert!((v - SAMPLE).abs() < 0.001);
         } else {
             panic!("Expected Real value");
         }
