@@ -1,7 +1,7 @@
 <svg width="900" height="540" viewBox="0 0 900 540" xmlns="http://www.w3.org/2000/svg">
 <rect x="0" y="0" width="900" height="540" opacity="1" fill="#FFFFFF" stroke="none"/>
 <text x="450" y="19" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="14.516129032258064" opacity="1" fill="#000000">
-Apply Scaling — int pk, populated, base
+Apply Scaling: int pk, populated, base
 </text>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="358" y1="485" x2="358" y2="39"/>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="379" y1="485" x2="379" y2="39"/>

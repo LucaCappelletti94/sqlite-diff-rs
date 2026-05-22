@@ -1,7 +1,7 @@
 <svg width="800" height="520" viewBox="0 0 800 520" xmlns="http://www.w3.org/2000/svg">
 <rect x="0" y="0" width="800" height="520" opacity="1" fill="#FFFFFF" stroke="none"/>
 <text x="400" y="19" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="14.516129032258064" opacity="1" fill="#000000">
-Config Variant Impact — int pk populated/1000
+Config Variant Impact: int pk populated/1000
 </text>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="94" y1="461" x2="785" y2="461"/>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="94" y1="455" x2="785" y2="455"/>

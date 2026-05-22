@@ -1,7 +1,7 @@
 <svg width="900" height="540" viewBox="0 0 900 540" xmlns="http://www.w3.org/2000/svg">
 <rect x="0" y="0" width="900" height="540" opacity="1" fill="#FFFFFF" stroke="none"/>
 <text x="450" y="19" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="13.709677419354838" opacity="1" fill="#000000">
-Payload Size vs Operation Count — mixed workload (60% INSERT, 25% UPDATE, 15% DELETE)
+Payload Size vs Operation Count: mixed workload (60% INSERT, 25% UPDATE, 15% DELETE)
 </text>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="89" y1="485" x2="89" y2="38"/>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="96" y1="485" x2="96" y2="38"/>

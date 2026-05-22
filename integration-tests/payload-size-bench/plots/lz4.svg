@@ -1,7 +1,7 @@
 <svg width="900" height="860" viewBox="0 0 900 860" xmlns="http://www.w3.org/2000/svg">
 <rect x="0" y="0" width="900" height="860" opacity="1" fill="#FFFFFF" stroke="none"/>
 <text x="450" y="5" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="19.35483870967742" opacity="1" fill="#000000">
-LZ4 — Compressed Size &amp; Timing
+LZ4: Compressed Size &amp; Timing
 </text>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="96" y1="383" x2="96" y2="58"/>
 <line opacity="0.1" stroke="#000000" stroke-width="1" x1="103" y1="383" x2="103" y2="58"/>
