@@ -1,12 +1,10 @@
 //! WebSocket handler: receives and sends raw binary patchset frames.
 //!
 //! Inbound patchsets are parsed with `ParsedDiffSet::parse` to extract the
-//! table name and operation. Based on the table:
-//!
-//! - `users` INSERT → register the client, build catch-up patchset for all
-//!   existing users and messages relevant to this user, send back.
-//! - `messages` INSERT → store the message, build an outbound patchset,
-//!   send to both sender and receiver.
+//! table name and operation. A `users` INSERT registers the client, builds a
+//! catch-up patchset for all existing users and messages relevant to the new
+//! user, and sends it back. A `messages` INSERT stores the message, builds
+//! an outbound patchset, and sends it to both the sender and the receiver.
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -205,7 +203,7 @@ fn handle_patchset_operations(
                         }
                         _ => {
                             // Skip unknown ops by trying to parse values
-                            // This is a simplification; a full implementation would
+                            // This is a simplification. A full implementation would
                             // handle DELETE and UPDATE as well.
                             warn!(
                                 "Unhandled operation 0x{op_code:02x} on table {table_name}, skipping rest"
@@ -400,7 +398,7 @@ pub fn build_message_patchset(msg: &ChatMessage) -> Vec<u8> {
 fn build_catchup_patchset(state: &AppState, user_id: &[u8]) -> Vec<u8> {
     let mut builder: PatchSet<Schema, String, Vec<u8>> = PatchSet::new();
 
-    // Add all users (except the one who just joined — they already have their own row).
+    // Add all users except the one who just joined, who already has their own row.
     {
         let users = state.users.lock().unwrap();
         for user in users.iter() {
@@ -505,7 +503,7 @@ fn parse_n_values(data: &[u8], n: usize) -> Option<(Vec<Val>, usize)> {
     Some((values, pos))
 }
 
-/// Decode a SQLite-style varint (1–9 bytes, big-endian, high-bit continuation).
+/// Decode a SQLite-style varint (1 to 9 bytes, big-endian, high-bit continuation).
 ///
 /// Returns `(value, bytes_consumed)`.
 fn decode_varint(data: &[u8]) -> Option<(usize, usize)> {

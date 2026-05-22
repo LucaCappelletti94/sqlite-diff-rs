@@ -341,7 +341,7 @@ fn test_sqlite_table_order_after_cancel_and_readd_patchset() {
 }
 
 // =============================================================================
-// Question 2b: Table ordering — original order is preserved even when all ops
+// Question 2b: Table ordering. Is original order preserved even when all ops
 // cancel and a new one is added?
 // =============================================================================
 
@@ -550,7 +550,7 @@ fn test_sqlite_partial_cancel_preserves_table() {
     assert!(!changeset.is_empty());
 }
 
-/// UPDATE that reverts to original values — does `SQLite` keep it or discard it?
+/// UPDATE that reverts to original values: does `SQLite` keep it or discard it?
 #[test]
 fn test_sqlite_update_revert_to_original() {
     // We need the row to exist before the session starts,

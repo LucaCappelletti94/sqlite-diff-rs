@@ -1,4 +1,4 @@
-//! Data loading module — reads Criterion benchmark results from disk.
+//! Data loading module that reads Criterion benchmark results from disk.
 //!
 //! Walks `target/criterion/*/new/` directories, parses `benchmark.json` for
 //! metadata and `estimates.json` for timing data, and exposes query helpers to
@@ -97,8 +97,8 @@ pub struct ApplyDimensions {
 /// Try to parse apply benchmark dimensions from a `group_id` string.
 ///
 /// Expected formats:
-/// - `"apply/int_pk/empty/30"` → config = `"base"`
-/// - `"apply/int_pk/populated/1000/indexed"` → config = `"indexed"`
+/// - `"apply/int_pk/empty/30"` produces config = `"base"`.
+/// - `"apply/int_pk/populated/1000/indexed"` produces config = `"indexed"`.
 fn parse_apply_dimensions(group_id: &str) -> Option<ApplyDimensions> {
     let parts: Vec<&str> = group_id.split('/').collect();
     if parts.first() != Some(&"apply") || parts.len() < 4 {
@@ -253,7 +253,7 @@ impl ResultSet {
         })
     }
 
-    /// Group apply results by `(pk_kind, state, config)` → op_count → method → result.
+    /// Group apply results by `(pk_kind, state, config)`, then op_count, then method.
     ///
     /// Useful for building scaling charts (one line per method, x = op_count).
     pub fn scaling_groups(
@@ -276,7 +276,7 @@ impl ResultSet {
         groups
     }
 
-    /// Group apply results by `(pk_kind, op_count, method)` → config → result.
+    /// Group apply results by `(pk_kind, op_count, method)`, then config.
     ///
     /// Useful for config variant comparison charts.
     pub fn config_groups(
@@ -339,9 +339,9 @@ mod tests {
         let result = BenchmarkResult {
             group_id: "apply/int_pk/empty/100".to_string(),
             function_id: "changeset".to_string(),
-            mean_ns: 5_000_000.0,   // 5ms = 5000µs
-            median_ns: 4_500_000.0, // 4.5ms = 4500µs
-            std_dev_ns: 100_000.0,  // 100µs
+            mean_ns: 5_000_000.0,   // 5ms = 5000us
+            median_ns: 4_500_000.0, // 4.5ms = 4500us
+            std_dev_ns: 100_000.0,  // 100us
             mean_lower_ns: 4_800_000.0,
             mean_upper_ns: 5_200_000.0,
         };

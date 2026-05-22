@@ -1,14 +1,14 @@
 //! `DiffSet` builder for constructing changeset/patchset binary data.
 //!
-//! This module provides [`DiffSetBuilder`] for building `SQLite` session extension
-//! compatible changesets and patchsets. The builder tracks row state and consolidates
-//! operations according to `SQLite`'s changegroup semantics.
+//! [`DiffSetBuilder`] builds `SQLite` session-extension changesets and
+//! patchsets. It tracks row state and consolidates operations according to
+//! `SQLite`'s changegroup semantics.
 //!
 //! # Terminology
 //!
-//! - **Changeset**: Full row data for all operations (invertible)
-//! - **Patchset**: Minimal data (PK only for deletes, changed columns for updates)
-//! - **`DiffSet`**: Generic term for either changeset or patchset
+//! A *changeset* carries full row data for all operations and is invertible.
+//! A *patchset* carries only the PK for deletes and only the changed columns
+//! for updates. *`DiffSet`* is the generic term for either.
 //!
 //! # Consolidation Rules
 //!
@@ -21,7 +21,7 @@
 //! | INSERT | UPDATE | INSERT with updated values |
 //! | INSERT | DELETE | Remove both (no-op) |
 //! | UPDATE | INSERT | Ignore new |
-//! | UPDATE | UPDATE | Single UPDATE original→final |
+//! | UPDATE | UPDATE | Single UPDATE original to final |
 //! | UPDATE | DELETE | DELETE of original |
 //! | DELETE | INSERT | UPDATE if different, no-op if same |
 //! | DELETE | UPDATE | Ignore new |
@@ -145,7 +145,7 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
 ///
 /// `SQLite`'s session extension tracks changes in a hash table where:
 /// - New entries are prepended to their bucket (most recent at list head)
-/// - The table starts at 256 buckets and doubles when entries ≥ buckets/2
+/// - The table starts at 256 buckets and doubles when entries >= buckets/2
 /// - Changeset iteration walks buckets 0..n-1, following each linked list
 ///
 /// This function returns indices into `rows` in the order that `SQLite`'s
@@ -233,7 +233,7 @@ fn write_table_header<T: SchemaWithPK>(out: &mut Vec<u8>, marker: u8, table: &T)
     out.push(0);
 }
 
-/// Build the column-index → PK-vector-position mapping used by patchset serialization.
+/// Build the column-index to PK-vector-position mapping used by patchset serialization.
 ///
 /// Returns `(pk_flags, pk_col_to_pk_pos)` where `pk_col_to_pk_pos[col_idx]`
 /// gives the index into the PK vector for PK columns, or `None` for non-PK columns.
@@ -295,7 +295,7 @@ fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
 }
 
 // ============================================================================
-// DiffSetBuilder — mutable builder (DML insertion order, hash-simulated build)
+// DiffSetBuilder: mutable builder (DML insertion order, hash-simulated build)
 // ============================================================================
 
 /// Builder for constructing changeset or patchset binary data.
@@ -458,7 +458,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 
     /// Add any operation, consolidating with existing operations on the same row.
     ///
-    /// The table schema is passed separately — operations are schema-less.
+    /// The table schema is passed separately, operations are schema-less.
     pub(crate) fn add_operation(
         &mut self,
         table: &T,
@@ -507,7 +507,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 }
 
 // ============================================================================
-// DiffOps trait — unified insert / delete / update for DiffSetBuilder & DiffSet
+// DiffOps trait: unified insert / delete / update for DiffSetBuilder & DiffSet
 // ============================================================================
 
 /// Trait for adding DML operations (INSERT, DELETE, UPDATE) to a diff set.
@@ -941,7 +941,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 }
 
 // ============================================================================
-// DiffSet — frozen (parsed) changeset/patchset with sequential row order
+// DiffSet: frozen (parsed) changeset/patchset with sequential row order
 // ============================================================================
 
 /// A frozen changeset or patchset whose rows are emitted in stored order.
@@ -951,15 +951,15 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 /// [`DiffSetBuilder`], it stores tables and rows in a plain `Vec`, reflecting
 /// the fact that no further mutation or PK-based lookup is needed.
 ///
-/// [`build`](Self::build) serializes rows in the order they are stored — no
-/// session hash-table simulation is applied.  This preserves the original
+/// [`build`](Self::build) serializes rows in the order they are stored. No
+/// session hash-table simulation is applied. This preserves the original
 /// row order of parsed binary data across roundtrips.
 ///
 /// To modify a `DiffSet`, convert it back to a [`DiffSetBuilder`] using
 /// `Into::into`.
 #[derive(Debug, Clone)]
 pub struct DiffSet<F: Format<S, B>, T: SchemaWithPK, S, B> {
-    /// Tables and their rows, stored in order.  Each row is a `(pk, operation)` pair.
+    /// Tables and their rows, stored in order. Each row is a `(pk, operation)` pair.
     pub(crate) tables: TableVec<F, T, S, B>,
 }
 
@@ -1290,7 +1290,7 @@ mod tests {
             alloc::vec![
                 values
                     .get(self.pk_column)
-                    .expect("primary key column index out of bounds — values shorter than schema")
+                    .expect("primary key column index out of bounds, values shorter than schema")
             ]
         }
     }

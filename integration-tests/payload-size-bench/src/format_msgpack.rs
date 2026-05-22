@@ -1,6 +1,6 @@
-//! MessagePack format — `rmp-serde` with native byte-string IDs.
+//! MessagePack format using `rmp-serde` with native byte-string IDs.
 //!
-//! Reuses the same `binary_serde` structs as CBOR — both formats support
+//! Reuses the same `binary_serde` structs as CBOR, since both formats support
 //! native byte-strings via `serde::Serializer::serialize_bytes`.
 
 use crate::binary_serde;

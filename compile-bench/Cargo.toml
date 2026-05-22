@@ -8,13 +8,13 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Feature: rusqlite — uses rusqlite's session extension directly
+# Feature: rusqlite (uses rusqlite's session extension directly)
 rusqlite = { version = "0.37", features = [
     "bundled",
     "session",
 ], optional = true }
 
-# Features: builder — uses sqlite-diff-rs
+# Feature: builder (uses sqlite-diff-rs)
 sqlite-diff-rs = { path = "..", optional = true, default-features = false }
 
 [features]

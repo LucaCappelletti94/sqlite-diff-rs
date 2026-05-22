@@ -8,7 +8,7 @@ FROM rust:bookworm AS base
 RUN rustup default nightly && rustup target add wasm32-unknown-unknown
 RUN apt-get update && apt-get install -y clang lld && rm -rf /var/lib/apt/lists/*
 
-# sqlite-wasm-rs headers use [[noreturn]] (C23 syntax); default C17 mode rejects it.
+# sqlite-wasm-rs headers use [[noreturn]] (C23 syntax). Default C17 mode rejects it.
 ENV CFLAGS_wasm32_unknown_unknown="-std=gnu2x"
 
 # Install trunk before COPY so it survives source-code changes in the cache.
@@ -18,7 +18,7 @@ WORKDIR /workspace
 COPY . .
 
 # ---------------------------------------------------------------------------
-# test — backend integration tests (self-contained, no external deps)
+# test: backend integration tests (self-contained, no external deps)
 # ---------------------------------------------------------------------------
 FROM base AS test
 
@@ -28,7 +28,7 @@ RUN cargo build -p chat-backend --tests
 CMD ["cargo", "test", "-p", "chat-backend"]
 
 # ---------------------------------------------------------------------------
-# frontend-build — Trunk compiles the Yew SPA into dist/
+# frontend-build: Trunk compiles the Yew SPA into dist/
 # ---------------------------------------------------------------------------
 FROM base AS frontend-build
 
@@ -36,7 +36,7 @@ WORKDIR /workspace/integration-tests/frontend
 # --release enables Rust release optimisations and runs wasm-opt.
 # Trunk's bundled wasm-opt (binaryen 123) does not enable bulk-memory /
 # nontrapping-fptoint features that Rust nightly emits, so the first build
-# attempt fails but downloads wasm-opt.  We wrap the binary with the
+# attempt fails but downloads wasm-opt. We wrap the binary with the
 # required feature flags and rebuild (cargo compilation is cached).
 RUN trunk build --release 2>&1 || true && \
     WASM_OPT=$(find /root/.cache/trunk -name wasm-opt -type f | head -1) && \
@@ -45,10 +45,10 @@ RUN trunk build --release 2>&1 || true && \
     chmod +x "$WASM_OPT" && \
     trunk build --release
 
-# Trunk embeds an inline <script type="module"> in index.html.  VS Code's
+# Trunk embeds an inline <script type="module"> in index.html. VS Code's
 # Simple Browser (and other restricted webview environments) block inline
-# scripts via Content Security Policy.  Extract the inline script into a
-# separate file so the HTML only references it via src="…".
+# scripts via Content Security Policy. Extract the inline script into a
+# separate file so the HTML only references it via src="...".
 RUN cd dist && \
     perl -0777 -ne 'print $1 if m{<script type="module">\s*(.*?)\s*</script>}s' \
         index.html > init.js && \
@@ -56,7 +56,7 @@ RUN cd dist && \
         index.html
 
 # ---------------------------------------------------------------------------
-# app — single Axum server: WebSocket + static files from dist/
+# app: single Axum server (WebSocket + static files from dist/)
 # ---------------------------------------------------------------------------
 FROM base AS app
 

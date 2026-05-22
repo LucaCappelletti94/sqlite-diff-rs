@@ -1,9 +1,8 @@
 //! Chat frontend: Yew app with sqlite-wasm-rs local DB and WebSocket patchset protocol.
 //!
 //! All writes go through SQLite's session extension:
-//!   `sqlite3session_create` → `sqlite3session_attach` → write → `sqlite3session_patchset` → send
-//!
-//! All incoming data is applied via `sqlite3changeset_apply`.
+//! `sqlite3session_create`, `sqlite3session_attach`, write, `sqlite3session_patchset`, and send.
+//! Incoming data is applied via `sqlite3changeset_apply`.
 
 mod db;
 mod session;
@@ -25,9 +24,9 @@ fn app() -> Html {
     // Selected recipient user ID.
     let selected_recipient = use_state(|| None::<Vec<u8>>);
     // Mutable refs mirroring state for the WS callback.
-    // `UseStateHandle` clones capture the value at clone-time; the WS
-    // `on_message` closure therefore sees stale state.  These `RefCell`
-    // refs are shared by reference and always hold the latest value.
+    // `UseStateHandle` clones capture the value at clone-time, so the WS
+    // `on_message` closure sees stale state. These `RefCell` refs are
+    // shared by reference and always hold the latest value.
     let selected_recipient_ref = use_mut_ref(|| None::<Vec<u8>>);
     let current_user_id_ref = use_mut_ref(|| None::<Vec<u8>>);
     // WebSocket sender (set after connection).
@@ -92,8 +91,8 @@ fn app() -> Html {
                         users.set(db.list_users());
 
                         // Refresh messages if a conversation is open.
-                        // Read current values from the mutable refs —
-                        // UseStateHandle clones captured at login are stale.
+                        // Read current values from the mutable refs because
+                        // the UseStateHandle clones captured at login are stale.
                         let my_id = my_id_ref.borrow().clone();
                         let rid = selected_ref.borrow().clone();
                         if let (Some(my_id), Some(rid)) = (my_id, rid) {
@@ -104,7 +103,7 @@ fn app() -> Html {
 
                 // Derive WebSocket URL from the current page origin so it
                 // works with Docker port-mapping, VS Code port-forwarding,
-                // and Trunk's built-in proxy (which relays /ws → backend:3000).
+                // and Trunk's built-in proxy (which relays /ws to backend:3000).
                 let location = web_sys::window().unwrap().location();
                 let host = location.host().unwrap(); // hostname:port
                 let protocol = location.protocol().unwrap();

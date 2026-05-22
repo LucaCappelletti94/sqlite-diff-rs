@@ -1,4 +1,4 @@
-//! SQL format — plain-text INSERT/UPDATE/DELETE statements.
+//! SQL format using plain-text INSERT/UPDATE/DELETE statements.
 //!
 //! UUIDs are encoded as hex blob literals `X'...'` (SQL has no raw binary literal).
 

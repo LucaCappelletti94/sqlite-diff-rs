@@ -1,4 +1,4 @@
-//! CBOR format — `ciborium` with native byte-string IDs.
+//! CBOR format using `ciborium` with native byte-string IDs.
 
 use crate::binary_serde;
 use crate::common::{Format, TestMessage};

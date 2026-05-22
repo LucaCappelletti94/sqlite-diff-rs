@@ -1,13 +1,12 @@
 //! wal2json message parsing and conversion to `SQLite` changeset operations.
 //!
-//! This module provides types for deserializing [wal2json](https://github.com/eulerto/wal2json)
-//! logical replication messages from `PostgreSQL` and converting them to `SQLite` changeset
-//! operations compatible with this crate's builders.
+//! [wal2json](https://github.com/eulerto/wal2json) is a `PostgreSQL` logical
+//! replication output plugin. This module deserializes its messages and
+//! converts them into changeset operations compatible with this crate's
+//! builders.
 //!
-//! # Supported Formats
-//!
-//! - **v1 format**: Transaction-level JSON with full `change` array
-//! - **v2 format**: Per-tuple JSON messages (one JSON object per line)
+//! Two formats are supported: v1 emits one transaction-level JSON object with
+//! a full `change` array, and v2 emits one JSON object per row tuple.
 //!
 //! # Example
 //!

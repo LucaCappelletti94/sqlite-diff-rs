@@ -21,7 +21,7 @@ pub async fn serve(listener: tokio::net::TcpListener) {
 /// Start the server, optionally serving a static-files directory.
 ///
 /// When `static_dir` is `Some`, the directory is served at `/` with a
-/// fallback to `index.html` for SPA routing.  This is used in production
+/// fallback to `index.html` for SPA routing. This is used in production
 /// (Docker) where Trunk pre-builds the WASM bundle into a `dist/` folder.
 pub async fn serve_with_static_dir(listener: tokio::net::TcpListener, static_dir: Option<&Path>) {
     let state = AppState::new();
@@ -41,8 +41,8 @@ pub async fn serve_with_static_dir(listener: tokio::net::TcpListener, static_dir
         app
     };
 
-    // Compression must be applied AFTER the fallback so it wraps
-    // everything — including the static file serving (1.6 MB WASM → ~400 KB gzipped).
+    // Compression must be applied AFTER the fallback so it wraps everything,
+    // including the static file serving (1.6 MB WASM becomes about 400 KB gzipped).
     let app = app.layer(CompressionLayer::new());
 
     axum::serve(listener, app).await.unwrap();

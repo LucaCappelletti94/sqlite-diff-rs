@@ -18,7 +18,7 @@ fn fmt_us(us: f64) -> String {
     if us >= 1_000.0 {
         format!("{:.2} ms", us / 1_000.0)
     } else {
-        format!("{:.1} µs", us)
+        format!("{:.1} us", us)
     }
 }
 
@@ -52,7 +52,7 @@ fn write_header(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "| **SQL (transaction)** | Same SQL wrapped in a single `BEGIN…COMMIT` transaction |"
+        "| **SQL (transaction)** | Same SQL wrapped in a single `BEGIN...COMMIT` transaction |"
     )
     .unwrap();
     writeln!(
@@ -109,14 +109,14 @@ fn write_summary_table(out: &mut String, results: &ResultSet) {
                 if let Some(r) = methods_map.get(method) {
                     let med = r.median_us();
                     let sd = r.std_dev_us();
-                    let cell = format!("{} ± {}", fmt_us(med), fmt_us(sd));
+                    let cell = format!("{} +/- {}", fmt_us(med), fmt_us(sd));
                     if (med - fastest_median).abs() < 0.01 {
                         write!(row, " **{cell}** |").unwrap();
                     } else {
                         write!(row, " {cell} |").unwrap();
                     }
                 } else {
-                    write!(row, " — |").unwrap();
+                    write!(row, " - |").unwrap();
                 }
             }
             writeln!(out, "{row}").unwrap();
@@ -129,7 +129,7 @@ fn write_scaling_section(out: &mut String) {
     writeln!(out, "## Scaling Analysis\n").unwrap();
     writeln!(
         out,
-        "How each apply method scales as the number of operations increases (30 → 100 → 1000).\n"
+        "How each apply method scales as the number of operations increases (30, 100, 1000).\n"
     )
     .unwrap();
 
@@ -161,7 +161,7 @@ fn write_method_comparison(out: &mut String, results: &ResultSet) {
                     let sp = speedup(sql_us, med);
                     let label = crate::plots::METHOD_LABELS
                         [METHODS.iter().position(|&m| m == method).unwrap()];
-                    writeln!(out, "| {label} | {} | {sp:.2}× |", fmt_us(med)).unwrap();
+                    writeln!(out, "| {label} | {} | {sp:.2}x |", fmt_us(med)).unwrap();
                 }
             }
             writeln!(out).unwrap();
@@ -204,7 +204,7 @@ fn write_config_section(out: &mut String, results: &ResultSet) {
                         write!(row, " {} |", fmt_us(med)).unwrap();
                     }
                 } else {
-                    write!(row, " — |").unwrap();
+                    write!(row, " - |").unwrap();
                 }
             }
             writeln!(out, "{row}").unwrap();
@@ -222,7 +222,7 @@ fn write_pk_section(out: &mut String, results: &ResultSet) {
     .unwrap();
     writeln!(out, "![PK comparison](pk_comparison.svg)\n").unwrap();
 
-    writeln!(out, "| Method | int_pk | uuid_pk | Δ% |").unwrap();
+    writeln!(out, "| Method | int_pk | uuid_pk | Delta % |").unwrap();
     writeln!(out, "|--------|--------|---------|------|").unwrap();
     for (mi, &method) in METHODS.iter().enumerate() {
         let label = METHOD_LABELS[mi];
@@ -241,7 +241,7 @@ fn write_pk_section(out: &mut String, results: &ResultSet) {
                 .unwrap();
             }
             _ => {
-                writeln!(out, "| {label} | — | — | — |").unwrap();
+                writeln!(out, "| {label} | - | - | - |").unwrap();
             }
         }
     }
@@ -291,7 +291,7 @@ fn write_key_findings(out: &mut String, results: &ResultSet) {
             let sp = speedup(s.median_us(), c.median_us());
             writeln!(
                 out,
-                "- **{pk}**: Changeset apply is **{sp:.1}×** faster than autocommit SQL at 1000 ops",
+                "- **{pk}**: Changeset apply is **{sp:.1}x** faster than autocommit SQL at 1000 ops",
             )
             .unwrap();
         }
@@ -299,7 +299,7 @@ fn write_key_findings(out: &mut String, results: &ResultSet) {
             let sp = speedup(s.median_us(), p.median_us());
             writeln!(
                 out,
-                "- **{pk}**: Patchset apply is **{sp:.1}×** faster than autocommit SQL at 1000 ops",
+                "- **{pk}**: Patchset apply is **{sp:.1}x** faster than autocommit SQL at 1000 ops",
             )
             .unwrap();
         }
@@ -307,7 +307,7 @@ fn write_key_findings(out: &mut String, results: &ResultSet) {
             let sp = speedup(s.median_us(), t.median_us());
             writeln!(
                 out,
-                "- **{pk}**: Wrapping SQL in a transaction gives a **{sp:.1}×** speedup over autocommit",
+                "- **{pk}**: Wrapping SQL in a transaction gives a **{sp:.1}x** speedup over autocommit",
             )
             .unwrap();
         }
@@ -348,9 +348,9 @@ mod tests {
 
     #[test]
     fn test_fmt_us_microseconds() {
-        assert_eq!(fmt_us(100.0), "100.0 µs");
-        assert_eq!(fmt_us(999.9), "999.9 µs");
-        assert_eq!(fmt_us(0.5), "0.5 µs");
+        assert_eq!(fmt_us(100.0), "100.0 us");
+        assert_eq!(fmt_us(999.9), "999.9 us");
+        assert_eq!(fmt_us(0.5), "0.5 us");
     }
 
     #[test]

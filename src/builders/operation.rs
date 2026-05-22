@@ -14,7 +14,7 @@ use crate::{
 
 /// A schema-less database operation, parameterized by format `F` and value types `S`, `B`.
 ///
-/// The table schema `T` is NOT stored here — it lives as the key in
+/// The table schema `T` is NOT stored here. It lives as the key in
 /// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>`.
 #[derive(Debug, Clone)]
 pub(crate) enum Operation<F: Format<S, B>, S, B> {
@@ -56,10 +56,9 @@ where
 
 /// Trait for reversing operations.
 ///
-/// This trait allows reversing database operations, which is useful for:
-/// - Creating inverse changesets (undo operations)
-/// - Conflict resolution in distributed systems
-/// - Testing bidirectional synchronization
+/// Reversing a database operation is useful for creating inverse changesets
+/// (undo), resolving conflicts in distributed systems, and testing
+/// bidirectional synchronization.
 pub trait Reverse {
     /// The reverse of this operation.
     type Output;
@@ -75,11 +74,11 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse
 
     fn reverse(self) -> Self::Output {
         match self {
-            // INSERT reversed → DELETE (same values)
+            // INSERT reversed becomes DELETE (same values)
             Operation::Insert(values) => Operation::Delete(values),
-            // DELETE reversed → INSERT (same values)
+            // DELETE reversed becomes INSERT (same values)
             Operation::Delete(values) => Operation::Insert(values),
-            // UPDATE reversed → UPDATE with old/new swapped
+            // UPDATE reversed becomes UPDATE with old/new swapped
             Operation::Update(values) => {
                 Operation::Update(values.into_iter().map(|(old, new)| (new, old)).collect())
             }
@@ -140,9 +139,9 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
             // DELETE + INSERT: update if different, cancel if same
             (Operation::Delete(del_values), Operation::Insert(ins_values)) => {
                 if del_values == ins_values {
-                    None // Same values — cancel out
+                    None // Same values, cancel out
                 } else {
-                    // Different — becomes UPDATE from old to new
+                    // Different, becomes UPDATE from old to new
                     let update_values = del_values
                         .into_iter()
                         .zip(ins_values)

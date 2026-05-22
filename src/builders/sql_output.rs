@@ -1,8 +1,7 @@
 //! SQL statement generation from changesets and patchsets.
 //!
-//! This module provides methods to convert changeset/patchset operations
-//! back into SQL statements, useful for debugging, logging, or applying
-//! changes to non-SQLite databases.
+//! Converts changeset and patchset operations back into SQL statements.
+//! Useful for debugging, logging, or applying changes to non-SQLite databases.
 //!
 //! # Example
 //!
@@ -172,7 +171,7 @@ fn format_delete_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
             write!(sql, "\"col{col_idx}\"").unwrap();
         }
         sql.push_str(" = ");
-        write!(sql, "{}", &pk[pk_ordinal]).unwrap();
+        write!(sql, "{}", pk[pk_ordinal]).unwrap();
     }
     sql
 }
@@ -279,7 +278,7 @@ fn format_update_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
             write!(sql, "\"col{col_idx}\"").unwrap();
         }
         sql.push_str(" = ");
-        write!(sql, "{}", &pk[pk_ordinal]).unwrap();
+        write!(sql, "{}", pk[pk_ordinal]).unwrap();
     }
     sql
 }

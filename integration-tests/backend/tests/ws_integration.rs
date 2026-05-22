@@ -244,7 +244,7 @@ async fn test_user_does_not_receive_others_messages() {
     let eve_received = recv_patchsets(&mut eve_stream, 500).await;
     assert!(
         eve_received.is_empty(),
-        "Eve should not receive Alice→Bob message"
+        "Eve should not receive Alice-to-Bob message"
     );
 }
 

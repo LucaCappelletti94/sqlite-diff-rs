@@ -6,9 +6,9 @@ use core::fmt::Debug;
 
 /// Trait defining the differences between changeset and patchset formats.
 ///
-/// The key differences:
-/// - **Changeset**: DELETE stores all column values, UPDATE stores old+new
-/// - **Patchset**: DELETE stores only PK values (data lives externally), UPDATE stores only PK+new
+/// A changeset DELETE stores all column values and a changeset UPDATE stores
+/// both old and new values. A patchset DELETE stores only the PK (data lives
+/// externally) and a patchset UPDATE stores only the PK plus new values.
 pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static {
     /// The type representing old values in this format.
     ///
@@ -19,8 +19,8 @@ pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static
     /// The data stored for a DELETE operation (beyond the PK which is always
     /// stored as the `IndexMap` key in `DiffSetBuilder`).
     ///
-    /// - Changeset: `Vec<Value<S, B>>` — full old-row values
-    /// - Patchset: `()` — only the PK matters (stored externally)
+    /// - Changeset: `Vec<Value<S, B>>` (full old-row values)
+    /// - Patchset: `()` (only the PK matters, stored externally)
     type DeleteData: Clone + Debug + Default;
 }
 

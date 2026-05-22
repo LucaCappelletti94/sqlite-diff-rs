@@ -40,18 +40,8 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
 
 ## Fuzz Targets
 
-- **`roundtrip`** — Binary round-trip stability: parses arbitrary bytes into a
-  `ParsedDiffSet`, serializes back to bytes, re-parses, and re-serializes.
-  Asserts the two serialized byte sequences are identical (i.e. one
-  normalization pass produces stable output). Also tests parser robustness
-  on arbitrary input.
+`roundtrip` checks binary round-trip stability: parse arbitrary bytes into a `ParsedDiffSet`, serialize back to bytes, re-parse, and re-serialize. The two serialized byte sequences must be identical, which proves a single normalization pass produces stable output. This also exercises parser robustness on arbitrary input.
 
-- **`sql_roundtrip`** — SQL Display round-trip: parses SQL into a
-  `ChangeSet`/`PatchSet`, converts to SQL via `Display`, re-parses, and
-  compares the in-memory structures.
+`sql_roundtrip` checks SQL `Display` round-trip: parse SQL into a `ChangeSet` or `PatchSet`, convert back to SQL via `Display`, re-parse, and compare the in-memory structures.
 
-- **`apply_roundtrip`** — Apply-roundtrip: parses arbitrary bytes as a
-  binary changeset/patchset, serializes back and verifies byte equality
-  (roundtrip), then applies the re-serialized changeset to an in-memory
-  rusqlite database. Returns early on parse failure to keep iteration
-  cost bounded. Input size is capped at 4 KiB.
+`apply_roundtrip` parses arbitrary bytes as a binary changeset or patchset, serializes back and asserts byte equality, then applies the re-serialized changeset to an in-memory rusqlite database. It returns early on parse failure to keep iteration cost bounded, and input size is capped at 4 KiB.

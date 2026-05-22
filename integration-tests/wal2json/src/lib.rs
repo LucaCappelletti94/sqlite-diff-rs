@@ -1,7 +1,7 @@
 //! Test utilities and helpers for wal2json integration tests.
 //!
-//! This crate provides utilities for testing wal2json parsing and conversion
-//! against real PostgreSQL instances using testcontainers.
+//! Exercises wal2json parsing and conversion against real PostgreSQL
+//! instances using testcontainers.
 
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -19,7 +19,7 @@ pub const POSTGRES_PORT: u16 = 5432;
 ///
 /// # Arguments
 ///
-/// * `version` - PostgreSQL version tag (e.g., "15")
+/// * `version` - PostgreSQL version tag (for example "15").
 ///
 /// # Returns
 ///

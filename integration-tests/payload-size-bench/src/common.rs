@@ -121,7 +121,7 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Raw content size — the actual data bytes with zero framing.
+/// Raw content size: the actual data bytes with zero framing.
 /// IDs are 16-byte UUIDs stored as binary.
 pub fn raw_content_message(m: &TestMessage) -> usize {
     16 * 3 + m.body.len() + m.created_at.len()
@@ -204,7 +204,7 @@ pub fn all_compressors() -> Vec<Box<dyn Compressor>> {
 }
 
 // ---------------------------------------------------------------------------
-// Format trait — each serialization format implements this
+// Format trait: each serialization format implements this
 // ---------------------------------------------------------------------------
 
 /// A serialization format that can encode INSERT, UPDATE, DELETE operations

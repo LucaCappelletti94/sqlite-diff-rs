@@ -2,21 +2,11 @@
 
 ## Abstract
 
-SQLite's session extension defines two binary wire formats—**changesets** and **patchsets**—for representing database mutations. This report analyzes these formats and the `sqlite-diff-rs` Rust implementation, comparing them against alternative serialization approaches.
+SQLite's session extension defines two binary wire formats, changesets and patchsets, for representing database mutations. This report analyzes those formats and the `sqlite-diff-rs` Rust implementation against alternative serialization approaches.
 
-**Strengths:**
+Changesets and patchsets can be applied directly to SQLite databases via `sqlite3changeset_apply()` with no schema compilation or code generation. At scale on a mixed workload, patchsets are 48% smaller than SQL and 43% smaller than JSON, approaching Protobuf efficiency (only 6% larger). Binary apply is 3.4x to 3.9x faster than executing equivalent SQL statements, and the format supports zero-copy borrowed parsing. The `sqlite-diff-rs` crate adds no C dependencies and works in WASM and embedded environments.
 
-- **Direct SQLite applicability**: Changesets and patchsets can be applied directly to SQLite databases via `sqlite3changeset_apply()`, requiring no schema compilation or code generation
-- **Compact wire size**: Patchsets achieve 48% smaller payloads than SQL and 43% smaller than JSON at scale, approaching Protobuf efficiency (only 6% larger)
-- **High apply performance**: Binary format application is 3.4–3.9× faster than executing equivalent SQL statements
-- **Zero-copy potential**: The format supports borrowed parsing without allocation
-- **Pure Rust, no_std**: `sqlite-diff-rs` requires no C dependencies and works in WASM/embedded environments
-
-**Weaknesses:**
-
-- **Poor compressibility**: The format's already-compact binary encoding leaves little redundancy for general-purpose compressors to exploit; compression ratios are modest compared to text formats
-- **SQLite-specific**: Unlike Protobuf or JSON, the format is tied to SQLite's type system and operational semantics
-- **Limited tooling**: No widespread ecosystem support outside SQLite itself
+The downsides are limited compressibility (the binary encoding leaves little redundancy for general compressors), tight coupling to SQLite's type system and operational semantics, and a small ecosystem outside SQLite itself.
 
 ---
 
@@ -24,7 +14,7 @@ SQLite's session extension defines two binary wire formats—**changesets** and 
 
 ![Changeset vs Patchset binary wire format](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/docs/format_illustration.svg)
 
-Both formats share the same container structure: one or more *table sections*, each with a header followed by change records.
+Both formats share the same container structure: one or more table sections, each with a header followed by change records.
 
 | Aspect | Changeset (`'T'` / 0x54) | Patchset (`'P'` / 0x50) |
 |--------|--------------------------|-------------------------|
@@ -60,23 +50,23 @@ Comparison of seven serialization formats for identical database operations on a
 |-----------|----:|-----:|--------:|-----:|---------:|---------:|----------:|
 | INSERT (4B body) | 223 | 205 | 136 | 134 | **88** | 104 | 104 |
 | INSERT (124B body) | 343 | 325 | 257 | 255 | **209** | 224 | 224 |
-| UPDATE (4B→40B) | 117 | 105 | 79 | 78 | **62** | 103 | 108 |
+| UPDATE (4B to 40B) | 117 | 105 | 79 | 78 | **62** | 103 | 108 |
 | DELETE | 68 | 55 | 32 | 31 | **20** | 36 | 104 |
 
-Protobuf wins on single operations due to field numbers (1–2 bytes) instead of string keys. Patchset pays a fixed table header (~16 bytes) that amortizes at scale.
+Protobuf wins on single operations because field numbers take 1 to 2 bytes instead of string keys. Patchset pays a fixed table header of about 16 bytes that amortizes at scale.
 
 ### Mixed Workload at Scale (1,000 operations: 60% INSERT, 25% UPDATE, 15% DELETE)
 
-| Format | Total bytes | × raw content | Overhead |
+| Format | Total bytes | x raw content | Overhead |
 |--------|------------:|--------------:|---------:|
-| Raw content | 91,430 | 1.0× | — |
-| SQL | 203,979 | 2.2× | +123% |
-| JSON | 187,931 | 2.1× | +106% |
-| MsgPack | 136,003 | 1.5× | +49% |
-| CBOR | 134,463 | 1.5× | +47% |
-| Changeset | 138,566 | 1.5× | +52% |
-| **Patchset** | **106,996** | **1.2×** | **+17%** |
-| **Protobuf** | **101,090** | **1.1×** | **+11%** |
+| Raw content | 91,430 | 1.0x | - |
+| SQL | 203,979 | 2.2x | +123% |
+| JSON | 187,931 | 2.1x | +106% |
+| MsgPack | 136,003 | 1.5x | +49% |
+| CBOR | 134,463 | 1.5x | +47% |
+| Changeset | 138,566 | 1.5x | +52% |
+| **Patchset** | **106,996** | **1.2x** | **+17%** |
+| **Protobuf** | **101,090** | **1.1x** | **+11%** |
 
 ### Patchset Savings vs Alternatives
 
@@ -87,7 +77,7 @@ Protobuf wins on single operations due to field numbers (1–2 bytes) instead of
 | MsgPack | **21%** |
 | CBOR | **20%** |
 | Changeset | **23%** |
-| Protobuf | −6% (Protobuf smaller) |
+| Protobuf | -6% (Protobuf smaller) |
 
 ### Compression Behavior
 
@@ -99,7 +89,7 @@ Protobuf wins on single operations due to field numbers (1–2 bytes) instead of
 
 ![Compressor comparison for patchset](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/compressor_comparison_patchset.svg)
 
-The binary format's compact encoding leaves limited redundancy for compressors. Text-based formats (SQL, JSON) compress more dramatically but still end up larger than uncompressed patchsets. For bandwidth-constrained scenarios, patchsets offer a good balance without compression overhead.
+The binary format's compact encoding leaves limited redundancy for compressors. Text-based formats compress more dramatically but still end up larger than uncompressed patchsets. For bandwidth-constrained scenarios, patchsets offer a good balance without compression overhead.
 
 ---
 
@@ -115,10 +105,10 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 | Method | Median | Speedup vs SQL |
 |--------|-------:|---------------:|
-| SQL (autocommit) | 2.35 ms | 1.00× |
-| SQL (transaction) | 1.92 ms | 1.22× |
-| **Patchset** | **605.7 µs** | **3.87×** |
-| Changeset | 698.6 µs | 3.36× |
+| SQL (autocommit) | 2.35 ms | 1.00x |
+| SQL (transaction) | 1.92 ms | 1.22x |
+| **Patchset** | **605.7 us** | **3.87x** |
+| Changeset | 698.6 us | 3.36x |
 
 #### UUID Primary Key
 
@@ -126,10 +116,10 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 | Method | Median | Speedup vs SQL |
 |--------|-------:|---------------:|
-| SQL (autocommit) | 3.16 ms | 1.00× |
-| SQL (transaction) | 2.65 ms | 1.20× |
-| **Patchset** | **938.4 µs** | **3.37×** |
-| Changeset | 1.04 ms | 3.03× |
+| SQL (autocommit) | 3.16 ms | 1.00x |
+| SQL (transaction) | 2.65 ms | 1.20x |
+| **Patchset** | **938.4 us** | **3.37x** |
+| Changeset | 1.04 ms | 3.03x |
 
 ### Scaling Behavior
 
@@ -151,7 +141,7 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 | Config | SQL overhead | Patchset overhead |
 |--------|-------------:|------------------:|
-| base | — | — |
+| base | - | - |
 | indexed | +23.6% | +44.0% |
 | triggers | +26.2% | +61.8% |
 | foreign keys | +9.4% | +18.2% |
@@ -166,10 +156,10 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 | Method | int_pk | uuid_pk | Overhead |
 |--------|-------:|--------:|---------:|
-| Patchset | 605.7 µs | 938.4 µs | +54.9% |
-| Changeset | 698.6 µs | 1.04 ms | +49.5% |
+| Patchset | 605.7 us | 938.4 us | +54.9% |
+| Changeset | 698.6 us | 1.04 ms | +49.5% |
 
-UUID/BLOB primary keys incur ~50% overhead compared to integer PKs due to comparison costs.
+UUID and BLOB primary keys incur about 50% overhead compared to integer PKs due to comparison costs.
 
 ---
 
@@ -177,27 +167,27 @@ UUID/BLOB primary keys incur ~50% overhead compared to integer PKs due to compar
 
 | Operation | rusqlite | sqlite-diff-rs | Speedup |
 |-----------|----------|----------------|--------:|
-| Changeset generation | 204.1 µs | 6.9 µs | **30×** |
-| Patchset generation | 205.7 µs | 6.5 µs | **32×** |
+| Changeset generation | 204.1 us | 6.9 us | **30x** |
+| Patchset generation | 205.7 us | 6.5 us | **32x** |
 
-The pure-Rust builder avoids SQLite's session machinery overhead, enabling significantly faster changeset construction.
+The pure-Rust builder skips SQLite's session machinery, which makes changeset construction significantly faster.
 
 ---
 
 ## CDC Format Conversion Performance
 
-`sqlite-diff-rs` supports conversion from common Change Data Capture (CDC) formats to SQLite patchsets, enabling PostgreSQL-to-SQLite replication pipelines.
+`sqlite-diff-rs` converts common Change Data Capture (CDC) formats into SQLite patchsets, enabling PostgreSQL-to-SQLite replication pipelines.
 
 ### Throughput Benchmarks
 
-Benchmarks measure parsing CDC JSON messages and converting to patchset operations. Each benchmark uses realistic multi-column table operations with various data types.
+Each benchmark parses CDC JSON messages and converts them to patchset operations, using realistic multi-column table operations with various data types.
 
 | Format | Throughput | Notes |
 |--------|------------|-------|
-| **pg_walstream** | 350–477 MiB/s | PostgreSQL logical replication format |
-| **Debezium** | 310–313 MiB/s | Kafka Connect CDC format |
-| **wal2json** | 303–311 MiB/s | PostgreSQL wal2json plugin (v1/v2) |
-| **Maxwell** | 236–239 MiB/s | MySQL CDC format |
+| **pg_walstream** | 350 to 477 MiB/s | PostgreSQL logical replication format |
+| **Debezium** | 310 to 313 MiB/s | Kafka Connect CDC format |
+| **wal2json** | 303 to 311 MiB/s | PostgreSQL wal2json plugin (v1/v2) |
+| **Maxwell** | 236 to 239 MiB/s | MySQL CDC format |
 
 ### Supported Formats
 
@@ -223,44 +213,22 @@ Cold-build benchmarks comparing rusqlite (bundled SQLite C library) vs sqlite-di
 | sqlite-diff-rs | debug | 3.1s | 8.03 MiB |
 | sqlite-diff-rs | release | 7.1s | 383.4 KiB |
 
-**sqlite-diff-rs** compiles **6× faster** and produces **6× smaller** release artifacts. This makes it particularly suitable for:
-
-- CI/CD pipelines where build time matters
-- WASM targets where artifact size impacts load time
-- Embedded systems with flash constraints
+`sqlite-diff-rs` compiles 6x faster and produces a 6x smaller release artifact, which is useful in CI/CD pipelines where build time matters, on WASM targets where artifact size impacts load time, and on embedded systems with flash constraints.
 
 ---
 
 ## When to Use Each Format
 
-### Use Patchset when
+Use patchsets when network bandwidth is constrained, forward-only sync is acceptable, undo and revert are not required, and maximum performance is needed.
 
-- Network bandwidth is constrained
-- Forward-only sync is acceptable
-- Undo/revert is not required
-- Maximum performance is needed
+Use changesets when undo and rollback are required, when conflict detection needs the full row context, or when audit logging requires complete before-and-after state.
 
-### Use Changeset when
-
-- Undo/rollback capability is required
-- Conflict detection needs full row context
-- Audit logging requires complete before/after state
-
-### Consider alternatives when
-
-- Cross-schema portability is required (use Protobuf/JSON)
-- Human readability is important and schema is not available (use SQL/JSON)
+Consider alternatives when cross-schema portability is required (Protobuf or JSON), or when human readability matters and the schema is not available to the reader (SQL or JSON).
 
 ---
 
 ## Conclusion
 
-SQLite's changeset/patchset formats offer an compelling balance of:
+SQLite's changeset and patchset formats deliver near-Protobuf compactness with no schema compilation, 3x to 4x faster apply than SQL execution, and direct database applicability without intermediate parsing. The main limitation is poor compressibility, because the dense binary encoding does not benefit much from general-purpose compression. For bandwidth-critical applications where every byte matters, Protobuf with compression may win, at the cost of requiring schema synchronization and code generation.
 
-- **Efficiency**: Near-Protobuf compactness without schema compilation
-- **Performance**: 3–4× faster apply than SQL execution
-- **Simplicity**: Direct database applicability without intermediate parsing
-
-The primary limitation is poor compressibility—the already-dense binary encoding doesn't benefit much from general-purpose compression. For bandwidth-critical applications where every byte matters, Protobuf with compression may win, but at the cost of requiring schema synchronization and code generation.
-
-`sqlite-diff-rs` brings these benefits to Rust with pure-Rust, no_std compatibility, making the format accessible in environments where linking SQLite's C library is impractical.
+`sqlite-diff-rs` brings these benefits to Rust with pure-Rust, `no_std` compatibility, making the format accessible in environments where linking SQLite's C library is impractical.

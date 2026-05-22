@@ -5,9 +5,9 @@
 //! table/operation, updates its in-memory state, and builds outbound patchsets
 //! via [`PatchSetBuilder`].
 //!
-//! When the `STATIC_DIR` environment variable is set (e.g. in Docker), the
-//! server also serves the pre-built Yew SPA from that directory.  This
-//! eliminates the need for a separate Trunk runtime container.
+//! When the `STATIC_DIR` environment variable is set (for example in Docker),
+//! the server also serves the pre-built Yew SPA from that directory, which
+//! removes the need for a separate Trunk runtime container.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

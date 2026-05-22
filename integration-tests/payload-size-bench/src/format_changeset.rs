@@ -1,12 +1,12 @@
-//! Changeset format — `sqlite-diff-rs` ChangeSet builder.
+//! Changeset format using the `sqlite-diff-rs` ChangeSet builder.
 //!
-//! UUIDs are raw BLOB values. Unlike patchset, updates carry both old + new
-//! values and deletes carry all column values (for conflict detection).
+//! UUIDs are raw BLOB values. Unlike patchset, updates carry both old and new
+//! values and deletes carry all column values, so conflicts can be detected.
 
 use sqlite_diff_rs::{ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, TableSchema, Value};
 
 use crate::common::{Format, TestMessage, messages_schema};
-use crate::format_patchset; // reuse build_insert — INSERT is identical
+use crate::format_patchset; // reuse build_insert since INSERT is identical
 
 // Type aliases for clarity
 type Schema = TableSchema<String>;

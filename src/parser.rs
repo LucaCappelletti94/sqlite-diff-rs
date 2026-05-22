@@ -1,7 +1,6 @@
 //! Parser for `SQLite` changeset/patchset binary format.
 //!
-//! This module provides functionality to parse `SQLite` session extension
-//! changesets and patchsets from their binary representation into
+//! Parses `SQLite` session extension changesets and patchsets from binary into
 //! [`DiffSetBuilder`] instances.
 //!
 //! # Binary Format
@@ -195,7 +194,7 @@ impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWit
             .map(|i| {
                 values
                     .get(i)
-                    .expect("primary key column index out of bounds — values shorter than schema")
+                    .expect("primary key column index out of bounds, values shorter than schema")
             })
             .collect()
     }

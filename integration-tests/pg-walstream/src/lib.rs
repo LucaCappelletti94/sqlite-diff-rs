@@ -1,11 +1,8 @@
 //! Test utilities and helpers for pg_walstream integration tests.
 //!
-//! This crate provides utilities for testing pg_walstream event conversion
-//! to sqlite-diff-rs changeset operations.
-//!
-//! Note: pg_walstream uses libpq directly for replication connections.
-//! These tests focus on verifying the conversion from pg_walstream events
-//! to sqlite-diff-rs changeset operations.
+//! Verifies the conversion from pg_walstream events to sqlite-diff-rs
+//! changeset operations. pg_walstream itself uses libpq directly for
+//! replication connections, but these tests cover only the conversion path.
 
 use pg_walstream::{ChangeEvent, EventType, Lsn, ReplicaIdentity};
 use std::collections::HashMap;

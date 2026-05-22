@@ -56,8 +56,8 @@ fn main() {
         apply_count, gen_count,
     );
 
-    // Expected: 4 methods × (2 pks × 2 states × 3 op_counts + 2 pks × 3 variants) = 4 × (12+6) = 72
-    // + 4 methods × (2 pks × 1000 base already counted) → total 80 apply benchmarks
+    // Expected: 4 methods x (2 pks x 2 states x 3 op_counts + 2 pks x 3 variants) = 4 x (12+6) = 72
+    // + 4 methods x (2 pks x 1000 base already counted) gives 80 apply benchmarks total
     let expected_apply = 4 * (2 * 2 * 3 + 2 * 3); // 72
     if apply_count < expected_apply {
         eprintln!(

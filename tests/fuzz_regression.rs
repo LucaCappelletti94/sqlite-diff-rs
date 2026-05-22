@@ -29,7 +29,7 @@ use sqlite_diff_rs::testing::{
 use std::time::Duration;
 
 /// Maximum time allowed for a single crash input before we flag it as a
-/// timeout-class bug. Honggfuzz uses 1 s by default; we use 2 s to account
+/// timeout-class bug. Honggfuzz uses 1 s by default, we use 2 s to account
 /// for debug-mode overhead while still catching algorithmic slowness.
 const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
 
@@ -138,7 +138,7 @@ fn fuzz_regression_roundtrip_crash_inputs_dir() {
 
 /// Automatically test all `reverse_idempotent` crash files.
 ///
-/// Raw `&[u8]` input — same simple pattern as the roundtrip test.
+/// Raw `&[u8]` input, same simple pattern as the roundtrip test.
 #[test]
 fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
     run_crash_dir_regression(

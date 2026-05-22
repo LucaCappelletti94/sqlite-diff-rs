@@ -1,28 +1,23 @@
 #![allow(clippy::unreadable_literal)] // Test fixture IDs are more readable without separators
 
-//! Benchmark measuring the time to **apply** changes to an `SQLite` database.
+//! Benchmark measuring the time to apply changes to an `SQLite` database.
 //!
-//! Compares four application methods:
-//! 1. Executing raw SQL statements via rusqlite (`sql` — autocommit per stmt)
-//! 2. Executing raw SQL wrapped in a single transaction (`sql_tx`)
-//! 3. Applying a patchset via `conn.apply_strm()`
-//! 4. Applying a changeset via `conn.apply_strm()`
+//! Four application methods are compared: raw SQL via rusqlite with
+//! autocommit per statement (`sql`), the same SQL wrapped in a single
+//! transaction (`sql_tx`), a patchset applied via `conn.apply_strm()`, and a
+//! changeset applied via `conn.apply_strm()`.
 //!
-//! Each method is tested under two starting states:
-//! - **empty**: database has schema but no rows
-//! - **populated**: database has 1000+ rows per table
+//! Each method runs against two starting states (`empty`: schema only,
+//! `populated`: 1000+ rows per table), against two primary-key strategies
+//! (`int_pk`: sequential INTEGER, `uuid_pk`: `UUIDv7` stored as 16-byte
+//! BLOB), and across batch sizes of 30, 100, and 1000 operations mixing
+//! INSERT, UPDATE, and DELETE.
 //!
-//! Two primary-key strategies:
-//! - **`int_pk`**: sequential INTEGER primary keys
-//! - **`uuid_pk`**: `UUIDv7` stored as 16-byte BLOB primary keys
-//!
-//! Batch sizes: 30, 100, 1000 operations (mixed INSERT/UPDATE/DELETE).
-//!
-//! Database configuration variants (on the `populated/1000` scenario):
-//! - **base**: no secondary indexes, no triggers, foreign keys off
-//! - **indexed**: secondary indexes on FK and query columns
-//! - **triggers**: audit-log triggers on the `users` table
-//! - **fk**: `PRAGMA foreign_keys=ON`
+//! On the `populated/1000` scenario the schema is also varied across four
+//! configurations: `base` (no secondary indexes, no triggers, foreign keys
+//! off), `indexed` (secondary indexes on FK and query columns), `triggers`
+//! (audit-log triggers on the `users` table), and `fk`
+//! (`PRAGMA foreign_keys=ON`).
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use rand::Rng;
@@ -96,7 +91,7 @@ fn make_schema(id_type: &str) -> String {
     SCHEMA_TEMPLATE.replace("$ID", id_type)
 }
 
-/// Secondary indexes DDL — realistic indexes on FK and query columns.
+/// Secondary indexes DDL: realistic indexes on FK and query columns.
 const INDEXES_DDL: &str = "
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_created_at ON users(created_at);
@@ -106,7 +101,7 @@ CREATE INDEX idx_comments_post_id ON comments(post_id);
 CREATE INDEX idx_comments_user_id ON comments(user_id);
 ";
 
-/// Trigger DDL template — audit-log triggers on the `users` table.
+/// Trigger DDL template: audit-log triggers on the `users` table.
 /// Uses `$ID` placeholder so the log table's `row_id` column matches the PK type.
 const TRIGGER_DDL_TEMPLATE: &str = "
 CREATE TABLE changes_log (
@@ -184,7 +179,7 @@ const DATA_TABLES: &[&str] = &["users", "posts", "comments", "tags", "post_tags"
 /// Primary-key strategy.
 #[derive(Clone, Copy)]
 enum IdKind {
-    /// Sequential integer IDs (1, 2, 3, …).
+    /// Sequential integer IDs (1, 2, 3, ...).
     Integer,
     /// `UUIDv7` stored as 16-byte BLOB.
     Uuid,
@@ -208,7 +203,7 @@ impl IdKind {
     }
 }
 
-/// A primary/foreign-key value — either an integer or a 16-byte UUID blob.
+/// A primary or foreign key value: an integer or a 16-byte UUID blob.
 #[derive(Clone, Copy)]
 enum Id {
     Int(i64),
@@ -216,7 +211,7 @@ enum Id {
 }
 
 impl fmt::Display for Id {
-    /// Formats as a SQL literal: `42` or `X'0123…'`.
+    /// Formats as a SQL literal: `42` or `X'0123...'`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Int(n) => write!(f, "{n}"),
@@ -485,7 +480,7 @@ fn populate_db(conn: &Connection, n: usize, kind: IdKind, rng: &mut StdRng) -> I
 struct Scenario {
     /// Raw SQL statements (one per line, separated by `;\n`).
     sql: String,
-    /// Same SQL wrapped in `BEGIN;…COMMIT;`.
+    /// Same SQL wrapped in `BEGIN; ... COMMIT;`.
     sql_tx: String,
     changeset: Vec<u8>,
     patchset: Vec<u8>,
@@ -501,7 +496,7 @@ fn pick_random(ids: &[Id], rng: &mut StdRng) -> Option<Id> {
 }
 
 /// Generate a mixed batch of `op_count` operations (INSERT/UPDATE/DELETE)
-/// spread across all five tables.  Returns the same logical changes in three
+/// spread across all five tables. Returns the same logical changes in three
 /// representations: SQL text, changeset bytes, and patchset bytes.
 ///
 /// The changeset/patchset bytes are produced by rusqlite's session extension,
@@ -518,8 +513,8 @@ fn generate_scenario(
     let conn = clone_db(template_db, config);
 
     let mut session = Session::new(&conn).unwrap();
-    // Attach only the five data tables — NOT `changes_log` — so trigger
-    // side-effects are not captured in the diff.  During apply the target
+    // Attach only the five data tables (not `changes_log`) so trigger
+    // side-effects are not captured in the diff. During apply the target
     // DB has the same triggers, so the audit rows are produced naturally.
     for table in DATA_TABLES {
         session.attach(Some(*table)).unwrap();
@@ -581,7 +576,7 @@ fn generate_scenario(
         let roll: u32 = rng.random_range(0..100);
 
         if roll < 50 {
-            // INSERT — distribute uniformly across the five tables.
+            // INSERT: distribute uniformly across the five tables.
             let table_roll: u32 = rng.random_range(0..5);
             let sql = match table_roll {
                 0 => {
@@ -634,7 +629,7 @@ fn generate_scenario(
             conn.execute(&sql, []).unwrap();
             sql_parts.push(sql);
         } else if roll < 80 {
-            // UPDATE — pick from all known rows (existing + newly inserted).
+            // UPDATE: pick from all known rows (existing + newly inserted).
             let table_roll: u32 = rng.random_range(0..3);
             let sql = match table_roll {
                 0 => {
@@ -651,7 +646,7 @@ fn generate_scenario(
                     if let Some(id) = pick_random(&all_comments, rng) {
                         format!("UPDATE comments SET is_deleted = 1 WHERE id = {id}")
                     } else {
-                        // No comments yet — fall back to an INSERT.
+                        // No comments yet, fall back to an INSERT.
                         let id = ctr_comment.next(rng);
                         let label = id.short_label();
                         let pid = pick_random(&all_posts, rng).unwrap();
@@ -668,11 +663,11 @@ fn generate_scenario(
             let _ = conn.execute(&sql, []);
             sql_parts.push(sql);
         } else {
-            // DELETE — only target pre-existing rows to avoid cancelling a
+            // DELETE: only target pre-existing rows to avoid cancelling a
             // freshly inserted row (which would leave no trace in the diff).
             //
             // When foreign_keys is ON we restrict DELETEs to the `comments`
-            // table (a leaf — nothing references it) to avoid FK violations.
+            // table (a leaf, nothing references it) to avoid FK violations.
             let deleted = if existing.users.is_empty() {
                 false
             } else {
@@ -703,7 +698,7 @@ fn generate_scenario(
             };
 
             if !deleted {
-                // Nothing to delete — fall back to an INSERT.
+                // Nothing to delete, fall back to an INSERT.
                 let id = ctr_user.next(rng);
                 let label = id.short_label();
                 let ts: i64 = rng.random_range(1000000..2000000);
@@ -806,7 +801,7 @@ fn register_benches(
     });
 }
 
-/// **Base** configuration benchmarks: all `kind × state × op_count`
+/// `base` configuration benchmarks: all `kind` x `state` x `op_count`
 /// combinations with the vanilla schema (no indexes, no triggers, FK off).
 fn bench_apply_base(c: &mut Criterion) {
     let config = &CONFIGS[0]; // "base"
@@ -844,7 +839,7 @@ fn bench_apply_base(c: &mut Criterion) {
     }
 }
 
-/// **Variant** configuration benchmarks: `indexed`, `triggers`, `fk` — only
+/// Variant configuration benchmarks: `indexed`, `triggers`, `fk`. Run only
 /// on the most representative scenario (`populated/1000`) for both PK kinds.
 fn bench_apply_variants(c: &mut Criterion) {
     let pop_size: usize = 1000;

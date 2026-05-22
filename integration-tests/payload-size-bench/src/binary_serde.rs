@@ -1,5 +1,5 @@
-//! Serde structs shared by CBOR and MessagePack — both support raw byte-string
-//! IDs natively.
+//! Serde structs shared by CBOR and MessagePack. Both formats support raw
+//! byte-string IDs natively.
 
 use serde::Serialize;
 

@@ -1,15 +1,12 @@
 //! Differential testing: compare our patchset builder against rusqlite's session extension.
 //!
-//! This module provides [`run_differential_test`], which:
-//! 1. Receives pre-built schemas and SQL DML statements
-//! 2. Digests the DML into a patchset via [`DiffSetBuilder::digest_sql`]
-//! 3. Executes the same SQL in rusqlite with session tracking
-//! 4. Compares our patchset output with rusqlite's **byte-for-byte**
+//! [`run_differential_test`] takes pre-built schemas and SQL DML statements,
+//! digests the DML into a patchset via [`DiffSetBuilder::digest_sql`], runs
+//! the same SQL through rusqlite with session tracking, and compares the two
+//! patchsets byte for byte. Only patchset output is tested because the SQL
+//! parser is patchset-only (changesets need old-value tracking).
 //!
-//! Note: only patchset output is tested because the SQL parser only supports
-//! patchset format (no old-value tracking needed for changesets).
-//!
-//! This module is feature-gated behind `testing`.
+//! Feature-gated behind `testing`.
 
 extern crate std;
 
@@ -22,14 +19,13 @@ use alloc::vec::Vec;
 /// Run a differential test comparing our patchset builder output against
 /// rusqlite's session extension.
 ///
-/// `schemas` are pre-built [`SimpleTable`] definitions (one per table).
-/// `create_sqls` are the corresponding `CREATE TABLE` SQL strings for rusqlite.
-/// `dml_sqls` are the DML statements (`INSERT`, `UPDATE`, `DELETE`) to execute.
+/// `schemas` are pre-built [`SimpleTable`] definitions (one per table),
+/// `create_sqls` are the matching `CREATE TABLE` strings for rusqlite, and
+/// `dml_sqls` are the `INSERT`/`UPDATE`/`DELETE` statements to execute.
 ///
-/// The function will:
-/// - Register schemas in our builder, digest DML via [`DiffSetBuilder::digest_sql`]
-/// - Execute CREATE TABLE + DML in rusqlite with session tracking
-/// - Compare our patchset bytes with rusqlite's byte-for-byte
+/// Schemas are registered in our builder and DML is digested via
+/// [`DiffSetBuilder::digest_sql`]. The same statements run in rusqlite with
+/// session tracking, and the patchset bytes are compared byte for byte.
 ///
 /// # Panics
 ///

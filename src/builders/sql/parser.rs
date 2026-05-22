@@ -492,7 +492,7 @@ mod tests {
                  DELETE FROM users WHERE id = 1;",
             )
             .unwrap();
-        // INSERT(1) + INSERT(2) + DELETE(1) → only INSERT(2) survives
+        // INSERT(1) + INSERT(2) + DELETE(1) leaves only INSERT(2)
         assert_eq!(builder.len(), 1);
         assert!(!builder.build().is_empty());
     }

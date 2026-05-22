@@ -1,4 +1,4 @@
-//! JSON format — `serde_json` with tagged `Op` enum.
+//! JSON format using `serde_json` with a tagged `Op` enum.
 //!
 //! UUIDs are hex-encoded strings (JSON has no binary type).
 

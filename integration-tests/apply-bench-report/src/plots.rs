@@ -1,7 +1,7 @@
 //! SVG chart generation for apply-benchmark results.
 //!
 //! Produces line charts (scaling) and grouped-bar charts (comparisons) using
-//! the `plotters` crate with the SVG backend.  Follows the palette and styling
+//! the `plotters` crate with the SVG backend. Follows the palette and styling
 //! conventions from `integration-tests/payload-size-bench/src/plots.rs`.
 
 use plotters::prelude::*;
@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::data::{BenchmarkResult, ResultSet};
 
 // ---------------------------------------------------------------------------
-// Palette — 4 distinguishable colors for the four apply methods
+// Palette: 4 distinguishable colors for the four apply methods
 // ---------------------------------------------------------------------------
 
 const COLOR_SQL: RGBColor = RGBColor(231, 76, 60); //  red
@@ -57,7 +57,7 @@ fn method_stroke(method: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Y-axis label formatter (human-readable µs / ms suffixes)
+// Y-axis label formatter (human-readable us / ms suffixes)
 // ---------------------------------------------------------------------------
 
 fn y_fmt(y: &f64) -> String {
@@ -65,19 +65,19 @@ fn y_fmt(y: &f64) -> String {
     if v >= 1_000.0 {
         format!("{:.1} ms", v / 1_000.0)
     } else if v >= 1.0 {
-        format!("{:.0} µs", v)
+        format!("{:.0} us", v)
     } else {
-        format!("{:.1} µs", v)
+        format!("{:.1} us", v)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Chart A — Scaling by method (line chart, log-ish x-axis)
+// Chart A: Scaling by method (line chart, log-ish x-axis)
 // ---------------------------------------------------------------------------
 
 /// Draw a scaling line chart for a single `(pk_kind, state, config)` group.
 ///
-/// X-axis: operation count (30, 100, 1000).  Y-axis: median time (µs).
+/// X-axis: operation count (30, 100, 1000). Y-axis: median time (us).
 /// One line per apply method with error bars from the confidence interval.
 ///
 /// Returns `Ok(())` on success or an error if chart generation fails.
@@ -118,7 +118,7 @@ pub fn scaling_chart(
         .fold(0.0f64, f64::max);
 
     let title = format!(
-        "Apply Scaling — {}, {}, {}",
+        "Apply Scaling: {}, {}, {}",
         pk_kind.replace('_', " "),
         state,
         config,
@@ -137,7 +137,7 @@ pub fn scaling_chart(
     chart
         .configure_mesh()
         .x_desc("Number of Operations")
-        .y_desc("Median Time (µs)")
+        .y_desc("Median Time (us)")
         .y_label_formatter(&y_fmt)
         .x_label_formatter(&|x| format!("{}", *x as usize))
         .draw()?;
@@ -194,7 +194,7 @@ pub fn scaling_chart(
 }
 
 // ---------------------------------------------------------------------------
-// Chart B — Method comparison (grouped bar chart)
+// Chart B: Method comparison (grouped bar chart)
 // ---------------------------------------------------------------------------
 
 /// Draw a grouped bar chart comparing methods for a specific scenario.
@@ -228,7 +228,7 @@ pub fn method_comparison_chart(
     let y_max = data.iter().map(|(_, _, _, hi)| *hi).fold(0.0f64, f64::max);
 
     let title = format!(
-        "Method Comparison — {} {}/{} ops ({})",
+        "Method Comparison: {} {}/{} ops ({})",
         pk_kind.replace('_', " "),
         state,
         op_count,
@@ -250,10 +250,10 @@ pub fn method_comparison_chart(
         .configure_mesh()
         .disable_x_mesh()
         .x_labels(n * 2 + 1)
-        .y_desc("Median Time (µs)")
+        .y_desc("Median Time (us)")
         .y_label_formatter(&y_fmt)
         .x_label_formatter(&|x| {
-            // Only label at bar centers (0.5, 1.5, …).
+            // Only label at bar centers (0.5, 1.5, ...).
             let centered = x - 0.5;
             if (centered - centered.round()).abs() > 0.1 || centered < 0.0 {
                 return String::new();
@@ -288,7 +288,7 @@ pub fn method_comparison_chart(
 }
 
 // ---------------------------------------------------------------------------
-// Chart C — Config variant impact (grouped line chart)
+// Chart C: Config variant impact (grouped line chart)
 // ---------------------------------------------------------------------------
 
 /// Draw a chart comparing config variants for `populated/1000`.
@@ -333,7 +333,7 @@ pub fn config_variant_chart(
         .fold(0.0f64, f64::max);
 
     let title = format!(
-        "Config Variant Impact — {} populated/1000",
+        "Config Variant Impact: {} populated/1000",
         pk_kind.replace('_', " "),
     );
 
@@ -352,7 +352,7 @@ pub fn config_variant_chart(
         .disable_x_mesh()
         .x_labels(9)
         .x_desc("DB Configuration")
-        .y_desc("Median Time (µs)")
+        .y_desc("Median Time (us)")
         .y_label_formatter(&y_fmt)
         .x_label_formatter(&|x| {
             let idx = x.round() as usize;
@@ -414,7 +414,7 @@ pub fn config_variant_chart(
 }
 
 // ---------------------------------------------------------------------------
-// Chart D — PK type comparison (grouped bars)
+// Chart D: PK type comparison (grouped bars)
 // ---------------------------------------------------------------------------
 
 /// Draw a grouped bar chart comparing int_pk vs uuid_pk for `populated/1000/base`.
@@ -427,7 +427,7 @@ pub fn pk_comparison_chart(
     let config = "base";
     let pks = ["int_pk", "uuid_pk"];
 
-    // Collect: method → [int_pk median, uuid_pk median].
+    // Collect, by method, an [int_pk median, uuid_pk median] pair.
     let mut y_max: f64 = 0.0;
     let mut data: Vec<(&str, [Option<&BenchmarkResult>; 2])> = Vec::new();
     for &method in METHODS {
@@ -447,12 +447,12 @@ pub fn pk_comparison_chart(
         return Ok(());
     }
 
-    let title = "PK Type Comparison — populated/1000 (base)";
+    let title = "PK Type Comparison: populated/1000 (base)";
 
     let root = SVGBackend::new(output, (800, 480)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    // X range: 4 method groups × 2 bars each = 8 slots.
+    // X range: 4 method groups x 2 bars each = 8 slots.
     let total_bars = METHODS.len() * 2;
     let mut chart = ChartBuilder::on(&root)
         .caption(title, ("sans-serif", 18))
@@ -465,10 +465,10 @@ pub fn pk_comparison_chart(
         .configure_mesh()
         .disable_x_mesh()
         .x_labels(total_bars + 1)
-        .y_desc("Median Time (µs)")
+        .y_desc("Median Time (us)")
         .y_label_formatter(&y_fmt)
         .x_label_formatter(&|x| {
-            // Label at the center of each pair (0.5+1=1.0, not quite — center of pair i is i*2 + 1).
+            // Label at the center of each pair (center of pair i is i*2 + 1).
             // Each method group spans 2 bars: [mi*2, mi*2+2). Center = mi*2 + 1.
             let center_offset = *x;
             // Check if x is an odd integer (center of a pair).
@@ -546,7 +546,7 @@ pub fn generate_all(
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(output_dir)?;
 
-    // Chart A — Scaling charts: one per (pk_kind, state) with config=base.
+    // Chart A: scaling charts, one per (pk_kind, state) with config=base.
     for pk in &["int_pk", "uuid_pk"] {
         for state in &["empty", "populated"] {
             let filename = format!("scaling_{pk}_{state}.svg");
@@ -554,7 +554,7 @@ pub fn generate_all(
         }
     }
 
-    // Chart B — Method comparison for populated/1000/base.
+    // Chart B: method comparison for populated/1000/base.
     for pk in &["int_pk", "uuid_pk"] {
         let filename = format!("method_{pk}.svg");
         method_comparison_chart(
@@ -567,13 +567,13 @@ pub fn generate_all(
         )?;
     }
 
-    // Chart C — Config variant impact.
+    // Chart C: config variant impact.
     for pk in &["int_pk", "uuid_pk"] {
         let filename = format!("config_{pk}.svg");
         config_variant_chart(results, pk, &output_dir.join(&filename))?;
     }
 
-    // Chart D — PK type comparison.
+    // Chart D: PK type comparison.
     pk_comparison_chart(results, &output_dir.join("pk_comparison.svg"))?;
 
     Ok(())
@@ -611,10 +611,10 @@ mod tests {
 
     #[test]
     fn test_y_fmt() {
-        assert_eq!(y_fmt(&0.5), "0.5 µs");
-        assert_eq!(y_fmt(&1.0), "1 µs");
-        assert_eq!(y_fmt(&100.0), "100 µs");
-        assert_eq!(y_fmt(&999.0), "999 µs");
+        assert_eq!(y_fmt(&0.5), "0.5 us");
+        assert_eq!(y_fmt(&1.0), "1 us");
+        assert_eq!(y_fmt(&100.0), "100 us");
+        assert_eq!(y_fmt(&999.0), "999 us");
         assert_eq!(y_fmt(&1000.0), "1.0 ms");
         assert_eq!(y_fmt(&1500.0), "1.5 ms");
     }

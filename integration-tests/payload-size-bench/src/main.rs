@@ -238,7 +238,7 @@ fn main() {
             &time_data,
             &format_slice,
             "Number of Operations",
-            &format!("{} — Compressed Size & Timing", comp_name),
+            &format!("{}: Compressed Size & Timing", comp_name),
             &plot_dir.join(format!("{}.svg", safe_name)),
         )
         .ok();
@@ -297,7 +297,7 @@ fn main() {
         &patchset_time_comparison,
         &compressor_slice,
         "Number of Operations",
-        "Patchset — Compressor Comparison",
+        "Patchset Compressor Comparison",
         &plot_dir.join("compressor_comparison_patchset.svg"),
     )
     .ok();

@@ -7,20 +7,20 @@ use plotters::prelude::*;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
-// Palette — 7 distinguishable colors (loosely based on ColorBrewer Set1)
+// Palette: 7 distinguishable colors (loosely based on ColorBrewer Set1)
 // ---------------------------------------------------------------------------
 
 const PALETTE: [RGBColor; 7] = [
-    RGBColor(231, 76, 60),  // SQL        — red
-    RGBColor(230, 160, 0),  // JSON       — amber
-    RGBColor(46, 204, 113), // MsgPack    — emerald
-    RGBColor(26, 188, 156), // CBOR       — turquoise
-    RGBColor(52, 152, 219), // Protobuf   — blue
-    RGBColor(44, 62, 80),   // Patchset   — dark slate
-    RGBColor(155, 89, 182), // Changeset  — amethyst
+    RGBColor(231, 76, 60),  // SQL: red
+    RGBColor(230, 160, 0),  // JSON: amber
+    RGBColor(46, 204, 113), // MsgPack: emerald
+    RGBColor(26, 188, 156), // CBOR: turquoise
+    RGBColor(52, 152, 219), // Protobuf: blue
+    RGBColor(44, 62, 80),   // Patchset: dark slate
+    RGBColor(155, 89, 182), // Changeset: amethyst
 ];
 
-/// Stroke widths — the two "winners" (Protobuf, Patchset) are drawn thicker.
+/// Stroke widths. The two "winners" (Protobuf, Patchset) are drawn thicker.
 const STROKE_W: [u32; 7] = [2, 2, 2, 2, 3, 3, 2];
 
 // ---------------------------------------------------------------------------
@@ -46,11 +46,11 @@ fn y_fmt(y: &f64) -> String {
 
 /// Draw a linear-scale chart and save it as an SVG file.
 ///
-/// * `data`    — slice of `(x, [y₀, y₁, … y₆])` data points, one per x tick.
-/// * `names`   — human-readable series names (same order as the y-values)
-/// * `x_label` — x-axis label
-/// * `y_label` — y-axis label
-/// * `output`  — destination `.svg` path
+/// * `data` - slice of `(x, [y0, y1, ... y6])` data points, one per x tick.
+/// * `names` - human-readable series names (same order as the y-values).
+/// * `x_label` - x-axis label.
+/// * `y_label` - y-axis label.
+/// * `output` - destination `.svg` path.
 pub fn line_chart(
     data: &[(f64, Vec<f64>)],
     names: &[&str],
@@ -74,7 +74,7 @@ pub fn line_chart(
 
     let mut chart = ChartBuilder::on(&root)
         .caption(
-            "Payload Size vs Operation Count — mixed workload (60% INSERT, 25% UPDATE, 15% DELETE)",
+            "Payload Size vs Operation Count: mixed workload (60% INSERT, 25% UPDATE, 15% DELETE)",
             ("sans-serif", 17),
         )
         .margin(14)
@@ -129,12 +129,12 @@ pub fn line_chart(
 
 /// Draw a stacked chart with size (top) and time with error bars (bottom).
 ///
-/// * `size_data`   — slice of `(x, [y₀, y₁, … y₆])` for compressed sizes.
-/// * `time_data`   — slice of `(x, [y₀, y₁, …], [err₀, err₁, …])` for timing.
-/// * `names`       — human-readable series names (same order as y-values)
-/// * `x_label`     — x-axis label
-/// * `title`       — chart title (e.g. "DEFLATE Compression")
-/// * `output`      — destination `.svg` path
+/// * `size_data` - slice of `(x, [y0, y1, ... y6])` for compressed sizes.
+/// * `time_data` - slice of `(x, [y0, y1, ...], [err0, err1, ...])` for timing.
+/// * `names` - human-readable series names (same order as y-values).
+/// * `x_label` - x-axis label.
+/// * `title` - chart title (for example "DEFLATE Compression").
+/// * `output` - destination `.svg` path.
 pub fn stacked_size_and_time(
     size_data: &[(f64, Vec<f64>)],
     time_data: &[(f64, Vec<f64>, Vec<f64>)],
@@ -233,7 +233,7 @@ pub fn stacked_size_and_time(
     time_chart
         .configure_mesh()
         .x_desc(x_label)
-        .y_desc("Compress + Decompress Time (µs, ±1σ)")
+        .y_desc("Compress + Decompress Time (us, +/- 1 stddev)")
         .label_style(("sans-serif", 14))
         .axis_desc_style(("sans-serif", 15))
         .y_label_formatter(&y_fmt)

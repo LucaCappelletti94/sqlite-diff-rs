@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS messages (
 
 /// sqlite-diff-rs `TableSchema` for the `users` table.
 ///
-/// Columns: `[id (PK), name, created_at]`
-/// PK flags: `[1, 0, 0]` — `id` is the sole primary key column.
+/// Columns: `[id (PK), name, created_at]`.
+/// PK flags: `[1, 0, 0]`. `id` is the sole primary key column.
 #[must_use]
 pub fn users_table_schema() -> TableSchema<String> {
     TableSchema::new(String::from("users"), 3, vec![1, 0, 0])
@@ -52,8 +52,8 @@ pub fn users_table_schema() -> TableSchema<String> {
 
 /// sqlite-diff-rs `TableSchema` for the `messages` table.
 ///
-/// Columns: `[id (PK), sender_id, receiver_id, body, created_at]`
-/// PK flags: `[1, 0, 0, 0, 0]` — `id` is the sole primary key column.
+/// Columns: `[id (PK), sender_id, receiver_id, body, created_at]`.
+/// PK flags: `[1, 0, 0, 0, 0]`. `id` is the sole primary key column.
 #[must_use]
 pub fn messages_table_schema() -> TableSchema<String> {
     TableSchema::new(String::from("messages"), 5, vec![1, 0, 0, 0, 0])

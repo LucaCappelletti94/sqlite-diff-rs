@@ -1,12 +1,10 @@
 //! Debezium message parsing and conversion to `SQLite` changeset operations.
 //!
-//! This module provides types for deserializing [Debezium](https://debezium.io/)
-//! Change Data Capture (CDC) events and converting them to `SQLite` changeset
-//! operations compatible with this crate's builders.
-//!
-//! Debezium is a distributed platform for CDC that captures row-level changes
-//! in databases. It produces events in a standardized JSON envelope format
-//! that includes before/after states and metadata.
+//! [Debezium](https://debezium.io/) is a distributed CDC platform that
+//! captures row-level changes and emits them as JSON envelopes carrying
+//! before/after states and source metadata. This module deserializes those
+//! envelopes and converts them into changeset operations compatible with
+//! this crate's builders.
 //!
 //! # Example
 //!

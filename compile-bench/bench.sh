@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# compile-bench/bench.sh — Measure compile time and artifact size for each approach.
+# compile-bench/bench.sh: measure compile time and artifact size for each approach.
 #
 # Usage:
 #   cd compile-bench && bash bench.sh
 #
-# Output: a table with feature × profile × compile-time × artifact-size.
+# Output: a table with feature, profile, compile-time, and artifact-size columns.
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ printf "|:%s|:%s|%s:|%s:|\n" "---------------" "-----------" "---------------" "
 
 for feature in "${FEATURES[@]}"; do
   for profile in "${PROFILES[@]}"; do
-    # Use an isolated target directory per feature×profile for a truly cold build
+    # Use an isolated target directory per feature/profile for a truly cold build
     target_dir="$BENCH_TARGET_BASE/$feature-$profile"
 
     # Build args

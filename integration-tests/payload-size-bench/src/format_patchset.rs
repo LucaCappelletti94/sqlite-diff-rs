@@ -1,6 +1,6 @@
-//! Patchset format — `sqlite-diff-rs` PatchSet builder.
+//! Patchset format using the `sqlite-diff-rs` PatchSet builder.
 //!
-//! UUIDs are raw BLOB values. Updates carry only new values; deletes carry
+//! UUIDs are raw BLOB values. Updates carry only new values, and deletes carry
 //! only the primary key.
 
 use sqlite_diff_rs::{DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate, TableSchema, Value};

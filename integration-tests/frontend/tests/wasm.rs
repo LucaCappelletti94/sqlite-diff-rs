@@ -15,7 +15,7 @@ use std::os::raw::{c_int, c_void};
 use sqlite_wasm_rs::*;
 
 /// Helper: open an in-memory SQLite database via sqlite-wasm-rs FFI.
-/// Memory VFS is the default in sqlite-wasm-rs — no init required.
+/// Memory VFS is the default in sqlite-wasm-rs, so no init is required.
 fn open_memory_db() -> *mut sqlite3 {
     let mut db: *mut sqlite3 = std::ptr::null_mut();
     let name = CString::new(":memory:").unwrap();
@@ -297,7 +297,7 @@ fn test_builder_patchset_apply() {
     unsafe { sqlite3_close(db) };
 }
 
-/// Test: full round-trip — builder builds a patchset, session captures the same
+/// Test: full round-trip where the builder builds a patchset, the session captures the same
 /// INSERT independently, and both parse identically via `ParsedDiffSet`.
 #[wasm_bindgen_test]
 fn test_builder_vs_session_roundtrip() {

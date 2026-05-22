@@ -1,8 +1,8 @@
 //! Simple table schema for SQL-based operations.
 //!
-//! This module provides [`SimpleTable`], a schema type that can be created from
-//! SQL `CREATE TABLE` statements and used for generating SQL INSERT, UPDATE,
-//! and DELETE statements.
+//! [`SimpleTable`] is a schema type that can be created from SQL
+//! `CREATE TABLE` statements and used to generate SQL INSERT, UPDATE, and
+//! DELETE statements.
 
 use alloc::string::String;
 use alloc::vec;
@@ -43,9 +43,9 @@ impl SimpleTable {
     ///
     /// # Arguments
     ///
-    /// * `name` - The table name.
-    /// * `columns` - The column names in order.
-    /// * `pk_indices` - Indices of primary key columns (in PK order).
+    /// * `name` - the table name.
+    /// * `columns` - column names in order.
+    /// * `pk_indices` - indices of primary key columns (in PK order).
     ///
     /// # Panics
     ///

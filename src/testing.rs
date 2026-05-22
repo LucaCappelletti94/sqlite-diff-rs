@@ -1,19 +1,14 @@
 //! Testing utilities for bit-parity verification against rusqlite's session extension.
 //!
-//! This module is gated behind the `testing` feature.
+//! Gated behind the `testing` feature.
 //!
-//! # Provided helpers
-//!
-//! - [`session_changeset_and_patchset`]: execute SQL in rusqlite and capture raw changeset/patchset bytes
-//! - [`byte_diff_report`]: pretty-print a byte-level diff between two buffers
-//! - [`assert_bit_parity`]: assert byte-for-byte equality for both changeset and patchset
-//! - [`TypedSimpleTable`]: a [`SimpleTable`] with column type information and `Display` for DDL
-//! - [`SqlType`]: `SQLite` column type affinities
-//! - [`test_roundtrip`]: parse → serialize → reparse → assert equality
-//! - [`test_apply_roundtrip`]: parse, roundtrip, then apply changeset to an in-memory database
-//! - [`test_reverse_idempotent`]: verify `reverse(reverse(x)) == x` for changesets
-//! - [`test_sql_roundtrip`]: digest SQL into a patchset, then binary roundtrip
-//! - [`test_differential`]: compare our patchset output against rusqlite byte-for-byte
+//! The module groups three kinds of helpers. [`session_changeset_and_patchset`],
+//! [`byte_diff_report`], and [`assert_bit_parity`] handle byte-level comparison
+//! against rusqlite. [`TypedSimpleTable`] and [`SqlType`] describe schemas with
+//! enough type information to emit `CREATE TABLE` DDL. [`test_roundtrip`],
+//! [`test_apply_roundtrip`], [`test_reverse_idempotent`], [`test_sql_roundtrip`],
+//! and [`test_differential`] drive parse, serialize, apply, and reverse paths
+//! from a single fuzz or regression input.
 
 use core::fmt::{self, Write};
 use core::ops::Deref;
@@ -36,7 +31,7 @@ use crate::parser::ParsedDiffSet;
 use crate::schema::SimpleTable;
 
 // ---------------------------------------------------------------------------
-// SqlType – SQLite column type affinities
+// SqlType: SQLite column type affinities
 // ---------------------------------------------------------------------------
 
 /// `SQLite` column type affinities for use in `CREATE TABLE` DDL generation.
@@ -70,7 +65,7 @@ impl<'a> arbitrary::Arbitrary<'a> for SqlType {
 }
 
 // ---------------------------------------------------------------------------
-// TypedSimpleTable – SimpleTable + column types with Display for DDL
+// TypedSimpleTable: SimpleTable + column types with Display for DDL
 // ---------------------------------------------------------------------------
 
 /// A [`SimpleTable`] augmented with column type information.
@@ -107,9 +102,9 @@ impl TypedSimpleTable {
     ///
     /// # Arguments
     ///
-    /// * `name` – The table name.
-    /// * `columns` – Pairs of `(column_name, column_type)` in order.
-    /// * `pk_indices` – Indices of primary key columns (in PK order).
+    /// * `name` - the table name.
+    /// * `columns` - pairs of `(column_name, column_type)` in order.
+    /// * `pk_indices` - indices of primary key columns (in PK order).
     ///
     /// # Panics
     ///
@@ -126,7 +121,7 @@ impl TypedSimpleTable {
 
     /// Create a `TypedSimpleTable` from a [`crate::parser::TableSchema`].
     ///
-    /// Synthesizes generic column names (`c0`, `c1`, …) and uses
+    /// Synthesizes generic column names (`c0`, `c1`, ...) and uses
     /// [`SqlType::Blob`] for every column (the most permissive `SQLite` type).
     /// This is primarily useful in fuzz harnesses that parse arbitrary binary
     /// changesets and need to create matching database tables.
@@ -173,7 +168,7 @@ impl fmt::Display for TypedSimpleTable {
     /// Emit a `CREATE TABLE` DDL statement.
     ///
     /// For a single-column PK the `PRIMARY KEY` clause is inlined on the column.
-    /// For composite PKs a trailing `PRIMARY KEY(…)` constraint is appended.
+    /// For composite PKs a trailing `PRIMARY KEY(...)` constraint is appended.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let pk_indices = self.table.pk_indices();
         let columns = self.table.column_names();
@@ -208,7 +203,7 @@ impl fmt::Display for TypedSimpleTable {
 
 impl<'a> arbitrary::Arbitrary<'a> for TypedSimpleTable {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Table name: 1–8 lowercase alpha chars
+        // Table name: 1 to 8 lowercase alpha chars
         let name_len = u.int_in_range(1..=8)?;
         let name: String = (0..name_len)
             .map(|_| u.int_in_range(b'a'..=b'z').map(char::from))
@@ -230,7 +225,7 @@ impl TypedSimpleTable {
     ) -> arbitrary::Result<Self> {
         use arbitrary::Arbitrary;
 
-        // Column count: 1–8
+        // Column count: 1 to 8
         let ncols: usize = u.int_in_range(1..=8)?;
         let columns: Vec<(&str, SqlType)> = Vec::new(); // placeholder
         let mut col_data: Vec<(String, SqlType)> = Vec::with_capacity(ncols);
@@ -259,13 +254,13 @@ impl TypedSimpleTable {
 }
 
 // ---------------------------------------------------------------------------
-// FuzzSchemas – Vec<TypedSimpleTable> with guaranteed unique table names
+// FuzzSchemas: Vec<TypedSimpleTable> with guaranteed unique table names
 // ---------------------------------------------------------------------------
 
-/// A collection of 1–5 [`TypedSimpleTable`] schemas with unique table names.
+/// A collection of 1 to 5 [`TypedSimpleTable`] schemas with unique table names.
 ///
 /// Used as fuzz input for multi-table harnesses. Table names are deterministic
-/// (`t0`, `t1`, …) to avoid collisions; column count, types, and PK layout
+/// (`t0`, `t1`, ...) to avoid collisions. Column count, types, and PK layout
 /// remain fuzz-driven.
 ///
 /// Dereferences to `[TypedSimpleTable]` for ergonomic slice access.
@@ -296,7 +291,7 @@ impl<'a> arbitrary::Arbitrary<'a> for FuzzSchemas {
 // Shared fuzzer / regression-test helpers
 // ---------------------------------------------------------------------------
 
-/// Test binary roundtrip: parse → serialize → reparse → assert equality.
+/// Test binary roundtrip: parse, serialize, reparse, assert equality.
 ///
 /// Returns early (no panic) if the input cannot be parsed.
 ///
@@ -324,25 +319,26 @@ pub fn test_roundtrip(input: &[u8]) {
 ///
 /// Returns early if the input does not parse as a valid changeset/patchset,
 /// skipping the (expensive) `SQLite` setup. When parsing succeeds the
-/// **re-serialized** bytes — not the original fuzz input — are applied,
+/// **re-serialized** bytes (not the original fuzz input) are applied,
 /// so we test that *our* output is accepted by `SQLite`.
 ///
-/// Application errors are **not** treated as failures — the changeset may
-/// be semantically invalid for the given schemas. Panics or crashes are bugs.
+/// Application errors are **not** treated as failures, since the changeset
+/// may be semantically invalid for the given schemas. Panics or crashes are
+/// bugs.
 ///
 /// # Panics
 ///
 /// Panics if re-parsing our serialized output fails or if the reparsed data
 /// doesn't match the original.
 pub fn test_apply_roundtrip(schemas: &[TypedSimpleTable], changeset_bytes: &[u8]) {
-    // Parse the input; bail early if it is not a valid changeset/patchset.
+    // Parse the input. Bail early if it is not a valid changeset/patchset.
     // This avoids paying the SQLite-setup cost for the vast majority of
     // fuzzed inputs (random bytes almost never form valid changesets).
     let Ok(parsed) = ParsedDiffSet::try_from(changeset_bytes) else {
         return;
     };
 
-    // Binary roundtrip check: serialize → reparse → assert equality.
+    // Binary roundtrip check: serialize, reparse, assert equality.
     let serialized: Vec<u8> = parsed.clone().into();
     let reparsed = ParsedDiffSet::try_from(serialized.as_slice())
         .expect("Re-parsing our own output should never fail");
@@ -359,21 +355,18 @@ pub fn test_apply_roundtrip(schemas: &[TypedSimpleTable], changeset_bytes: &[u8]
         }
     }
 
-    // Apply the *re-serialized* bytes — errors are acceptable, panics are not
+    // Apply the *re-serialized* bytes. Errors are acceptable, panics are not.
     let _ = apply_changeset(&conn, &serialized);
 }
 
 /// Test reverse idempotency: `reverse(reverse(x)) == x`.
 ///
-/// Parses the input as a binary changeset (skips patchsets, since they don't
-/// support [`Reverse`]). Verifies four properties:
-///
-/// 1. Double-reversing yields a structurally equal changeset.
-/// 2. Binary representations match after double reverse.
-/// 3. Operation count is preserved by reversal.
-/// 4. Empty changesets reverse to empty.
-///
-/// Returns early (no panic) if the input cannot be parsed or is a patchset.
+/// Parses the input as a binary changeset (patchsets are skipped because they
+/// do not support [`Reverse`]) and verifies that double-reversing yields a
+/// structurally equal changeset, that the binary representations match after
+/// double reverse, that the operation count is preserved by reversal, and
+/// that empty changesets reverse to empty. Returns early (no panic) if the
+/// input cannot be parsed or is a patchset.
 ///
 /// # Panics
 ///
@@ -420,12 +413,9 @@ pub fn test_reverse_idempotent(input: &[u8]) {
 
 /// Test SQL-digest roundtrip: digest SQL into a patchset, serialize, reparse.
 ///
-/// Given one or more table schemas and a SQL string, this:
-/// 1. Builds a [`PatchSet`] with all schemas, digests the SQL.
-/// 2. If digestion fails or the result is empty, returns early.
-/// 3. Serializes to binary and re-parses, asserting byte equality.
-///
-/// Returns early (no panic) if SQL digestion fails or produces no operations.
+/// Builds a [`PatchSet`] with the given schemas, digests the SQL, returns
+/// early if digestion fails or the result is empty, then serializes to
+/// binary and reparses, asserting byte equality.
 ///
 /// # Panics
 ///
@@ -456,13 +446,10 @@ pub fn test_sql_roundtrip(schemas: &[TypedSimpleTable], sql: &str) {
 
 /// Test differential (bit-parity) between our patchset output and rusqlite's.
 ///
-/// Given one or more table schemas and a SQL DML string, this:
-/// 1. Builds a [`PatchSet`] with all schemas, digests the SQL.
-/// 2. If digestion fails or the result is empty, returns early.
-/// 3. Delegates to `run_differential_test` from the `differential_testing` module
-///    to compare our bytes against rusqlite's session extension output.
-///
-/// Returns early (no panic) if SQL digestion fails or produces no operations.
+/// Builds a [`PatchSet`] with the given schemas, digests the SQL, returns
+/// early if digestion fails or the result is empty, then delegates to
+/// `run_differential_test` to compare our bytes against rusqlite's session
+/// extension output.
 pub fn test_differential(schemas: &[TypedSimpleTable], sql: &str) {
     let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
     for schema in schemas {
@@ -590,8 +577,7 @@ pub fn assert_bit_parity(sql_statements: &[&str], our_changeset: &[u8], our_patc
 
 /// Run bit-parity test by digesting SQL into a `PatchSet` via `digest_sql`,
 /// serializing to bytes, and comparing the patchset with rusqlite's output.
-///
-/// Note: this only tests patchset parity since SQL digestion is patchset-only.
+/// Only patchset parity is tested because SQL digestion is patchset-only.
 ///
 /// The `schemas` must be pre-built [`SimpleTable`]s matching the CREATE TABLE
 /// statements in `sql_statements`. The builder is seeded with these schemas
@@ -736,14 +722,11 @@ pub fn extract_table_name(create_sql: &str) -> String {
 /// Run all crash files in a directory through a test function, with timing
 /// and auto-copy from the fuzz workspace.
 ///
-/// This is the shared implementation behind the per-target regression tests
-/// (e.g. `roundtrip`, `apply_roundtrip`). It:
-///
-/// 1. Ensures `crash_dir` exists.
-/// 2. Copies any `.fuzz` files from `fuzz_source_dir` that aren't already in `crash_dir`.
-/// 3. Runs `test_fn` on every file in `crash_dir`, enforcing `time_limit` per input.
-/// 4. Panics with a summary if any input fails or exceeds the time limit.
-///
+/// Shared implementation behind the per-target regression tests (for example
+/// `roundtrip`, `apply_roundtrip`). Ensures `crash_dir` exists, copies any
+/// `.fuzz` files from `fuzz_source_dir` that are not already there, runs
+/// `test_fn` on every file in `crash_dir` enforcing `time_limit` per input,
+/// and panics with a summary if any input fails or exceeds the time limit.
 /// Returns the number of files tested.
 ///
 /// # Panics
@@ -857,13 +840,11 @@ pub fn run_crash_dir_regression(
 
 /// Test wal2json parsing and conversion: parse JSON, convert to changeset operations.
 ///
-/// This fuzzer tests that:
-/// 1. Parsing arbitrary bytes as JSON doesn't panic
-/// 2. Parsing valid JSON as wal2json messages doesn't panic
-/// 3. Converting parsed messages to changeset operations doesn't panic
-/// 4. Round-trip through serialize/deserialize produces equal structures
-///
-/// Returns early (no panic) if the input cannot be parsed as valid JSON.
+/// Exercises four properties: parsing arbitrary bytes as JSON does not panic,
+/// parsing valid JSON as a wal2json message does not panic, converting parsed
+/// messages to changeset operations does not panic, and a serde round-trip
+/// produces an equal structure. Returns early (no panic) if the input cannot
+/// be parsed as valid JSON.
 ///
 /// # Panics
 ///
@@ -1002,13 +983,9 @@ pub fn test_wal2json_arbitrary(msg: &crate::wal2json::MessageV2) {
 
 /// Test `pg_walstream` event parsing and conversion from arbitrary bytes.
 ///
-/// This function attempts to:
-/// 1. Parse bytes as UTF-8 JSON
-/// 2. Deserialize as `EventType`
-/// 3. Serialize and verify round-trip
-/// 4. Attempt conversion to changeset operations
-///
-/// The function will not panic on invalid input - it simply returns early.
+/// Parses bytes as UTF-8 JSON, deserializes as `EventType`, verifies the
+/// serde round-trip, and attempts conversion to changeset operations.
+/// Returns early on invalid input without panicking.
 #[cfg(feature = "pg-walstream")]
 pub fn test_pg_walstream(input: &[u8]) {
     use crate::SimpleTable;
@@ -1044,14 +1021,11 @@ pub fn test_pg_walstream(input: &[u8]) {
             ref table,
             ref old_data,
             ..
-        } => {
-            if !old_data.is_empty() {
-                let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
-                let schema = SimpleTable::new(table, &col_names, &[0]);
-                let event_clone = event.clone();
-                let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
-                    (event_clone, schema).try_into();
-            }
+        } if !old_data.is_empty() => {
+            let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
+            let schema = SimpleTable::new(table, &col_names, &[0]);
+            let event_clone = event.clone();
+            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
         }
         _ => {}
     }
@@ -1085,12 +1059,10 @@ pub fn test_pg_walstream_change_event(input: &[u8]) {
         }
         EventType::Delete {
             table, old_data, ..
-        } => {
-            if !old_data.is_empty() {
-                let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
-                let schema = SimpleTable::new(table, &col_names, &[0]);
-                let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, schema).try_into();
-            }
+        } if !old_data.is_empty() => {
+            let col_names: Vec<&str> = old_data.keys().map(String::as_str).collect();
+            let schema = SimpleTable::new(table, &col_names, &[0]);
+            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, schema).try_into();
         }
         _ => {}
     }
@@ -1102,13 +1074,10 @@ pub fn test_pg_walstream_change_event(input: &[u8]) {
 
 /// Test Debezium envelope parsing and conversion from arbitrary bytes.
 ///
-/// This function attempts to:
-/// 1. Parse bytes as UTF-8 JSON
-/// 2. Deserialize as Debezium `Envelope<serde_json::Value>`
-/// 3. Serialize and verify round-trip
-/// 4. Attempt conversion to changeset operations based on operation type
-///
-/// The function will not panic on invalid input - it simply returns early.
+/// Parses bytes as UTF-8 JSON, deserializes as `Envelope<serde_json::Value>`,
+/// verifies the serde round-trip, and attempts conversion to changeset
+/// operations based on the operation type. Returns early on invalid input
+/// without panicking.
 #[cfg(feature = "debezium")]
 pub fn test_debezium(input: &[u8]) {
     use crate::SimpleTable;
@@ -1172,13 +1141,9 @@ pub fn test_debezium(input: &[u8]) {
 
 /// Test Maxwell message parsing and conversion from arbitrary bytes.
 ///
-/// This function attempts to:
-/// 1. Parse bytes as UTF-8 JSON
-/// 2. Deserialize as Maxwell `Message`
-/// 3. Serialize and verify round-trip
-/// 4. Attempt conversion to changeset operations based on operation type
-///
-/// The function will not panic on invalid input - it simply returns early.
+/// Parses bytes as UTF-8 JSON, deserializes as `Message`, verifies the serde
+/// round-trip, and attempts conversion to changeset operations based on the
+/// operation type. Returns early on invalid input without panicking.
 #[cfg(feature = "maxwell")]
 pub fn test_maxwell(input: &[u8]) {
     use crate::SimpleTable;

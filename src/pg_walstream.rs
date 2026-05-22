@@ -1,12 +1,10 @@
 //! `pg_walstream` message conversion to `SQLite` changeset operations.
 //!
-//! This module provides conversions from [pg_walstream](https://github.com/isdaniel/pg-walstream)
-//! logical replication events to `SQLite` changeset operations compatible with this crate's builders.
-//!
-//! `pg_walstream` is a `PostgreSQL` logical replication protocol client that parses the native
-//! binary replication protocol, providing high-performance CDC (Change Data Capture) events.
-//!
-//! All conversions take ownership of the event and table to avoid cloning.
+//! [pg_walstream](https://github.com/isdaniel/pg-walstream) is a `PostgreSQL`
+//! logical replication client that parses the native binary replication
+//! protocol into high-performance CDC events. This module converts those
+//! events into changeset operations compatible with this crate's builders,
+//! taking ownership of the event and table to avoid cloning.
 //!
 //! # Example
 //!

@@ -1,11 +1,9 @@
 //! Maxwell message parsing and conversion to `SQLite` changeset operations.
 //!
-//! This module provides types for deserializing [Maxwell](https://maxwells-daemon.io/)
-//! Change Data Capture (CDC) events and converting them to `SQLite` changeset
-//! operations compatible with this crate's builders.
-//!
-//! Maxwell is a `MySQL` CDC application that reads binlogs and outputs JSON
-//! messages representing row-level changes.
+//! [Maxwell](https://maxwells-daemon.io/) is a `MySQL` CDC application that
+//! reads binlogs and emits row-level changes as JSON. This module deserializes
+//! those events and converts them into changeset operations compatible with
+//! this crate's builders.
 //!
 //! # Example
 //!

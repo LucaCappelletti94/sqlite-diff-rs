@@ -10,14 +10,9 @@ A Rust library for building SQLite [changeset and patchset](https://www.sqlite.o
 
 ## Overview
 
-SQLite's [session extension](https://www.sqlite.org/session.html) provides a powerful mechanism for tracking and applying database changes. This crate enables you to **construct changeset/patchset binary data without requiring SQLite** — useful for:
+SQLite's [session extension](https://www.sqlite.org/session.html) defines a binary format for tracking and applying database changes. This crate constructs that binary data without linking SQLite, which is useful for offline sync (build a changeset on a server and apply it on a SQLite client), CDC pipelines (produce the input expected by `sqlite3_changeset_apply()` from your own change events), cross-database sync (convert PostgreSQL change streams from wal2json, Debezium, or Maxwell into the SQLite format), and generating test fixtures for changeset processing code.
 
-- **Offline sync**: Build changesets on a server to apply to client SQLite databases
-- **Testing**: Generate test fixtures for changeset processing code
-- **CDC pipelines**: Produce the binary input for `sqlite3_changeset_apply()` from your own change events
-- **Cross-database sync**: Convert change events from PostgreSQL (via wal2json, Debezium, Maxwell) to SQLite format
-
-> **Note:** This crate is different from SQLite's [`sqldiff`](https://sqlite.org/sqldiff.html) command-line tool, which compares two existing database files. This library instead lets you *construct* the changeset/patchset binary format programmatically from your own change data, without needing SQLite.
+This crate is not the SQLite [`sqldiff`](https://sqlite.org/sqldiff.html) tool, which compares two existing database files. This library constructs the changeset and patchset binary format programmatically from your own change data.
 
 ## Installation
 
@@ -73,15 +68,11 @@ sqlite-diff-rs = { version = "0.1", features = ["wal2json"] }
   <img src="docs/format_illustration.svg" alt="Changeset vs Patchset binary wire format" width="720" />
 </p>
 
-Both formats share the same container structure: one or more *table sections*,
-each with a table header followed by change records. The key difference is how
-much old-row data each operation carries.
+Both formats share the same container structure: one or more table sections, each with a table header followed by change records. The key difference is how much old-row data each operation carries.
 
-**Changesets** (`'T'` / `0x54`) store the complete old state of every column,
-making them **reversible** — INSERTs can be turned into DELETEs and vice-versa.
+Changesets (`'T'` / `0x54`) store the complete old state of every column. This makes them reversible, so INSERTs can be turned into DELETEs and vice versa.
 
-**Patchsets** (`'P'` / `0x50`) omit old values for non-PK columns, producing
-a **smaller, forward-only** encoding that cannot be reversed.
+Patchsets (`'P'` / `0x50`) omit old values for non-PK columns, producing a smaller, forward-only encoding that cannot be reversed.
 
 | Aspect | Changeset (`'T'`) | Patchset (`'P'`) |
 |--------|-------------------|------------------|
@@ -92,8 +83,7 @@ a **smaller, forward-only** encoding that cannot be reversed.
 | Reversible | Yes | No |
 | Wire size | Larger (carries full old state) | Smaller (omits non-PK old values) |
 
-> See the [SQLite session extension docs](https://www.sqlite.org/session.html)
-> for the full specification.
+See the [SQLite session extension docs](https://www.sqlite.org/session.html) for the full specification.
 
 ## `no_std` Support
 
@@ -101,4 +91,4 @@ This crate is `no_std` compatible (requires `alloc`). It can be used in embedded
 
 ## License
 
-MIT License — see [LICENSE](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE) for details.
+MIT License, see [LICENSE](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE) for details.
