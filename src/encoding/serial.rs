@@ -454,4 +454,37 @@ mod tests {
         let back_to_owned = borrowed.to_owned();
         assert_eq!(owned, back_to_owned);
     }
+
+    #[test]
+    fn test_value_from_impls() {
+        type V = Value<String, Vec<u8>>;
+
+        let v: V = 42i64.into();
+        assert_eq!(v, Value::Integer(42));
+
+        let v: V = 7i32.into();
+        assert_eq!(v, Value::Integer(7));
+
+        let v: V = 3.5f64.into();
+        assert_eq!(v, Value::Real(3.5));
+
+        let v: V = "hello".into();
+        assert_eq!(v, Value::Text("hello".into()));
+
+        let v: V = String::from("world").into();
+        assert_eq!(v, Value::Text("world".into()));
+
+        let v: V = vec![1u8, 2, 3].into();
+        assert_eq!(v, Value::Blob(vec![1, 2, 3]));
+
+        let slice: &[u8] = &[4, 5, 6];
+        let v: V = slice.into();
+        assert_eq!(v, Value::Blob(vec![4, 5, 6]));
+
+        let v: V = Some(99i64).into();
+        assert_eq!(v, Value::Integer(99));
+
+        let v: V = None::<i64>.into();
+        assert_eq!(v, Value::Null);
+    }
 }

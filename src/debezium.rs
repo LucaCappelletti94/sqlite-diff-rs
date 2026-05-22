@@ -1046,4 +1046,33 @@ mod tests {
         let values = insert.into_values();
         assert_eq!(values[0], Value::Integer(1));
     }
+
+    // ---- TableMismatch symmetry across Update/Delete variants ----
+
+    #[test]
+    fn test_update_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"before":{"id":1,"name":"Alice"},"after":{"id":1,"name":"Bob"},"source":{"table":"users"},"op":"u"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_changedelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"before":{"id":1,"name":"Alice"},"after":null,"source":{"table":"users"},"op":"d"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_patchdelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"before":{"id":1,"name":"Alice"},"after":null,"source":{"table":"users"},"op":"d"}"#;
+        let env = parse::<serde_json::Value>(json).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&env, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
 }

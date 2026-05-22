@@ -1909,4 +1909,30 @@ mod tests {
         let merged = cs1 | cs2;
         assert_eq!(merged.len(), 1);
     }
+
+    #[test]
+    fn test_session_hash_growth_with_many_rows() {
+        // The simulated session hash table grows from 256 buckets when entries
+        // reach 128. Insert 200 rows so the rehash branch in session_row_order
+        // is exercised. Builds the binary and reparses to confirm consistency.
+        let table = TestTable::new("many", 2, 0);
+        let mut cs = ChangesetBuilder::new();
+        for i in 0..200i64 {
+            let insert = Insert::from(table.clone())
+                .set(0, i)
+                .unwrap()
+                .set(1, alloc::format!("row-{i}"))
+                .unwrap();
+            cs = cs.insert(insert);
+        }
+        assert_eq!(cs.len(), 200);
+
+        let bytes = cs.build();
+        assert!(!bytes.is_empty());
+
+        // Reparse the binary to make sure 200 ops survived the round-trip.
+        let reparsed = crate::parser::ParsedDiffSet::try_from(bytes.as_slice()).unwrap();
+        let reparsed_bytes: Vec<u8> = reparsed.into();
+        assert_eq!(bytes, reparsed_bytes);
+    }
 }

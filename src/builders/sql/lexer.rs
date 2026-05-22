@@ -670,4 +670,41 @@ mod tests {
         let i = TokenKind::Identifier("user_table");
         assert_eq!(<TokenKind<'_> as AsRef<str>>::as_ref(&i), "user_table");
     }
+
+    #[test]
+    fn test_line_comment_skipped() {
+        let mut lexer = Lexer::new("-- a comment\nINSERT");
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Insert);
+    }
+
+    #[test]
+    fn test_line_comment_at_eof() {
+        // A line comment that reaches EOF without a newline should still be skipped.
+        let mut lexer = Lexer::new("INSERT -- trailing comment");
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Insert);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_block_comment_skipped() {
+        let mut lexer = Lexer::new("/* hi */ INSERT");
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Insert);
+    }
+
+    #[test]
+    fn test_unterminated_block_comment_does_not_panic() {
+        // The lexer should not panic on an unterminated /* comment.
+        // It may emit a stray token from the comment tail, but must
+        // ultimately return Eof.
+        let mut lexer = Lexer::new("/* never closes");
+        let mut saw_eof = false;
+        for _ in 0..32 {
+            let kind = lexer.next().unwrap().kind;
+            if matches!(kind, TokenKind::Eof) {
+                saw_eof = true;
+                break;
+            }
+        }
+        assert!(saw_eof, "lexer never reached EOF");
+    }
 }

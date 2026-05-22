@@ -562,4 +562,91 @@ mod tests {
             r#"DELETE FROM "order_items" WHERE "order_id" = 100 AND "item_id" = 5"#
         );
     }
+
+    /// Test schema whose ColumnNames impl returns `None` for non-PK columns.
+    /// Drives the `"\"col{col_idx}\""` fallback path in INSERT/UPDATE SET
+    /// and DELETE WHERE rendering.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct AnonColsTable {
+        name: alloc::string::String,
+        num_columns: usize,
+        pk_column: usize,
+    }
+
+    impl crate::DynTable for AnonColsTable {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn number_of_columns(&self) -> usize {
+            self.num_columns
+        }
+        fn write_pk_flags(&self, buf: &mut [u8]) {
+            for (i, b) in buf.iter_mut().enumerate() {
+                *b = u8::from(i == self.pk_column);
+            }
+        }
+    }
+
+    impl crate::SchemaWithPK for AnonColsTable {
+        fn number_of_primary_keys(&self) -> usize {
+            1
+        }
+        fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+            (col_idx == self.pk_column).then_some(0)
+        }
+        fn extract_pk<S: Clone, B: Clone>(
+            &self,
+            values: &impl crate::IndexableValues<Text = S, Binary = B>,
+        ) -> Vec<Value<S, B>> {
+            alloc::vec![values.get(self.pk_column).unwrap()]
+        }
+    }
+
+    impl crate::schema::NamedColumns for AnonColsTable {
+        fn column_index(&self, _column_name: &str) -> Option<usize> {
+            None
+        }
+    }
+
+    impl crate::ColumnNames for AnonColsTable {
+        // Always return None: every column rendered should use the
+        // \"col{col_idx}\" fallback.
+        fn column_name(&self, _index: usize) -> Option<&str> {
+            None
+        }
+    }
+
+    #[test]
+    fn test_sql_output_uses_col_index_fallback() {
+        let table = AnonColsTable {
+            name: "t".into(),
+            num_columns: 2,
+            pk_column: 0,
+        };
+        let insert = Insert::from(table.clone())
+            .set(0, 42i64)
+            .unwrap()
+            .set(1, "hello")
+            .unwrap();
+        let cs = ChangeSet::<AnonColsTable, String, Vec<u8>>::new().insert(insert);
+        let stmts: Vec<_> = cs.sql_statements().collect();
+        assert_eq!(
+            stmts[0],
+            r#"INSERT INTO "t" ("col0", "col1") VALUES (42, 'hello')"#
+        );
+    }
+
+    #[test]
+    fn test_sql_output_col_index_fallback_in_patchset_delete() {
+        let table = AnonColsTable {
+            name: "t".into(),
+            num_columns: 2,
+            pk_column: 0,
+        };
+        let delete: PatchDelete<_, String, Vec<u8>> =
+            PatchDelete::new(table.clone(), alloc::vec![Value::Integer(7)]);
+        let ps = PatchSet::<AnonColsTable, String, Vec<u8>>::new().delete(delete);
+        let stmts: Vec<_> = ps.sql_statements().collect();
+        assert_eq!(stmts[0], r#"DELETE FROM "t" WHERE "col0" = 7"#);
+    }
 }

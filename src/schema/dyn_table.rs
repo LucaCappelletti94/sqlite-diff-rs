@@ -188,3 +188,129 @@ impl<T: SchemaWithPK> SchemaWithPK for &T {
         T::extract_pk(self, values)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DynTable, IndexableValues, SchemaWithPK};
+    use crate::encoding::Value;
+    use crate::schema::SimpleTable;
+    use alloc::string::String;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    fn users() -> SimpleTable {
+        SimpleTable::new("users", &["id", "name", "email"], &[0, 2])
+    }
+
+    #[test]
+    fn test_dyntable_ref_forwards() {
+        let t = users();
+        let r: &SimpleTable = &t;
+        assert_eq!(<&SimpleTable as DynTable>::name(&r), t.name());
+        assert_eq!(
+            <&SimpleTable as DynTable>::number_of_columns(&r),
+            t.number_of_columns()
+        );
+        let mut buf_ref = [0u8; 3];
+        let mut buf_direct = [0u8; 3];
+        <&SimpleTable as DynTable>::write_pk_flags(&r, &mut buf_ref);
+        t.write_pk_flags(&mut buf_direct);
+        assert_eq!(buf_ref, buf_direct);
+    }
+
+    #[test]
+    fn test_schema_with_pk_ref_forwards() {
+        let t = users();
+        let r: &SimpleTable = &t;
+        assert_eq!(
+            <&SimpleTable as SchemaWithPK>::number_of_primary_keys(&r),
+            t.number_of_primary_keys()
+        );
+        for idx in 0..t.number_of_columns() {
+            assert_eq!(
+                <&SimpleTable as SchemaWithPK>::primary_key_index(&r, idx),
+                t.primary_key_index(idx)
+            );
+        }
+        let values: Vec<Value<String, Vec<u8>>> = vec![
+            Value::Integer(1),
+            Value::Text("alice".into()),
+            Value::Text("a@x".into()),
+        ];
+        let pk_ref = <&SimpleTable as SchemaWithPK>::extract_pk(&r, &values);
+        let pk_direct = t.extract_pk(&values);
+        assert_eq!(pk_ref, pk_direct);
+    }
+
+    #[test]
+    fn test_indexable_values_vec_option() {
+        // Vec<Option<Value>>: None entries map to Value::Null.
+        let v: Vec<Option<Value<String, Vec<u8>>>> =
+            vec![Some(Value::Integer(7)), None, Some(Value::Text("x".into()))];
+        assert_eq!(
+            <Vec<Option<Value<String, Vec<u8>>>> as IndexableValues>::get(&v, 0),
+            Some(Value::Integer(7))
+        );
+        assert_eq!(
+            <Vec<Option<Value<String, Vec<u8>>>> as IndexableValues>::get(&v, 1),
+            Some(Value::Null)
+        );
+        assert_eq!(
+            <Vec<Option<Value<String, Vec<u8>>>> as IndexableValues>::get(&v, 2),
+            Some(Value::Text("x".into()))
+        );
+        assert_eq!(
+            <Vec<Option<Value<String, Vec<u8>>>> as IndexableValues>::get(&v, 99),
+            None
+        );
+    }
+
+    #[test]
+    fn test_indexable_values_slice_option() {
+        let owned: Vec<Option<Value<String, Vec<u8>>>> = vec![Some(Value::Integer(1)), None];
+        let slice: &[Option<Value<String, Vec<u8>>>] = &owned;
+        assert_eq!(
+            <&[Option<Value<String, Vec<u8>>>] as IndexableValues>::get(&slice, 0),
+            Some(Value::Integer(1))
+        );
+        assert_eq!(
+            <&[Option<Value<String, Vec<u8>>>] as IndexableValues>::get(&slice, 1),
+            Some(Value::Null)
+        );
+        assert_eq!(
+            <&[Option<Value<String, Vec<u8>>>] as IndexableValues>::get(&slice, 5),
+            None
+        );
+    }
+
+    type PairVec = Vec<(u8, Option<Value<String, Vec<u8>>>)>;
+
+    #[test]
+    fn test_indexable_values_vec_pair() {
+        // Vec<(O, Option<Value>)>: the impl reads only the second element.
+        let v: PairVec = vec![(0, Some(Value::Integer(2))), (1, None)];
+        assert_eq!(
+            <PairVec as IndexableValues>::get(&v, 0),
+            Some(Value::Integer(2))
+        );
+        assert_eq!(<PairVec as IndexableValues>::get(&v, 1), Some(Value::Null));
+        assert_eq!(<PairVec as IndexableValues>::get(&v, 2), None);
+    }
+
+    type PairSlice<'a> = &'a [(u8, Option<Value<String, Vec<u8>>>)];
+
+    #[test]
+    fn test_indexable_values_slice_pair() {
+        let owned: PairVec = vec![(0, Some(Value::Text("y".into()))), (1, None)];
+        let slice: PairSlice<'_> = &owned;
+        assert_eq!(
+            <PairSlice<'_> as IndexableValues>::get(&slice, 0),
+            Some(Value::Text("y".into()))
+        );
+        assert_eq!(
+            <PairSlice<'_> as IndexableValues>::get(&slice, 1),
+            Some(Value::Null)
+        );
+        assert_eq!(<PairSlice<'_> as IndexableValues>::get(&slice, 3), None);
+    }
+}

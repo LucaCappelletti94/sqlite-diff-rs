@@ -554,4 +554,79 @@ mod tests {
             .unwrap();
         assert_eq!(builder.len(), 1);
     }
+
+    // ---- ParseError variant tests ----
+
+    use crate::builders::sql::ParseError;
+
+    #[test]
+    fn test_digest_insert_missing_into() {
+        let t = SimpleTable::new("t", &["id"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder.digest_sql("INSERT FROM t").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_digest_insert_unknown_table() {
+        let t = SimpleTable::new("t", &["id"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder
+            .digest_sql("INSERT INTO unknown_table VALUES (1)")
+            .unwrap_err();
+        assert!(matches!(err, ParseError::UnknownTable("unknown_table")));
+    }
+
+    #[test]
+    fn test_digest_update_missing_where() {
+        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder.digest_sql("UPDATE t SET v = 1").unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::MissingWhere {
+                statement: "UPDATE"
+            }
+        ));
+    }
+
+    #[test]
+    fn test_digest_delete_missing_where() {
+        let t = SimpleTable::new("t", &["id"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder.digest_sql("DELETE FROM t").unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::MissingWhere {
+                statement: "DELETE"
+            }
+        ));
+    }
+
+    #[test]
+    fn test_digest_update_where_non_pk_column() {
+        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder
+            .digest_sql("UPDATE t SET v = 2 WHERE v = 1")
+            .unwrap_err();
+        assert!(matches!(err, ParseError::WhereNonPKColumn { column: "v" }));
+    }
+
+    #[test]
+    fn test_digest_unexpected_top_level_token() {
+        let t = SimpleTable::new("t", &["id"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder.digest_sql("SELECT 1").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_digest_expect_identifier_rejects_value_token() {
+        let t = SimpleTable::new("t", &["id"], &[0]);
+        let mut builder = make_builder(&[t]);
+        // Integer literal where a table name is expected.
+        let err = builder.digest_sql("INSERT INTO 42 VALUES (1)").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
 }

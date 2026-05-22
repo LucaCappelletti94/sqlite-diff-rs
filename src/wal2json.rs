@@ -918,4 +918,62 @@ mod tests {
         let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
         assert!(matches!(result, Err(ConversionError::MissingColumns)));
     }
+
+    // ---- TableMismatch symmetry across all Update/Delete variants ----
+
+    #[test]
+    fn test_v1_update_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"update","schema":"public","table":"users","columnnames":["id","name"],"columntypes":["integer","text"],"columnvalues":[1,"Bob"]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> =
+            (&tx.change[0], &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v1_changedelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users","columnnames":["id","name"],"columntypes":["integer","text"],"columnvalues":[1,"Eve"]}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> =
+            (&tx.change[0], &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v1_patchdelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users","columnnames":[],"columntypes":[],"columnvalues":[],"oldkeys":{"keynames":["id"],"keytypes":["integer"],"keyvalues":[42]}}]}"#;
+        let tx = parse_v1(json).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&tx.change[0], &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v2_update_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"action":"U","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1},{"name":"name","type":"text","value":"Bob"}],"identity":[{"name":"id","type":"integer","value":1}]}"#;
+        let msg = parse_v2(json).unwrap();
+        let result: Result<crate::ChangeUpdate<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v2_changedelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"action":"D","schema":"public","table":"users","identity":[{"name":"id","type":"integer","value":42}]}"#;
+        let msg = parse_v2(json).unwrap();
+        let result: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
+
+    #[test]
+    fn test_v2_patchdelete_table_mismatch() {
+        let table = SimpleTable::new("orders", &["id", "name"], &[0]);
+        let json = r#"{"action":"D","schema":"public","table":"users","identity":[{"name":"id","type":"integer","value":42}]}"#;
+        let msg = parse_v2(json).unwrap();
+        let result: Result<PatchDelete<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
+        assert!(matches!(result, Err(ConversionError::TableMismatch { .. })));
+    }
 }
