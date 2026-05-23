@@ -7,6 +7,7 @@ description = "Serverless peer-to-peer chat demo for sqlite-diff-rs"
 
 [dependencies]
 dioxus = { version = "0.7", features = ["web"] }
+dioxus-free-icons = { version = "0.10", features = ["font-awesome-solid"] }
 sqlite-diff-rs = { path = "../.." }
 diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 diesel-sqlite-session = { git = "https://github.com/LucaCappelletti94/diesel-sqlite-session" }

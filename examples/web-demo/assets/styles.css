@@ -160,6 +160,16 @@ body {
     background: #fafafa;
     cursor: pointer;
     font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    line-height: 1;
+}
+
+.btn.icon-only,
+.btn-danger.icon-only,
+.btn-primary.icon-only {
+    padding: 0.35rem 0.45rem;
 }
 
 .btn:hover,

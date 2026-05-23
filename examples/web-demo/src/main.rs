@@ -21,6 +21,11 @@ use std::rc::Rc;
 
 use diesel_sqlite_session::{ConflictAction, ConflictType};
 use dioxus::prelude::*;
+use dioxus_free_icons::Icon;
+use dioxus_free_icons::icons::fa_solid_icons::{
+    FaArrowRight, FaCheck, FaPaperPlane, FaPenToSquare, FaPlug, FaReply, FaRotateRight, FaTrash,
+    FaUserPlus, FaXmark,
+};
 
 use crate::db::{Db, Message};
 use crate::inspector::{Direction, Entry, InspectorPane, parse_entry};
@@ -372,14 +377,22 @@ fn App() -> Element {
                 if is_disconnected {
                     div { class: "banner banner-warn",
                         span { "Data channel closed. Start a new room to reconnect." }
-                        button { onclick: reset_connection, "Start over" }
+                        button { class: "btn", onclick: reset_connection,
+                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaRotateRight }
+                            "Start over"
+                        }
                     }
                 }
 
                 if !error.read().is_empty() {
                     div { class: "banner banner-error",
                         "{error}"
-                        button { onclick: move |_| error.set(String::new()), "dismiss" }
+                        button {
+                            class: "btn",
+                            "aria-label": "Dismiss error",
+                            onclick: move |_| error.set(String::new()),
+                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaXmark }
+                        }
                     }
                 }
 
@@ -418,7 +431,10 @@ fn App() -> Element {
                         value: "{input}",
                         oninput: move |evt| input.set(evt.value()),
                     }
-                    button { class: "btn-primary", r#type: "submit", "Send" }
+                    button { class: "btn-primary", r#type: "submit",
+                        Icon { width: 14, height: 14, fill: "currentColor", icon: FaPaperPlane }
+                        "Send"
+                    }
                 }
 
                 InspectorPane { entries: inspector_entries }
@@ -454,14 +470,20 @@ fn ConnectionPanel(
                 p { style: "margin-top: 0.5rem;",
                     "This URL contains an offer. Click below to generate a reply code to send back."
                 }
-                button { onclick: move |_| on_join_room.call(()), "Generate reply code" }
+                button { class: "btn-primary", onclick: move |_| on_join_room.call(()),
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaReply }
+                    "Generate reply code"
+                }
             }
 
             if !has_offer && !has_incoming_offer {
                 p { style: "margin-top: 0.5rem;",
                     "No connection yet. Click \"Create room\" to generate an offer URL to send to the other peer, or open a peer's offer URL in this tab."
                 }
-                button { onclick: move |_| on_create_room.call(()), "Create room" }
+                button { class: "btn-primary", onclick: move |_| on_create_room.call(()),
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaUserPlus }
+                    "Create room"
+                }
             }
 
             if has_offer {
@@ -477,7 +499,10 @@ fn ConnectionPanel(
                     value: "{answer_input}",
                     oninput: move |evt| answer_input.set(evt.value()),
                 }
-                button { onclick: move |_| on_connect_with_answer.call(()), "Connect" }
+                button { class: "btn-primary", onclick: move |_| on_connect_with_answer.call(()),
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaPlug }
+                    "Connect"
+                }
             }
 
             if has_answer {
@@ -512,8 +537,20 @@ fn Row(
                     value: "{edit_buffer}",
                     oninput: move |evt| edit_buffer.set(evt.value()),
                 }
-                button { class: "btn", onclick: move |_| on_save_edit.call(()), "Save" }
-                button { class: "btn", onclick: move |_| on_cancel_edit.call(()), "Cancel" }
+                button {
+                    class: "btn",
+                    "aria-label": "Save edit",
+                    onclick: move |_| on_save_edit.call(()),
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaCheck }
+                    "Save"
+                }
+                button {
+                    class: "btn",
+                    "aria-label": "Cancel edit",
+                    onclick: move |_| on_cancel_edit.call(()),
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaXmark }
+                    "Cancel"
+                }
             } else {
                 div { class: "msg-bubble",
                     div { class: "msg-author", "{msg.author}" }
@@ -524,8 +561,18 @@ fn Row(
                 }
                 if is_mine {
                     div { class: "msg-actions",
-                        button { class: "btn", onclick: move |_| on_start_edit.call(()), "Edit" }
-                        button { class: "btn btn-danger", onclick: move |_| on_delete.call(()), "Delete" }
+                        button {
+                            class: "btn icon-only",
+                            "aria-label": "Edit message",
+                            onclick: move |_| on_start_edit.call(()),
+                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaPenToSquare }
+                        }
+                        button {
+                            class: "btn btn-danger icon-only",
+                            "aria-label": "Delete message",
+                            onclick: move |_| on_delete.call(()),
+                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaTrash }
+                        }
                     }
                 }
             }
@@ -551,7 +598,10 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
                     oninput: move |evt| name_input.set(evt.value()),
                     autofocus: true,
                 }
-                button { class: "btn-primary", r#type: "submit", "Continue" }
+                button { class: "btn-primary", r#type: "submit",
+                    "Continue"
+                    Icon { width: 14, height: 14, fill: "currentColor", icon: FaArrowRight }
+                }
             }
         }
     }
