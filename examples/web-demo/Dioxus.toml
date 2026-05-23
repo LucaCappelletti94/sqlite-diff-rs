@@ -1,0 +1,8 @@
+[application]
+name = "web-demo"
+
+[web.app]
+title = "sqlite-diff-rs P2P Chat Demo"
+
+[web.watcher]
+watch_path = ["src"]
