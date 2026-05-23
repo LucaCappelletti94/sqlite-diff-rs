@@ -47,17 +47,13 @@ type SharedDb = Rc<RefCell<Db>>;
 /// One direct WebRTC neighbor in the gossip mesh. The `id` is local-only
 /// and is used to identify the entry when callbacks fire (e.g. to remove
 /// the entry on channel close). The `display_name` is filled in when the
-/// remote `Hello` envelope arrives (checkpoint 4); for now it remains
-/// `None`.
+/// remote `Hello` envelope arrives.
 #[derive(Clone)]
 pub struct PeerEntry {
     pub id: Uuid,
     pub display_name: Option<String>,
     pub peer: Peer,
 }
-
-/// Shared, single-threaded list of currently connected peers.
-type SharedPeers = Rc<RefCell<Vec<PeerEntry>>>;
 
 #[component]
 #[allow(clippy::too_many_lines)] // demo file, single-component-by-design
@@ -68,7 +64,7 @@ fn App() -> Element {
             Db::open().expect("opening in-memory SQLite must succeed"),
         ))
     });
-    let peers: Signal<SharedPeers> = use_signal(|| Rc::new(RefCell::new(Vec::new())));
+    let mut peers: Signal<Vec<PeerEntry>> = use_signal(Vec::new);
     let dedup_cache: Signal<Rc<RefCell<DedupCache>>> =
         use_signal(|| Rc::new(RefCell::new(DedupCache::new())));
 
@@ -122,7 +118,6 @@ fn App() -> Element {
     // connected.
     let capture_and_send = {
         let db = db.read().clone();
-        let peers = peers.read().clone();
         let dedup = dedup_cache.read().clone();
         let mut inspector_entries = inspector_entries;
         move || {
@@ -148,7 +143,7 @@ fn App() -> Element {
             let msg_id = Uuid::new_v4();
             let framed = wire::encode(Kind::Changeset, msg_id, &bytes);
             dedup.borrow_mut().insert(msg_id);
-            let neighbors: Vec<Peer> = peers.borrow().iter().map(|p| p.peer.clone()).collect();
+            let neighbors: Vec<Peer> = peers.read().iter().map(|p| p.peer.clone()).collect();
             for neighbor in &neighbors {
                 if let Err(e) = neighbor.send(&framed) {
                     error.set(format!("send: {e:?}"));
@@ -235,15 +230,13 @@ fn App() -> Element {
     let db_for_callbacks = db.read().clone();
 
     let create_room = {
-        let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
         let dedup = dedup_cache.read().clone();
         move |_| {
-            let peers_handle = peers_handle.clone();
             let peer_id = Uuid::new_v4();
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
-                peers_handle.clone(),
+                peers,
                 dedup.clone(),
                 display_name,
                 peer_id,
@@ -269,17 +262,18 @@ fn App() -> Element {
                     }
                 };
                 offer_url.set(Some(encode_offer_url(&sdp)));
-                peers_handle.borrow_mut().push(PeerEntry {
-                    id: peer_id,
-                    display_name: None,
-                    peer: p,
+                peers.with_mut(|v| {
+                    v.push(PeerEntry {
+                        id: peer_id,
+                        display_name: None,
+                        peer: p,
+                    });
                 });
             });
         }
     };
 
     let join_room = {
-        let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
         let dedup = dedup_cache.read().clone();
         move |_| {
@@ -287,11 +281,10 @@ fn App() -> Element {
                 error.set("no offer fragment on this URL".into());
                 return;
             };
-            let peers_handle = peers_handle.clone();
             let peer_id = Uuid::new_v4();
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
-                peers_handle.clone(),
+                peers,
                 dedup.clone(),
                 display_name,
                 peer_id,
@@ -317,54 +310,49 @@ fn App() -> Element {
                     }
                 };
                 answer_blob.set(Some(encode_answer_blob(&sdp)));
-                peers_handle.borrow_mut().push(PeerEntry {
-                    id: peer_id,
-                    display_name: None,
-                    peer: p,
+                peers.with_mut(|v| {
+                    v.push(PeerEntry {
+                        id: peer_id,
+                        display_name: None,
+                        peer: p,
+                    });
                 });
             });
         }
     };
 
-    let connect_with_answer = {
-        let peers_handle = peers.read().clone();
-        move |_| {
-            let text = answer_input.read().clone();
-            let peers_handle = peers_handle.clone();
-            spawn(async move {
-                let sdp = match decode_answer_blob(&text) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error.set(format!("decode: {e}"));
-                        return;
-                    }
-                };
-                // Clone the most recently added Peer out so we don't
-                // hold a RefCell borrow across the await point. With a
-                // single pending invite at a time (checkpoint 5 will
-                // generalize), this is just the last entry.
-                let peer_clone = peers_handle.borrow().last().map(|e| e.peer.clone());
-                let Some(p) = peer_clone else {
-                    error.set("no local peer yet".into());
+    let connect_with_answer = move |_| {
+        let text = answer_input.read().clone();
+        spawn(async move {
+            let sdp = match decode_answer_blob(&text) {
+                Ok(s) => s,
+                Err(e) => {
+                    error.set(format!("decode: {e}"));
                     return;
-                };
-                if let Err(e) = p.accept_answer(&sdp).await {
-                    error.set(format!("accept: {e:?}"));
                 }
-            });
-        }
+            };
+            // Clone the most recently added Peer out so we don't
+            // hold a Signal borrow across the await point.
+            let peer_clone = peers.read().last().map(|e| e.peer.clone());
+            let Some(p) = peer_clone else {
+                error.set("no local peer yet".into());
+                return;
+            };
+            if let Err(e) = p.accept_answer(&sdp).await {
+                error.set(format!("accept: {e:?}"));
+            } else {
+                // Clear the pending invite slot so the user can start
+                // another invite cleanly.
+                offer_url.set(None);
+                answer_input.set(String::new());
+            }
+        });
     };
 
-    let status_text = match peer_state.read().as_ref() {
-        None => "Idle".to_string(),
-        Some(PeerState::Connected) => "Connected".to_string(),
-        Some(PeerState::Closed) => "Closed".to_string(),
-    };
-
+    let peer_count = peers.read().len();
     let has_offer = offer_url.read().is_some();
     let has_answer = answer_blob.read().is_some();
     let has_incoming_offer = incoming_offer.read().is_some();
-    let is_disconnected = matches!(*peer_state.read(), Some(PeerState::Closed));
     let name_set = !display_name.read().is_empty();
 
     // Persist the typed name to localStorage and unlock the chat.
@@ -377,19 +365,16 @@ fn App() -> Element {
         display_name.set(typed);
     };
 
-    // Reset the connection signals so the user can create a fresh room.
-    // Dropping the `PeerEntry` values also drops their underlying data
-    // channels.
-    let reset_connection = {
-        let peers_handle = peers.read().clone();
-        move |_| {
-            peers_handle.borrow_mut().clear();
-            offer_url.set(None);
-            answer_blob.set(None);
-            answer_input.set(String::new());
-            incoming_offer.set(None);
-            peer_state.set(None);
-        }
+    // Tear down every neighbor connection and reset the invite UI.
+    // Dropping each `PeerEntry` value drops its underlying data
+    // channel.
+    let reset_connection = move |_| {
+        peers.with_mut(Vec::clear);
+        offer_url.set(None);
+        answer_blob.set(None);
+        answer_input.set(String::new());
+        incoming_offer.set(None);
+        peer_state.set(None);
     };
 
     rsx! {
@@ -408,11 +393,22 @@ fn App() -> Element {
                 div { class: "identity-row",
                     span { "Logged in as " strong { "{display_name}" } }
                     span { class: "spacer" }
-                    span { "Connection: " strong { "{status_text}" } }
+                    span { "Peers: " strong { "{peer_count}" } }
+                    if peer_count > 0 {
+                        button {
+                            class: "btn",
+                            style: "margin-left: 0.5rem;",
+                            "aria-label": "Disconnect from all peers",
+                            onclick: reset_connection,
+                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaRotateRight }
+                            "Leave room"
+                        }
+                    }
                 }
 
+                PeerList { peers }
+
                 ConnectionPanel {
-                    status_text: status_text.clone(),
                     has_offer,
                     has_answer,
                     has_incoming_offer,
@@ -422,16 +418,6 @@ fn App() -> Element {
                     on_create_room: create_room,
                     on_join_room: join_room,
                     on_connect_with_answer: connect_with_answer,
-                }
-
-                if is_disconnected {
-                    div { class: "banner banner-warn",
-                        span { "Data channel closed. Start a new room to reconnect." }
-                        button { class: "btn", onclick: reset_connection,
-                            Icon { width: 14, height: 14, fill: "currentColor", icon: FaRotateRight }
-                            "Start over"
-                        }
-                    }
                 }
 
                 if !error.read().is_empty() {
@@ -496,9 +482,46 @@ fn App() -> Element {
 }
 
 #[component]
+fn PeerList(peers: Signal<Vec<PeerEntry>>) -> Element {
+    let peers_snapshot = peers.read().clone();
+    if peers_snapshot.is_empty() {
+        return rsx! {
+            section { class: "peer-list peer-list-empty",
+                "You are alone in this room. Invite a guest below."
+            }
+        };
+    }
+    rsx! {
+        section { class: "peer-list",
+            div { class: "peer-list-header", "Peers in this room" }
+            ul { class: "peer-list-items",
+                for entry in peers_snapshot {
+                    li { key: "{entry.id}", class: "peer-item",
+                        span { class: "peer-name",
+                            if let Some(name) = entry.display_name.clone() {
+                                "{name}"
+                            } else {
+                                em { "(awaiting hello)" }
+                            }
+                        }
+                        span { class: "peer-id-suffix", "#{short_id(entry.id)}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render the first 8 hex characters of a UUID for compact identification
+/// in the peer list before the remote `Hello` arrives.
+fn short_id(id: Uuid) -> String {
+    let s = id.simple().to_string();
+    s.chars().take(8).collect()
+}
+
+#[component]
 #[allow(clippy::too_many_arguments)] // event-driven props
 fn ConnectionPanel(
-    status_text: String,
     has_offer: bool,
     has_answer: bool,
     has_incoming_offer: bool,
@@ -511,33 +534,34 @@ fn ConnectionPanel(
 ) -> Element {
     rsx! {
         section { style: "border: 1px solid #ddd; padding: 0.75rem; margin-bottom: 1rem; background: #fafafa;",
-            div { style: "display: flex; align-items: center; gap: 0.5rem;",
-                strong { "Connection:" }
-                span { "{status_text}" }
-            }
-
             if has_incoming_offer && !has_answer {
-                p { style: "margin-top: 0.5rem;",
+                p { style: "margin: 0;",
                     "This URL contains an offer. Click below to generate a reply code to send back."
                 }
-                button { class: "btn-primary", onclick: move |_| on_join_room.call(()),
+                button {
+                    class: "btn-primary",
+                    style: "margin-top: 0.5rem;",
+                    onclick: move |_| on_join_room.call(()),
                     Icon { width: 14, height: 14, fill: "currentColor", icon: FaReply }
                     "Generate reply code"
                 }
             }
 
             if !has_offer && !has_incoming_offer {
-                p { style: "margin-top: 0.5rem;",
-                    "No connection yet. Click \"Create room\" to generate an offer URL to send to the other peer, or open a peer's offer URL in this tab."
+                p { style: "margin: 0;",
+                    "Invite a peer to this room: click below to generate an invite URL, then share it. Or open someone else's invite URL in this tab."
                 }
-                button { class: "btn-primary", onclick: move |_| on_create_room.call(()),
+                button {
+                    class: "btn-primary",
+                    style: "margin-top: 0.5rem;",
+                    onclick: move |_| on_create_room.call(()),
                     Icon { width: 14, height: 14, fill: "currentColor", icon: FaUserPlus }
-                    "Create room"
+                    "Invite a guest"
                 }
             }
 
             if has_offer {
-                p { style: "margin-top: 0.5rem;", "Share this URL with the other peer:" }
+                p { style: "margin-top: 0;", "Share this invite URL with the next peer:" }
                 textarea {
                     style: "width: 100%; height: 4em; font-family: monospace; font-size: 0.75rem;",
                     readonly: true,
@@ -549,14 +573,17 @@ fn ConnectionPanel(
                     value: "{answer_input}",
                     oninput: move |evt| answer_input.set(evt.value()),
                 }
-                button { class: "btn-primary", onclick: move |_| on_connect_with_answer.call(()),
+                button {
+                    class: "btn-primary",
+                    style: "margin-top: 0.5rem;",
+                    onclick: move |_| on_connect_with_answer.call(()),
                     Icon { width: 14, height: 14, fill: "currentColor", icon: FaPlug }
-                    "Connect"
+                    "Accept reply"
                 }
             }
 
             if has_answer {
-                p { style: "margin-top: 0.5rem;", "Send this reply code back to the peer who shared the offer:" }
+                p { style: "margin-top: 0;", "Send this reply code back to the peer who invited you:" }
                 textarea {
                     style: "width: 100%; height: 4em; font-family: monospace; font-size: 0.75rem;",
                     readonly: true,
@@ -667,7 +694,7 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
 #[allow(clippy::too_many_arguments)] // demo file, callback construction
 fn build_peer_callbacks(
     db: SharedDb,
-    peers: SharedPeers,
+    mut peers: Signal<Vec<PeerEntry>>,
     dedup: Rc<RefCell<DedupCache>>,
     display_name: Signal<String>,
     peer_id: Uuid,
@@ -681,7 +708,6 @@ fn build_peer_callbacks(
     impl FnMut(PeerState) + 'static,
 ) {
     let db_for_msg = db.clone();
-    let peers_for_msg = peers.clone();
     let dedup_for_msg = dedup.clone();
     let on_message = move |framed: Vec<u8>| {
         let frame = match wire::decode(&framed) {
@@ -713,11 +739,12 @@ fn build_peer_callbacks(
                 });
 
                 // Record the sender's display name on its PeerEntry so
-                // the UI can show a real peer list (checkpoint 5).
-                let mut peers_mut = peers_for_msg.borrow_mut();
-                if let Some(p) = peers_mut.iter_mut().find(|p| p.id == peer_id) {
-                    p.display_name = Some(name);
-                }
+                // the peer list re-renders with the announced identity.
+                peers.with_mut(|v| {
+                    if let Some(p) = v.iter_mut().find(|p| p.id == peer_id) {
+                        p.display_name = Some(name);
+                    }
+                });
             }
             Kind::Changeset => {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -749,8 +776,8 @@ fn build_peer_callbacks(
                 // msg_id) to every neighbor except the one we received
                 // it from. Idempotency in the conflict handler covers
                 // any duplicate that arrives along another path.
-                let to_forward: Vec<Peer> = peers_for_msg
-                    .borrow()
+                let to_forward: Vec<Peer> = peers
+                    .read()
                     .iter()
                     .filter(|p| p.id != peer_id)
                     .map(|p| p.peer.clone())
@@ -768,7 +795,7 @@ fn build_peer_callbacks(
         match s {
             PeerState::Connected => {
                 send_hello_and_snapshot(
-                    &peers,
+                    peers,
                     &dedup,
                     &db,
                     peer_id,
@@ -779,7 +806,7 @@ fn build_peer_callbacks(
                 );
             }
             PeerState::Closed => {
-                peers.borrow_mut().retain(|p| p.id != peer_id);
+                peers.with_mut(|v| v.retain(|p| p.id != peer_id));
             }
         }
     };
@@ -791,7 +818,7 @@ fn build_peer_callbacks(
 /// the data channel first opens.
 #[allow(clippy::too_many_arguments)]
 fn send_hello_and_snapshot(
-    peers: &SharedPeers,
+    peers: Signal<Vec<PeerEntry>>,
     dedup: &Rc<RefCell<DedupCache>>,
     db: &SharedDb,
     peer_id: Uuid,
@@ -800,10 +827,12 @@ fn send_hello_and_snapshot(
     error: &mut Signal<String>,
     page_start_ms: f64,
 ) {
-    // Look up this peer's data channel. We do not hold the borrow
-    // across any `send()` calls because send is synchronous.
+    // Clone the data channel out of the signal so we release the
+    // read guard before any send. Sends are synchronous but the
+    // guard would prevent re-entrant signal access from the same
+    // task if any future change reaches here.
     let peer_clone = peers
-        .borrow()
+        .read()
         .iter()
         .find(|p| p.id == peer_id)
         .map(|e| e.peer.clone());
@@ -923,4 +952,4 @@ fn store_display_name(name: &str) {
 // Module-level type alias documented for downstream callers; reference
 // from a no-op fn so dead-code analysis does not flag it.
 #[allow(dead_code)]
-fn _assert_shared_db_type(_: SharedDb, _: SharedPeers) {}
+fn _assert_shared_db_type(_: SharedDb) {}

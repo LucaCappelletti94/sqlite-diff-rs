@@ -192,6 +192,54 @@ body {
     color: var(--error-fg);
 }
 
+.peer-list {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    background: #ffffff;
+    font-size: 0.9rem;
+}
+
+.peer-list-empty {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.peer-list-header {
+    font-weight: bold;
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.35rem;
+}
+
+.peer-list-items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.peer-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.peer-name {
+    font-weight: 500;
+}
+
+.peer-id-suffix {
+    color: var(--muted);
+    font-family: monospace;
+    font-size: 0.75rem;
+}
+
 .name-prompt {
     max-width: 480px;
     margin: 3rem auto;
