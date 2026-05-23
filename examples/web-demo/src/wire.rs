@@ -70,6 +70,9 @@ pub enum WireError {
     UnsupportedVersion(u8),
     /// Kind byte did not match a known kind.
     UnknownKind(u8),
+    /// Hello payload was malformed: either shorter than the 16-byte
+    /// `self_id` prefix or carried a non-UTF-8 name.
+    BadHello,
 }
 
 impl core::fmt::Display for WireError {
@@ -78,11 +81,56 @@ impl core::fmt::Display for WireError {
             Self::Truncated => write!(f, "frame shorter than 18-byte header"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported wire version {v}"),
             Self::UnknownKind(k) => write!(f, "unknown frame kind {k:#x}"),
+            Self::BadHello => write!(f, "hello payload is malformed"),
         }
     }
 }
 
 impl std::error::Error for WireError {}
+
+/// Structured view of a [`Kind::Hello`] payload.
+///
+/// The hello payload layout is `[self_id: 16 bytes][name: UTF-8 bytes]`.
+/// The `self_id` is the originating peer's per-session UUIDv4, used by
+/// receivers to deduplicate identity announcements arriving via gossip.
+/// It is distinct from the per-edge `msg_id` used by [`encode`] / [`decode`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloPayload {
+    /// The originator's session-scoped identity (NOT the per-edge msg_id).
+    pub self_id: Uuid,
+    /// The originator's display name.
+    pub name: String,
+}
+
+impl HelloPayload {
+    /// Serialize this payload as the body bytes that go into a
+    /// `Kind::Hello` envelope.
+    #[must_use]
+    pub fn encode_payload(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(16 + self.name.len());
+        out.extend_from_slice(self.self_id.as_bytes());
+        out.extend_from_slice(self.name.as_bytes());
+        out
+    }
+
+    /// Decode a payload previously produced by [`Self::encode_payload`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WireError::BadHello`] if `bytes` is shorter than the
+    /// 16-byte `self_id` prefix or if the name region is not valid UTF-8.
+    pub fn decode_payload(bytes: &[u8]) -> Result<Self, WireError> {
+        if bytes.len() < 16 {
+            return Err(WireError::BadHello);
+        }
+        let id_bytes: [u8; 16] = bytes[..16].try_into().expect("16-byte prefix");
+        let self_id = Uuid::from_bytes(id_bytes);
+        let name = core::str::from_utf8(&bytes[16..])
+            .map_err(|_| WireError::BadHello)?
+            .to_string();
+        Ok(Self { self_id, name })
+    }
+}
 
 /// Build a binary frame ready to push through the data channel.
 #[must_use]
@@ -224,6 +272,38 @@ mod tests {
         assert!(cache.insert(id));
         assert!(!cache.insert(id));
         assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn hello_payload_round_trip() {
+        let id = Uuid::new_v4();
+        let p = HelloPayload {
+            self_id: id,
+            name: "Alice".into(),
+        };
+        let bytes = p.encode_payload();
+        assert_eq!(bytes.len(), 16 + "Alice".len());
+        let decoded = HelloPayload::decode_payload(&bytes).expect("decode");
+        assert_eq!(decoded.self_id, id);
+        assert_eq!(decoded.name, "Alice");
+    }
+
+    #[test]
+    fn hello_payload_rejects_truncated() {
+        assert!(matches!(
+            HelloPayload::decode_payload(&[1u8; 8]),
+            Err(WireError::BadHello)
+        ));
+    }
+
+    #[test]
+    fn hello_payload_rejects_non_utf8() {
+        let mut bytes = vec![0u8; 16];
+        bytes.extend_from_slice(&[0xFF, 0xFE, 0xFD]);
+        assert!(matches!(
+            HelloPayload::decode_payload(&bytes),
+            Err(WireError::BadHello)
+        ));
     }
 
     #[test]

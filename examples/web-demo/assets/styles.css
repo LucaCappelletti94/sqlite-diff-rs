@@ -240,6 +240,12 @@ body {
     font-size: 0.75rem;
 }
 
+.peer-self-tag {
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-style: normal;
+}
+
 .name-prompt {
     max-width: 480px;
     margin: 3rem auto;

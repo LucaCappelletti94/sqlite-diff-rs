@@ -18,6 +18,7 @@ mod signal;
 mod wire;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use diesel_sqlite_session::{ConflictAction, ConflictType};
@@ -35,7 +36,7 @@ use crate::rtc::{Peer, PeerState};
 use crate::signal::{
     Decoded, decode_answer_blob, encode_answer_blob, encode_offer_url, fragment_from_url,
 };
-use crate::wire::{DedupCache, Kind};
+use crate::wire::{DedupCache, HelloPayload, Kind};
 
 fn main() {
     launch(App);
@@ -46,13 +47,26 @@ type SharedDb = Rc<RefCell<Db>>;
 
 /// One direct WebRTC neighbor in the gossip mesh. The `id` is local-only
 /// and is used to identify the entry when callbacks fire (e.g. to remove
-/// the entry on channel close). The `display_name` is filled in when the
-/// remote `Hello` envelope arrives.
+/// the entry on channel close). Identity (display name) of the remote
+/// peer is stored in the App-scope `known_members` map keyed by the
+/// remote's `self_id`, not on the per-edge `PeerEntry`.
 #[derive(Clone)]
 pub struct PeerEntry {
     pub id: Uuid,
-    pub display_name: Option<String>,
     pub peer: Peer,
+}
+
+/// One member of the room learned via a `Kind::Hello` frame (directly
+/// from this peer or gossip-forwarded from someone else). Stored in the
+/// App-scope `known_members` map keyed by the originator's `self_id`.
+///
+/// `hello_bytes` is the verbatim framed envelope. Storing it lets us
+/// replay the hello to a freshly-connected neighbor without re-encoding
+/// or generating a new `msg_id`.
+#[derive(Clone)]
+pub struct KnownMember {
+    pub name: String,
+    pub hello_bytes: Vec<u8>,
 }
 
 #[component]
@@ -67,6 +81,13 @@ fn App() -> Element {
     let mut peers: Signal<Vec<PeerEntry>> = use_signal(Vec::new);
     let dedup_cache: Signal<Rc<RefCell<DedupCache>>> =
         use_signal(|| Rc::new(RefCell::new(DedupCache::new())));
+    // This peer's session-scoped identity. Stable for the lifetime of
+    // the page (a refresh starts a new session with a fresh id).
+    let local_self_id: Uuid = use_hook(Uuid::new_v4);
+    // Every member we know about in the room, keyed by their session
+    // self_id. Includes our own entry. Populated by `Kind::Hello`
+    // frames (gossiped) and rendered as the peer list.
+    let mut known_members: Signal<HashMap<Uuid, KnownMember>> = use_signal(HashMap::new);
 
     // Chat state.
     let mut messages: Signal<Vec<Message>> = use_signal(Vec::new);
@@ -111,6 +132,29 @@ fn App() -> Element {
         Ok(Some(Decoded::Offer(sdp))) => incoming_offer.set(Some(sdp)),
         Ok(Some(Decoded::Answer(_))) | Ok(None) => {}
         Err(e) => error.set(format!("fragment: {e}")),
+    });
+
+    // Keep our own entry in the known-members map in sync with the
+    // display name signal. The hello_bytes we store here are the
+    // verbatim frame we will replay to every freshly-connected peer.
+    use_effect({
+        let dedup = dedup_cache.read().clone();
+        move || {
+            let name = display_name.read().clone();
+            if name.is_empty() {
+                return;
+            }
+            let payload = HelloPayload {
+                self_id: local_self_id,
+                name: name.clone(),
+            };
+            let msg_id = Uuid::new_v4();
+            let hello_bytes = wire::encode(Kind::Hello, msg_id, &payload.encode_payload());
+            dedup.borrow_mut().insert(msg_id);
+            known_members.with_mut(|m| {
+                m.insert(local_self_id, KnownMember { name, hello_bytes });
+            });
+        }
     });
 
     // Capture the session changeset after a successful local write, log
@@ -237,8 +281,8 @@ fn App() -> Element {
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers,
+                known_members,
                 dedup.clone(),
-                display_name,
                 peer_id,
                 messages,
                 inspector_entries,
@@ -268,7 +312,6 @@ fn App() -> Element {
                 peers.with_mut(|v| {
                     v.push(PeerEntry {
                         id: peer_id,
-                        display_name: None,
                         peer: p,
                     });
                 });
@@ -288,8 +331,8 @@ fn App() -> Element {
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers,
+                known_members,
                 dedup.clone(),
-                display_name,
                 peer_id,
                 messages,
                 inspector_entries,
@@ -319,7 +362,6 @@ fn App() -> Element {
                 peers.with_mut(|v| {
                     v.push(PeerEntry {
                         id: peer_id,
-                        display_name: None,
                         peer: p,
                     });
                 });
@@ -355,7 +397,7 @@ fn App() -> Element {
         });
     };
 
-    let peer_count = peers.read().len();
+    let peer_count = known_members.read().len();
     let has_offer = offer_url.read().is_some();
     let has_answer = answer_blob.read().is_some();
     let has_incoming_offer = incoming_offer.read().is_some();
@@ -373,9 +415,12 @@ fn App() -> Element {
 
     // Tear down every neighbor connection and reset the invite UI.
     // Dropping each `PeerEntry` value drops its underlying data
-    // channel.
+    // channel. `known_members` is also cleared; the use_effect that
+    // tracks `display_name` will re-seed our own entry on the next
+    // render.
     let reset_connection = move |_| {
         peers.with_mut(Vec::clear);
+        known_members.with_mut(HashMap::clear);
         offer_url.set(None);
         answer_blob.set(None);
         answer_input.set(String::new());
@@ -412,7 +457,7 @@ fn App() -> Element {
                     }
                 }
 
-                PeerList { peers }
+                PeerList { known_members, local_self_id }
 
                 ConnectionPanel {
                     has_offer,
@@ -488,29 +533,38 @@ fn App() -> Element {
 }
 
 #[component]
-fn PeerList(peers: Signal<Vec<PeerEntry>>) -> Element {
-    let peers_snapshot = peers.read().clone();
-    if peers_snapshot.is_empty() {
+fn PeerList(known_members: Signal<HashMap<Uuid, KnownMember>>, local_self_id: Uuid) -> Element {
+    // Sort by name for stable rendering. The local entry is always
+    // labeled, regardless of where it falls in the alphabet.
+    let mut entries: Vec<(Uuid, KnownMember)> = known_members
+        .read()
+        .iter()
+        .map(|(id, m)| (*id, m.clone()))
+        .collect();
+    entries.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+
+    if entries.len() <= 1 {
+        // Only ourselves (or no one): collapse to a hint.
         return rsx! {
             section { class: "peer-list peer-list-empty",
                 "You are alone in this room. Invite a guest below."
             }
         };
     }
+
     rsx! {
         section { class: "peer-list",
             div { class: "peer-list-header", "Peers in this room" }
             ul { class: "peer-list-items",
-                for entry in peers_snapshot {
-                    li { key: "{entry.id}", class: "peer-item",
+                for (id, member) in entries {
+                    li { key: "{id}", class: "peer-item",
                         span { class: "peer-name",
-                            if let Some(name) = entry.display_name.clone() {
-                                "{name}"
-                            } else {
-                                em { "(awaiting hello)" }
+                            "{member.name}"
+                            if id == local_self_id {
+                                em { class: "peer-self-tag", " (you)" }
                             }
                         }
-                        span { class: "peer-id-suffix", "#{short_id(entry.id)}" }
+                        span { class: "peer-id-suffix", "#{short_id(id)}" }
                     }
                 }
             }
@@ -701,8 +755,8 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
 fn build_peer_callbacks(
     db: SharedDb,
     mut peers: Signal<Vec<PeerEntry>>,
+    mut known_members: Signal<HashMap<Uuid, KnownMember>>,
     dedup: Rc<RefCell<DedupCache>>,
-    display_name: Signal<String>,
     peer_id: Uuid,
     mut messages: Signal<Vec<Message>>,
     mut inspector_entries: Signal<Vec<Entry>>,
@@ -735,10 +789,16 @@ fn build_peer_callbacks(
 
         match frame.kind {
             Kind::Hello => {
-                let name = String::from_utf8_lossy(frame.payload).into_owned();
+                let payload = match HelloPayload::decode_payload(frame.payload) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        error.set(format!("hello decode: {e}"));
+                        return;
+                    }
+                };
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
-                let entry = inspector::hello_entry(&name, framed.len(), Direction::In, ts);
+                let entry = inspector::hello_entry(&payload.name, framed.len(), Direction::In, ts);
                 inspector_entries.with_mut(|v| {
                     v.push(entry);
                     let overflow = v.len().saturating_sub(50);
@@ -747,13 +807,38 @@ fn build_peer_callbacks(
                     }
                 });
 
-                // Record the sender's display name on its PeerEntry so
-                // the peer list re-renders with the announced identity.
-                peers.with_mut(|v| {
-                    if let Some(p) = v.iter_mut().find(|p| p.id == peer_id) {
-                        p.display_name = Some(name);
-                    }
+                // Content-level dedup keyed by the announcer's self_id.
+                // If this identity is already known, we already forwarded
+                // it the first time we saw it; drop now.
+                let is_new = !known_members.read().contains_key(&payload.self_id);
+                if !is_new {
+                    return;
+                }
+                known_members.with_mut(|m| {
+                    m.insert(
+                        payload.self_id,
+                        KnownMember {
+                            name: payload.name,
+                            hello_bytes: framed.clone(),
+                        },
+                    );
                 });
+
+                // Gossip-forward the original framed bytes verbatim to
+                // every direct neighbor except the one that delivered
+                // them. Existing neighbors will dedup-reject by wire
+                // `msg_id`; only previously-unreached neighbors process.
+                let to_forward: Vec<Peer> = peers
+                    .read()
+                    .iter()
+                    .filter(|p| p.id != peer_id)
+                    .map(|p| p.peer.clone())
+                    .collect();
+                for neighbor in &to_forward {
+                    if let Err(e) = neighbor.send(&framed) {
+                        error.set(format!("hello forward: {e:?}"));
+                    }
+                }
             }
             Kind::Changeset => {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -803,12 +888,12 @@ fn build_peer_callbacks(
         peer_state.set(Some(s));
         match s {
             PeerState::Connected => {
-                send_hello_and_snapshot(
+                send_membership_and_snapshot(
                     peers,
+                    known_members,
                     &dedup,
                     &db,
                     peer_id,
-                    &display_name,
                     &mut inspector_entries,
                     &mut error,
                     page_start_ms,
@@ -828,61 +913,64 @@ fn build_peer_callbacks(
     (on_message, on_state)
 }
 
-/// Send our `Hello` envelope followed by a snapshot changeset to a
-/// freshly-connected neighbor. Called from the `on_state` callback when
-/// the data channel first opens.
+/// Replay every known member's `Hello` envelope on a freshly-connected
+/// neighbor's channel, then send the database snapshot. Called from the
+/// `on_state` callback when the data channel first opens.
+///
+/// Replaying the stored `hello_bytes` rather than synthesizing fresh
+/// frames means the new neighbor catches up on every identity we know
+/// about (direct and indirect) without us having to re-encode anything.
+/// Existing direct neighbors would dedup-reject these bytes by `msg_id`
+/// if the new neighbor gossipped them onward, so traffic stays bounded.
 #[allow(clippy::too_many_arguments)]
-fn send_hello_and_snapshot(
+fn send_membership_and_snapshot(
     peers: Signal<Vec<PeerEntry>>,
+    known_members: Signal<HashMap<Uuid, KnownMember>>,
     dedup: &Rc<RefCell<DedupCache>>,
     db: &SharedDb,
     peer_id: Uuid,
-    display_name: &Signal<String>,
     inspector_entries: &mut Signal<Vec<Entry>>,
     error: &mut Signal<String>,
     page_start_ms: f64,
 ) {
-    // Clone the data channel out of the signal so we release the
-    // read guard before any send. Sends are synchronous but the
-    // guard would prevent re-entrant signal access from the same
-    // task if any future change reaches here.
     let peer_clone = peers
         .read()
         .iter()
         .find(|p| p.id == peer_id)
         .map(|e| e.peer.clone());
     let Some(peer) = peer_clone else {
-        // Should not happen: the entry was pushed before this state
-        // callback can fire, but be defensive.
         return;
     };
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
 
-    // Hello.
-    let name = display_name.read().clone();
-    let hello_id = Uuid::new_v4();
-    let hello_bytes = wire::encode(Kind::Hello, hello_id, name.as_bytes());
-    dedup.borrow_mut().insert(hello_id);
-    if let Err(e) = peer.send(&hello_bytes) {
-        error.set(format!("hello send: {e:?}"));
-    }
-    inspector_entries.with_mut(|v| {
-        v.push(inspector::hello_entry(
-            &name,
-            hello_bytes.len(),
-            Direction::Out,
-            ts,
-        ));
-        let overflow = v.len().saturating_sub(50);
-        if overflow > 0 {
-            v.drain(..overflow);
+    // Replay every known member's hello to the new neighbor.
+    let members: Vec<(String, Vec<u8>)> = known_members
+        .read()
+        .values()
+        .map(|m| (m.name.clone(), m.hello_bytes.clone()))
+        .collect();
+    for (name, bytes) in &members {
+        if let Err(e) = peer.send(bytes) {
+            error.set(format!("hello send: {e:?}"));
         }
-    });
+        inspector_entries.with_mut(|v| {
+            v.push(inspector::hello_entry(
+                name,
+                bytes.len(),
+                Direction::Out,
+                ts,
+            ));
+            let overflow = v.len().saturating_sub(50);
+            if overflow > 0 {
+                v.drain(..overflow);
+            }
+        });
+    }
 
-    // Snapshot of current database state. Empty payload (no rows yet)
-    // produces a zero-length changeset; skip sending it in that case.
+    // Snapshot of the current database state. Empty payload (no rows
+    // yet) produces a zero-length changeset; skip sending in that case.
     let snapshot = match db.borrow_mut().snapshot_changeset() {
         Ok(bytes) => bytes,
         Err(e) => {
