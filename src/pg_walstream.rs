@@ -12,6 +12,10 @@
 //! `Value::Integer(0)`, and everything else falls back to `Value::Text`.
 //! Binary columns become `Value::Blob`, and SQL `NULL` becomes `Value::Null`.
 //!
+//! `pg_walstream` events carry no trigger-origin marker, so converted ops
+//! default to `indirect = false`. Override via the [`Indirect`](crate::Indirect)
+//! trait if you know out-of-band that the event was trigger-induced.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -394,6 +398,18 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(values[0], Value::Integer(1));
         assert_eq!(values[1], Value::Text("Alice".into()));
+    }
+
+    #[test]
+    fn test_cdc_default_indirect_false() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let data = row_data(&[
+            ("id", ColumnValue::text("1")),
+            ("name", ColumnValue::text("Alice")),
+        ]);
+        let event = make_insert_event("users", data);
+        let insert: Insert<_, String, Vec<u8>> = (event, table).try_into().unwrap();
+        assert!(!insert.indirect);
     }
 
     #[test]

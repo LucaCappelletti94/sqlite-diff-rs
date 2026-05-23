@@ -318,9 +318,9 @@ impl<
     pub fn sql_statements(&self) -> impl Iterator<Item = String> + '_ {
         self.tables.iter().flat_map(|(table, rows)| {
             rows.values().map(move |op| match op {
-                Operation::Insert(values) => format_insert(table, values),
-                Operation::Delete(values) => format_delete_changeset(table, values),
-                Operation::Update(pairs) => format_update_changeset(table, pairs),
+                Operation::Insert { values, .. } => format_insert(table, values),
+                Operation::Delete { data: values, .. } => format_delete_changeset(table, values),
+                Operation::Update { values, .. } => format_update_changeset(table, values),
             })
         })
     }
@@ -354,9 +354,9 @@ impl<T: ColumnNames, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone +
     pub fn sql_statements(&self) -> impl Iterator<Item = String> + '_ {
         self.tables.iter().flat_map(|(table, rows)| {
             rows.iter().map(move |(pk, op)| match op {
-                Operation::Insert(values) => format_insert(table, values),
-                Operation::Delete(()) => format_delete_patchset(table, pk),
-                Operation::Update(pairs) => format_update_patchset(table, pk, pairs),
+                Operation::Insert { values, .. } => format_insert(table, values),
+                Operation::Delete { data: (), .. } => format_delete_patchset(table, pk),
+                Operation::Update { values, .. } => format_update_patchset(table, pk, values),
             })
         })
     }

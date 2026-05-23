@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use crate::{DynTable, encoding::Value};
+use crate::{DynTable, builders::operation::Indirect, encoding::Value};
 
 #[derive(Debug, Clone)]
 /// Represents a delete operation in changeset format.
@@ -14,13 +14,15 @@ pub struct ChangeDelete<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
     pub(crate) table: T,
     /// Old values for the deleted row.
     pub(crate) values: Vec<Value<S, B>>,
+    /// SQLite session-extension indirect flag. See [`Indirect`].
+    pub(crate) indirect: bool,
 }
 
 impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
     for ChangeDelete<T, S, B>
 {
     fn eq(&self, other: &Self) -> bool {
-        self.table == other.table && self.values == other.values
+        self.table == other.table && self.values == other.values && self.indirect == other.indirect
     }
 }
 
@@ -42,6 +44,7 @@ impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u
         Self {
             table,
             values: vec![Value::Null; num_cols],
+            indirect: false,
         }
     }
 }
@@ -110,6 +113,14 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> ChangeDelete<T, S, B> {
     }
 }
 
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Indirect for ChangeDelete<T, S, B> {
+    #[inline]
+    fn indirect(mut self, indirect: bool) -> Self {
+        self.indirect = indirect;
+        self
+    }
+}
+
 /// Represents a delete operation in patchset format.
 ///
 /// Only stores the table schema and primary key values, as patchsets
@@ -119,6 +130,8 @@ pub struct PatchDelete<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> {
     pub(crate) table: T,
     /// Primary key values for the deleted row.
     pub(crate) pk: Vec<Value<S, B>>,
+    /// SQLite session-extension indirect flag. See [`Indirect`].
+    pub(crate) indirect: bool,
 }
 
 impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for PatchDelete<T, S, B> {
@@ -136,7 +149,19 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> PatchDelete<T, S, B> {
     /// [`crate::SchemaWithPK::extract_pk`].
     #[inline]
     pub fn new(table: T, pk: Vec<Value<S, B>>) -> Self {
-        Self { table, pk }
+        Self {
+            table,
+            pk,
+            indirect: false,
+        }
+    }
+}
+
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Indirect for PatchDelete<T, S, B> {
+    #[inline]
+    fn indirect(mut self, indirect: bool) -> Self {
+        self.indirect = indirect;
+        self
     }
 }
 
@@ -184,5 +209,21 @@ mod tests {
             PatchDelete::new(table.clone(), vec![Value::Integer(1)]);
         let t: &SimpleTable = delete.as_ref();
         assert_eq!(t.name(), "users");
+    }
+
+    #[test]
+    fn test_change_delete_eq() {
+        let a = ChangeDelete::<_, String, Vec<u8>>::from(users())
+            .set(0, 1i64)
+            .unwrap();
+        let b = ChangeDelete::<_, String, Vec<u8>>::from(users())
+            .set(0, 1i64)
+            .unwrap();
+        assert_eq!(a, b);
+
+        let c = ChangeDelete::<_, String, Vec<u8>>::from(users())
+            .set(0, 2i64)
+            .unwrap();
+        assert_ne!(a, c);
     }
 }

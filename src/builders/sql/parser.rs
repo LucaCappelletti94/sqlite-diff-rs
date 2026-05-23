@@ -186,8 +186,14 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         self.expect(&TokenKind::RParen)?;
 
-        self.builder
-            .add_operation(&table, pks, Operation::Insert(values));
+        self.builder.add_operation(
+            &table,
+            pks,
+            Operation::Insert {
+                values,
+                indirect: false,
+            },
+        );
 
         Ok(())
     }
@@ -232,8 +238,14 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }
         })?;
 
-        self.builder
-            .add_operation(&table, pk, Operation::Update(new_values));
+        self.builder.add_operation(
+            &table,
+            pk,
+            Operation::Update {
+                values: new_values,
+                indirect: false,
+            },
+        );
 
         Ok(())
     }
@@ -261,8 +273,14 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }
         })?;
 
-        self.builder
-            .add_operation(&table, pks, Operation::Delete(()));
+        self.builder.add_operation(
+            &table,
+            pks,
+            Operation::Delete {
+                data: (),
+                indirect: false,
+            },
+        );
 
         Ok(())
     }

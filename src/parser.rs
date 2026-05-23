@@ -429,11 +429,14 @@ fn parse_table_header(
 }
 
 /// Parse operation header (`op_code` + indirect flag).
-fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, usize), ParseError> {
+///
+/// Returns `(op_code, indirect, bytes_consumed)`. Any non-zero indirect byte
+/// parses as `true` to match SQLite's permissive treatment of the flag.
+fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, bool, usize), ParseError> {
     if data.len() < 2 {
         return Err(ParseError::UnexpectedEof(base_pos));
     }
-    Ok((data[0], 2)) // op_code, skip indirect flag
+    Ok((data[0], data[1] != 0, 2))
 }
 
 /// Parse a changeset operation.
@@ -443,7 +446,7 @@ fn parse_changeset_operation(
     schema: &TableSchema<String>,
     builder: &mut DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>>,
 ) -> Result<usize, ParseError> {
-    let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
+    let (op_code, indirect, mut pos) = parse_operation_header(data, base_pos)?;
 
     match op_code {
         op_codes::INSERT => {
@@ -454,7 +457,7 @@ fn parse_changeset_operation(
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&values);
-            builder.add_operation(schema, pk, Operation::Insert(values));
+            builder.add_operation(schema, pk, Operation::Insert { values, indirect });
         }
         op_codes::DELETE => {
             let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
@@ -464,7 +467,14 @@ fn parse_changeset_operation(
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&values);
-            builder.add_operation(schema, pk, Operation::Delete(values));
+            builder.add_operation(
+                schema,
+                pk,
+                Operation::Delete {
+                    data: values,
+                    indirect,
+                },
+            );
         }
         op_codes::UPDATE => {
             let (old_values, old_len) =
@@ -480,7 +490,7 @@ fn parse_changeset_operation(
                 .collect();
             let pk = schema.extract_pk(&pk_values);
             let values: UpdateValues = old_values.into_iter().zip(new_values).collect();
-            builder.add_operation(schema, pk, Operation::Update(values));
+            builder.add_operation(schema, pk, Operation::Update { values, indirect });
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }
@@ -495,7 +505,7 @@ fn parse_patchset_operation(
     schema: &TableSchema<String>,
     builder: &mut DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>>,
 ) -> Result<usize, ParseError> {
-    let (op_code, mut pos) = parse_operation_header(data, base_pos)?;
+    let (op_code, indirect, mut pos) = parse_operation_header(data, base_pos)?;
 
     match op_code {
         op_codes::INSERT => {
@@ -506,7 +516,7 @@ fn parse_patchset_operation(
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&values);
-            builder.add_operation(schema, pk, Operation::Insert(values));
+            builder.add_operation(schema, pk, Operation::Insert { values, indirect });
         }
         op_codes::DELETE => {
             // Patchset DELETE: only PK values in column order
@@ -523,7 +533,7 @@ fn parse_patchset_operation(
                 .map(|v| v.unwrap_or(Value::Null))
                 .collect();
             let pk = schema.extract_pk(&full_values_concrete);
-            builder.add_operation(schema, pk, Operation::Delete(()));
+            builder.add_operation(schema, pk, Operation::Delete { data: (), indirect });
         }
         op_codes::UPDATE => {
             // Patchset UPDATE old values contain PK column values (non-PK are Undefined).
@@ -542,7 +552,7 @@ fn parse_patchset_operation(
             let pk = schema.extract_pk(&pk_values);
             let values: Vec<((), MaybeValue<String, Vec<u8>>)> =
                 new_values.into_iter().map(|v| ((), v)).collect();
-            builder.add_operation(schema, pk, Operation::Update(values));
+            builder.add_operation(schema, pk, Operation::Update { values, indirect });
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
     }
@@ -809,5 +819,101 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+
+    /// Build the operation header bytes followed by a single integer payload.
+    fn make_insert_with_indirect(indirect_byte: u8) -> Vec<u8> {
+        let mut data = vec![b'T', 1, 1, b't', 0];
+        data.push(op_codes::INSERT);
+        data.push(indirect_byte);
+        // Integer 1
+        data.push(0x01);
+        data.extend(&1i64.to_be_bytes());
+        data
+    }
+
+    fn first_op_indirect_changeset(data: &[u8]) -> bool {
+        let parsed = ParsedDiffSet::parse(data).unwrap();
+        let ParsedDiffSet::Changeset(set) = parsed else {
+            panic!("expected Changeset");
+        };
+        set.tables
+            .iter()
+            .find_map(|(_schema, rows)| rows.first().map(|(_, op)| op.indirect()))
+            .expect("expected at least one op")
+    }
+
+    #[test]
+    fn test_parse_changeset_indirect_flag_set() {
+        let data = make_insert_with_indirect(1);
+        assert!(first_op_indirect_changeset(&data));
+    }
+
+    #[test]
+    fn test_parse_changeset_indirect_flag_clear() {
+        let data = make_insert_with_indirect(0);
+        assert!(!first_op_indirect_changeset(&data));
+    }
+
+    #[test]
+    fn test_parse_indirect_nonzero_treated_as_true() {
+        // Any non-zero byte must parse as indirect = true.
+        let data = make_insert_with_indirect(0x42);
+        assert!(first_op_indirect_changeset(&data));
+    }
+
+    #[test]
+    fn test_parsed_diffset_variant_mismatch_partial_eq() {
+        let changeset = ParsedDiffSet::parse(&[b'T', 1, 1, b't', 0]).unwrap();
+        let patchset = ParsedDiffSet::parse(&[b'P', 1, 1, b't', 0]).unwrap();
+        // Both are empty so PartialEq short-circuits to true. Add a real op
+        // to each so the variant-mismatch arm in the `match` is reached.
+        let mut full_changeset = vec![b'T', 1, 1, b't', 0];
+        full_changeset.push(op_codes::INSERT);
+        full_changeset.push(0);
+        full_changeset.push(0x01);
+        full_changeset.extend(&1i64.to_be_bytes());
+        let cs = ParsedDiffSet::parse(&full_changeset).unwrap();
+
+        let mut full_patchset = vec![b'P', 1, 1, b't', 0];
+        full_patchset.push(op_codes::INSERT);
+        full_patchset.push(0);
+        full_patchset.push(0x01);
+        full_patchset.extend(&1i64.to_be_bytes());
+        let ps = ParsedDiffSet::parse(&full_patchset).unwrap();
+
+        assert_ne!(cs, ps);
+        // Empty/empty still equal regardless of variant.
+        assert_eq!(changeset, patchset);
+    }
+
+    #[test]
+    fn test_parse_unexpected_eof_in_operation_header() {
+        // Valid changeset header followed by a single byte (op_code only,
+        // no indirect byte) — parse_operation_header must return UnexpectedEof.
+        let data = [b'T', 1, 1, b't', 0, op_codes::INSERT];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedEof(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_parse_patchset_indirect_flag_set() {
+        // Patchset INSERT carries full row values, same header layout.
+        let mut data = vec![b'P', 1, 1, b't', 0];
+        data.push(op_codes::INSERT);
+        data.push(1);
+        data.push(0x01);
+        data.extend(&1i64.to_be_bytes());
+
+        let parsed = ParsedDiffSet::parse(&data).unwrap();
+        let ParsedDiffSet::Patchset(set) = parsed else {
+            panic!("expected Patchset");
+        };
+        let indirect = set
+            .tables
+            .iter()
+            .find_map(|(_schema, rows)| rows.first().map(|(_, op)| op.indirect()))
+            .expect("expected at least one op");
+        assert!(indirect);
     }
 }

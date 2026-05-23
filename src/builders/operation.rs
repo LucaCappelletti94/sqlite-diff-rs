@@ -12,25 +12,55 @@ use crate::{
     encoding::{MaybeValue, Value},
 };
 
-/// A schema-less database operation, parameterized by format `F` and value types `S`, `B`.
+/// A schema-less database operation, parameterized by format `F` and value
+/// types `S`, `B`.
 ///
-/// The table schema `T` is NOT stored here. It lives as the key in
-/// `DiffSetBuilder`'s `IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>`.
+/// Each variant carries the SQLite session-extension `indirect` flag, which
+/// distinguishes direct application writes (`false`) from trigger-induced
+/// or cascading changes (`true`). The table schema `T` is NOT stored here;
+/// it lives as the key in `DiffSetBuilder`'s
+/// `IndexMap<T, IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>>`.
 #[derive(Debug, Clone)]
 pub(crate) enum Operation<F: Format<S, B>, S, B> {
     /// A row was inserted. Stores all column values.
-    Insert(Vec<Value<S, B>>),
+    Insert {
+        /// Full row values, one per column.
+        values: Vec<Value<S, B>>,
+        /// SQLite session-extension indirect flag.
+        indirect: bool,
+    },
     /// A row was deleted. Stores format-specific delete data:
     /// - Changeset: `Vec<Value<S, B>>` (full old-row values)
     /// - Patchset: `()` (PK is stored as the `IndexMap` key)
-    Delete(F::DeleteData),
+    Delete {
+        /// Format-specific delete payload.
+        data: F::DeleteData,
+        /// SQLite session-extension indirect flag.
+        indirect: bool,
+    },
     /// A row was updated. Stores `(old, new)` pairs per column.
     /// - Changeset: `(MaybeValue<S, B>, MaybeValue<S, B>)` per column (None = undefined)
     /// - Patchset: `((), MaybeValue<S, B>)` per column
-    Update(Vec<(F::Old, MaybeValue<S, B>)>),
+    Update {
+        /// `(old, new)` pairs, one per column.
+        values: Vec<(F::Old, MaybeValue<S, B>)>,
+        /// SQLite session-extension indirect flag.
+        indirect: bool,
+    },
 }
 
-/// Implement `PartialEq` for Operation where needed.
+impl<F: Format<S, B>, S, B> Operation<F, S, B> {
+    /// Returns the indirect flag of this operation.
+    #[inline]
+    pub(crate) fn indirect(&self) -> bool {
+        match self {
+            Self::Insert { indirect, .. }
+            | Self::Delete { indirect, .. }
+            | Self::Update { indirect, .. } => *indirect,
+        }
+    }
+}
+
 impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
     for Operation<F, S, B>
 where
@@ -38,10 +68,13 @@ where
     F::Old: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
+        if self.indirect() != other.indirect() {
+            return false;
+        }
         match (self, other) {
-            (Self::Insert(a), Self::Insert(b)) => a == b,
-            (Self::Delete(a), Self::Delete(b)) => a == b,
-            (Self::Update(a), Self::Update(b)) => a == b,
+            (Self::Insert { values: a, .. }, Self::Insert { values: b, .. }) => a == b,
+            (Self::Delete { data: a, .. }, Self::Delete { data: b, .. }) => a == b,
+            (Self::Update { values: a, .. }, Self::Update { values: b, .. }) => a == b,
             _ => false,
         }
     }
@@ -52,6 +85,24 @@ where
     F::DeleteData: Eq,
     F::Old: Eq,
 {
+}
+
+/// Builders that carry the SQLite session-extension indirect-change flag.
+///
+/// Implemented for [`Insert`](crate::Insert), [`Update`](crate::Update),
+/// [`ChangeDelete`](crate::ChangeDelete), and [`PatchDelete`](crate::PatchDelete).
+///
+/// The flag distinguishes direct application writes (`false`) from changes
+/// produced by triggers or foreign-key cascades (`true`). SQLite's session
+/// extension writes it as a single byte after each operation's op-code so
+/// consumers can filter on it when applying changesets. Defaults to `false`
+/// on construction.
+///
+/// See the [SQLite session-extension docs](https://www.sqlite.org/session/sqlite3session_indirect.html).
+pub trait Indirect: Sized {
+    /// Mark this operation as indirect (trigger-induced or cascading).
+    #[must_use]
+    fn indirect(self, indirect: bool) -> Self;
 }
 
 /// Trait for reversing operations.
@@ -75,13 +126,20 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse
     fn reverse(self) -> Self::Output {
         match self {
             // INSERT reversed becomes DELETE (same values)
-            Operation::Insert(values) => Operation::Delete(values),
+            Self::Insert { values, indirect } => Self::Delete {
+                data: values,
+                indirect,
+            },
             // DELETE reversed becomes INSERT (same values)
-            Operation::Delete(values) => Operation::Insert(values),
+            Self::Delete { data, indirect } => Self::Insert {
+                values: data,
+                indirect,
+            },
             // UPDATE reversed becomes UPDATE with old/new swapped
-            Operation::Update(values) => {
-                Operation::Update(values.into_iter().map(|(old, new)| (new, old)).collect())
-            }
+            Self::Update { values, indirect } => Self::Update {
+                values: values.into_iter().map(|(old, new)| (new, old)).collect(),
+                indirect,
+            },
         }
     }
 }
@@ -96,66 +154,90 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
+        // "Last-write-wins": the merged op carries the rhs operand's
+        // indirect flag.
+        let indirect = rhs.indirect();
         match (self, rhs) {
-            // INSERT + INSERT: keep first
-            (Operation::Insert(lhs), Operation::Insert(_rhs)) => Some(Operation::Insert(lhs)),
+            // INSERT + INSERT: keep first values
+            (Self::Insert { values: lhs, .. }, Self::Insert { .. }) => Some(Self::Insert {
+                values: lhs,
+                indirect,
+            }),
 
             // INSERT + UPDATE: apply update to insert values
-            (Operation::Insert(mut values), Operation::Update(updates)) => {
+            (
+                Self::Insert { mut values, .. },
+                Self::Update {
+                    values: updates, ..
+                },
+            ) => {
                 for (idx, (_old, new)) in updates.into_iter().enumerate() {
                     if let Some(new_val) = new {
                         values[idx] = new_val;
                     }
                 }
-                Some(Operation::Insert(values))
+                Some(Self::Insert { values, indirect })
             }
 
             // INSERT + DELETE: cancel out
-            (Operation::Insert(_), Operation::Delete(_)) => None,
+            (Self::Insert { .. }, Self::Delete { .. }) => None,
 
             // UPDATE + INSERT: keep update
-            (Operation::Update(lhs), Operation::Insert(_rhs)) => Some(Operation::Update(lhs)),
+            (Self::Update { values: lhs, .. }, Self::Insert { .. }) => Some(Self::Update {
+                values: lhs,
+                indirect,
+            }),
 
             // UPDATE + UPDATE: keep original old, use final new
-            (Operation::Update(lhs), Operation::Update(rhs)) => {
+            (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
                 let merged = lhs
                     .into_iter()
                     .zip(rhs)
                     .map(|((old, _mid), (_mid2, new))| (old, new))
                     .collect();
-                Some(Operation::Update(merged))
+                Some(Self::Update {
+                    values: merged,
+                    indirect,
+                })
             }
 
             // UPDATE + DELETE: delete with original old values
-            (Operation::Update(upd), Operation::Delete(_del)) => {
+            (Self::Update { values: upd, .. }, Self::Delete { .. }) => {
                 // Collect old values, converting MaybeValue to Value (None becomes Null)
                 let old_values = upd
                     .into_iter()
                     .map(|(old, _new)| old.unwrap_or(Value::Null))
                     .collect();
-                Some(Operation::Delete(old_values))
+                Some(Self::Delete {
+                    data: old_values,
+                    indirect,
+                })
             }
 
             // DELETE + INSERT: update if different, cancel if same
-            (Operation::Delete(del_values), Operation::Insert(ins_values)) => {
-                if del_values == ins_values {
+            (Self::Delete { data: del, .. }, Self::Insert { values: ins, .. }) => {
+                if del == ins {
                     None // Same values, cancel out
                 } else {
-                    // Different, becomes UPDATE from old to new
-                    let update_values = del_values
+                    let update_values = del
                         .into_iter()
-                        .zip(ins_values)
+                        .zip(ins)
                         .map(|(old, new)| (Some(old), Some(new)))
                         .collect();
-                    Some(Operation::Update(update_values))
+                    Some(Self::Update {
+                        values: update_values,
+                        indirect,
+                    })
                 }
             }
 
-            // DELETE + UPDATE: keep delete
-            (Operation::Delete(lhs), Operation::Update(_rhs)) => Some(Operation::Delete(lhs)),
-
-            // DELETE + DELETE: keep first
-            (Operation::Delete(lhs), Operation::Delete(_rhs)) => Some(Operation::Delete(lhs)),
+            // DELETE + UPDATE or DELETE + DELETE: keep the delete with rhs's indirect
+            (Self::Delete { data: lhs, .. }, Self::Update { .. } | Self::Delete { .. }) => {
+                Some(Self::Delete {
+                    data: lhs,
+                    indirect,
+                })
+            }
         }
     }
 }
@@ -170,50 +252,72 @@ impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core
     type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
+        let indirect = rhs.indirect();
         match (self, rhs) {
             // INSERT + INSERT: keep first
-            (Operation::Insert(lhs), Operation::Insert(_rhs)) => Some(Operation::Insert(lhs)),
+            (Self::Insert { values: lhs, .. }, Self::Insert { .. }) => Some(Self::Insert {
+                values: lhs,
+                indirect,
+            }),
 
             // INSERT + UPDATE: apply update to insert values
-            (Operation::Insert(mut values), Operation::Update(updates)) => {
+            (
+                Self::Insert { mut values, .. },
+                Self::Update {
+                    values: updates, ..
+                },
+            ) => {
                 for (idx, ((), new)) in updates.into_iter().enumerate() {
                     if let Some(new_val) = new {
                         values[idx] = new_val;
                     }
                 }
-                Some(Operation::Insert(values))
+                Some(Self::Insert { values, indirect })
             }
 
             // INSERT + DELETE: cancel out
-            (Operation::Insert(_), Operation::Delete(())) => None,
+            (Self::Insert { .. }, Self::Delete { data: (), .. }) => None,
 
             // UPDATE + INSERT: keep update
-            (Operation::Update(lhs), Operation::Insert(_rhs)) => Some(Operation::Update(lhs)),
+            (Self::Update { values: lhs, .. }, Self::Insert { .. }) => Some(Self::Update {
+                values: lhs,
+                indirect,
+            }),
 
             // UPDATE + UPDATE: keep original old (unit), use final new
-            (Operation::Update(lhs), Operation::Update(rhs)) => {
+            (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
                 let merged = lhs
                     .into_iter()
                     .zip(rhs)
                     .map(|((old, _mid), (_mid2, new))| (old, new))
                     .collect();
-                Some(Operation::Update(merged))
+                Some(Self::Update {
+                    values: merged,
+                    indirect,
+                })
             }
 
             // UPDATE + DELETE: keep delete (patchset doesn't need old values)
-            (Operation::Update(_upd), Operation::Delete(del)) => Some(Operation::Delete(del)),
-
-            // DELETE + INSERT: always becomes update (patchset can't compare old values)
-            (Operation::Delete(()), Operation::Insert(ins_values)) => {
-                let update_values = ins_values.into_iter().map(|new| ((), Some(new))).collect();
-                Some(Operation::Update(update_values))
+            (Self::Update { .. }, Self::Delete { data, .. }) => {
+                Some(Self::Delete { data, indirect })
             }
 
-            // DELETE + UPDATE: keep delete
-            (Operation::Delete(lhs), Operation::Update(_rhs)) => Some(Operation::Delete(lhs)),
+            // DELETE + INSERT: always becomes update (patchset can't compare old values)
+            (Self::Delete { data: (), .. }, Self::Insert { values: ins, .. }) => {
+                let update_values = ins.into_iter().map(|new| ((), Some(new))).collect();
+                Some(Self::Update {
+                    values: update_values,
+                    indirect,
+                })
+            }
 
-            // DELETE + DELETE: keep first
-            (Operation::Delete(lhs), Operation::Delete(_rhs)) => Some(Operation::Delete(lhs)),
+            // DELETE + UPDATE or DELETE + DELETE: keep the delete with rhs's indirect
+            (Self::Delete { data: lhs, .. }, Self::Update { .. } | Self::Delete { .. }) => {
+                Some(Self::Delete {
+                    data: lhs,
+                    indirect,
+                })
+            }
         }
     }
 }

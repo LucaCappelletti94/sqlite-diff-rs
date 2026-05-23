@@ -294,6 +294,76 @@ fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
     }
 }
 
+/// Encode a single changeset operation (op_code, indirect byte, then row payload).
+fn encode_changeset_op<S: AsRef<str> + Clone + Debug, B: AsRef<[u8]> + Clone + Debug>(
+    out: &mut Vec<u8>,
+    op: &Operation<ChangesetFormat, S, B>,
+) {
+    match op {
+        Operation::Insert { values, indirect } => {
+            out.push(op_codes::INSERT);
+            out.push(u8::from(*indirect));
+            for value in values {
+                encode_value(out, Some(value));
+            }
+        }
+        Operation::Delete {
+            data: values,
+            indirect,
+        } => {
+            out.push(op_codes::DELETE);
+            out.push(u8::from(*indirect));
+            for value in values {
+                encode_value(out, Some(value));
+            }
+        }
+        Operation::Update { values, indirect } => {
+            out.push(op_codes::UPDATE);
+            out.push(u8::from(*indirect));
+            for (old, _new) in values {
+                encode_value(out, old.as_ref());
+            }
+            for (_old, new) in values {
+                encode_value(out, new.as_ref());
+            }
+        }
+    }
+}
+
+/// Encode a single patchset operation. The PK and per-table PK mapping are
+/// supplied because DELETE/UPDATE rows in patchset format derive their old-value
+/// section from the row's PK rather than from data carried on the operation.
+fn encode_patchset_op<S: AsRef<str>, B: AsRef<[u8]>>(
+    out: &mut Vec<u8>,
+    op: &Operation<PatchsetFormat, S, B>,
+    pk: &[Value<S, B>],
+    pk_flags: &[u8],
+    pk_col_to_pk_pos: &[Option<usize>],
+) {
+    match op {
+        Operation::Insert { values, indirect } => {
+            out.push(op_codes::INSERT);
+            out.push(u8::from(*indirect));
+            for value in values {
+                encode_value(out, Some(value));
+            }
+        }
+        Operation::Delete { data: (), indirect } => {
+            out.push(op_codes::DELETE);
+            out.push(u8::from(*indirect));
+            encode_patchset_delete_values(out, pk_flags, pk_col_to_pk_pos, pk);
+        }
+        Operation::Update { values, indirect } => {
+            out.push(op_codes::UPDATE);
+            out.push(u8::from(*indirect));
+            encode_patchset_update_old_values(out, pk_flags, pk_col_to_pk_pos, pk);
+            for ((), new) in values {
+                encode_value(out, new.as_ref());
+            }
+        }
+    }
+}
+
 // ============================================================================
 // DiffSetBuilder: mutable builder (DML insertion order, hash-simulated build)
 // ============================================================================
@@ -479,10 +549,10 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
             Some((original_index, _removed_key, existing)) => {
                 // Special case: INSERT + UPDATE may change the PK
                 match (&existing, &new_op) {
-                    (Operation::Insert(_), Operation::Update(_)) => {
+                    (Operation::Insert { .. }, Operation::Update { .. }) => {
                         // Apply update to insert values, then re-extract PK
                         if let Some(combined) = existing + new_op
-                            && let Operation::Insert(ref values) = combined
+                            && let Operation::Insert { values, .. } = &combined
                         {
                             let new_pk = table.extract_pk(values);
                             // The new PK may collide with a different existing row
@@ -550,14 +620,30 @@ impl<
     fn insert(mut self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Insert(insert.into_values()));
+        let indirect = insert.indirect;
+        self.add_operation(
+            &table,
+            pk,
+            Operation::Insert {
+                values: insert.into_values(),
+                indirect,
+            },
+        );
         self
     }
 
     fn delete(mut self, delete: ChangeDelete<T, S, B>) -> Self {
         let pk = delete.as_ref().extract_pk(&delete.values);
         let table = delete.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Delete(delete.into_values()));
+        let indirect = delete.indirect;
+        self.add_operation(
+            &table,
+            pk,
+            Operation::Delete {
+                data: delete.into_values(),
+                indirect,
+            },
+        );
         self
     }
 
@@ -569,8 +655,9 @@ impl<
             .collect();
         let pk = update.as_ref().extract_pk(&old_values);
         let table = update.as_ref().clone();
+        let indirect = update.indirect;
         let values: Vec<(MaybeValue<S, B>, MaybeValue<S, B>)> = update.into();
-        self.add_operation(&table, pk, Operation::Update(values));
+        self.add_operation(&table, pk, Operation::Update { values, indirect });
         self
     }
 }
@@ -586,7 +673,15 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     fn insert(mut self, insert: Insert<T, S, B>) -> Self {
         let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
-        self.add_operation(&table, pk, Operation::Insert(insert.into_values()));
+        let indirect = insert.indirect;
+        self.add_operation(
+            &table,
+            pk,
+            Operation::Insert {
+                values: insert.into_values(),
+                indirect,
+            },
+        );
         self
     }
 
@@ -605,7 +700,12 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     ///     .delete(PatchDelete::new(schema, vec![1i64.into()]));
     /// ```
     fn delete(mut self, delete: PatchDelete<T, S, B>) -> Self {
-        self.add_operation(&delete.table, delete.pk, Operation::Delete(()));
+        let indirect = delete.indirect;
+        self.add_operation(
+            &delete.table,
+            delete.pk,
+            Operation::Delete { data: (), indirect },
+        );
         self
     }
 
@@ -630,8 +730,9 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     fn update(mut self, update: Update<T, PatchsetFormat, S, B>) -> Self {
         let pk = update.extract_pk();
         let table = update.as_ref().clone();
+        let indirect = update.indirect;
         let values: Vec<((), MaybeValue<S, B>)> = update.into();
-        self.add_operation(&table, pk, Operation::Update(values));
+        self.add_operation(&table, pk, Operation::Update { values, indirect });
         self
     }
 }
@@ -746,33 +847,7 @@ impl<
 
             for idx in session_row_order(rows) {
                 let (_pk, op) = rows.get_index(idx).unwrap();
-                match op {
-                    Operation::Insert(values) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Delete(values) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Update(values) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0);
-                        // Write old values, then new values
-                        for (old, _new) in values {
-                            encode_value(&mut out, old.as_ref());
-                        }
-                        for (_old, new) in values {
-                            encode_value(&mut out, new.as_ref());
-                        }
-                    }
-                }
+                encode_changeset_op(&mut out, op);
             }
         }
 
@@ -806,34 +881,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
 
             for idx in session_row_order(rows) {
                 let (pk, op) = rows.get_index(idx).unwrap();
-                match op {
-                    Operation::Insert(values) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Delete(()) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0);
-                        encode_patchset_delete_values(&mut out, &pk_flags, &pk_col_to_pk_pos, pk);
-                    }
-                    Operation::Update(values) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0);
-                        encode_patchset_update_old_values(
-                            &mut out,
-                            &pk_flags,
-                            &pk_col_to_pk_pos,
-                            pk,
-                        );
-                        // Write new values
-                        for ((), new) in values {
-                            encode_value(&mut out, new.as_ref());
-                        }
-                    }
-                }
+                encode_patchset_op(&mut out, op, pk, &pk_flags, &pk_col_to_pk_pos);
             }
         }
 
@@ -871,18 +919,20 @@ impl<
 }
 
 // ============================================================================
-// BitOr / BitOrAssign for DiffSetBuilder (changeset concatenation)
+// BitOr / BitOrAssign for DiffSetBuilder (changeset/patchset concatenation,
+// equivalent to SQLite's `sqlite3changeset_concat()`)
 // ============================================================================
 
 impl<
+    F: Format<S, B>,
     T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> BitOrAssign for DiffSetBuilder<ChangesetFormat, T, S, B>
+    S: Clone + Hash + Eq + AsRef<str>,
+    B: Clone + Hash + Eq + AsRef<[u8]>,
+> BitOrAssign for DiffSetBuilder<F, T, S, B>
+where
+    Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
 {
-    /// Merge another changeset into this one, consolidating operations on the same row.
-    ///
-    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    /// Merge another diff set into this one, consolidating operations on the same row.
     fn bitor_assign(&mut self, rhs: Self) {
         for (table, rows) in rhs.tables {
             for (pk, op) in rows {
@@ -893,46 +943,17 @@ impl<
 }
 
 impl<
+    F: Format<S, B>,
     T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> BitOr for DiffSetBuilder<ChangesetFormat, T, S, B>
+    S: Clone + Hash + Eq + AsRef<str>,
+    B: Clone + Hash + Eq + AsRef<[u8]>,
+> BitOr for DiffSetBuilder<F, T, S, B>
+where
+    Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
 {
     type Output = Self;
 
-    /// Merge two changesets, consolidating operations on the same row.
-    ///
-    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
-    #[inline]
-    fn bitor(mut self, rhs: Self) -> Self::Output {
-        self |= rhs;
-        self
-    }
-}
-
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
-    BitOrAssign for DiffSetBuilder<PatchsetFormat, T, S, B>
-{
-    /// Merge another patchset into this one, consolidating operations on the same row.
-    ///
-    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
-    fn bitor_assign(&mut self, rhs: Self) {
-        for (table, rows) in rhs.tables {
-            for (pk, op) in rows {
-                self.add_operation(&table, pk, op);
-            }
-        }
-    }
-}
-
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>> BitOr
-    for DiffSetBuilder<PatchsetFormat, T, S, B>
-{
-    type Output = Self;
-
-    /// Merge two patchsets, consolidating operations on the same row.
-    ///
-    /// This is equivalent to SQLite's `sqlite3changeset_concat()`.
+    /// Merge two diff sets, consolidating operations on the same row.
     #[inline]
     fn bitor(mut self, rhs: Self) -> Self::Output {
         self |= rhs;
@@ -1038,32 +1059,7 @@ impl<
             write_table_header(&mut out, markers::CHANGESET, table);
 
             for (_pk, op) in rows {
-                match op {
-                    Operation::Insert(values) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Delete(values) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Update(values) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0);
-                        for (old, _new) in values {
-                            encode_value(&mut out, old.as_ref());
-                        }
-                        for (_old, new) in values {
-                            encode_value(&mut out, new.as_ref());
-                        }
-                    }
-                }
+                encode_changeset_op(&mut out, op);
             }
         }
 
@@ -1093,33 +1089,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
             let (pk_flags, pk_col_to_pk_pos) = patchset_pk_mapping(table);
 
             for (pk, op) in rows {
-                match op {
-                    Operation::Insert(values) => {
-                        out.push(op_codes::INSERT);
-                        out.push(0);
-                        for value in values {
-                            encode_value(&mut out, Some(value));
-                        }
-                    }
-                    Operation::Delete(()) => {
-                        out.push(op_codes::DELETE);
-                        out.push(0);
-                        encode_patchset_delete_values(&mut out, &pk_flags, &pk_col_to_pk_pos, pk);
-                    }
-                    Operation::Update(values) => {
-                        out.push(op_codes::UPDATE);
-                        out.push(0);
-                        encode_patchset_update_old_values(
-                            &mut out,
-                            &pk_flags,
-                            &pk_col_to_pk_pos,
-                            pk,
-                        );
-                        for ((), new) in values {
-                            encode_value(&mut out, new.as_ref());
-                        }
-                    }
-                }
+                encode_patchset_op(&mut out, op, pk, &pk_flags, &pk_col_to_pk_pos);
             }
         }
 
@@ -1233,6 +1203,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: Hash + Eq + AsRef<str>, B: Hash + Eq +
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builders::operation::Indirect;
     use crate::encoding::Value;
     use alloc::{string::String, vec};
 
@@ -1450,63 +1421,69 @@ mod tests {
 
     #[test]
     fn test_reverse_operation_insert_becomes_delete() {
-        let op: Operation<ChangesetFormat, String, Vec<u8>> =
-            Operation::Insert(vec![Value::Integer(1), Value::Text("alice".into())]);
+        let op: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Insert {
+            values: vec![Value::Integer(1), Value::Text("alice".into())],
+            indirect: false,
+        };
         let reversed = op.reverse();
-        assert!(matches!(reversed, Operation::Delete(_)));
-        if let Operation::Delete(values) = reversed {
-            assert_eq!(
-                values,
-                vec![
-                    Value::<String, Vec<u8>>::Integer(1),
-                    Value::Text("alice".into())
-                ]
-            );
-        }
+        let Operation::Delete { data, .. } = reversed else {
+            panic!("Expected Delete operation");
+        };
+        assert_eq!(
+            data,
+            vec![
+                Value::<String, Vec<u8>>::Integer(1),
+                Value::Text("alice".into())
+            ]
+        );
     }
 
     #[test]
     fn test_reverse_operation_delete_becomes_insert() {
-        let op: Operation<ChangesetFormat, String, Vec<u8>> =
-            Operation::Delete(vec![Value::Integer(1), Value::Text("alice".into())]);
+        let op: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Delete {
+            data: vec![Value::Integer(1), Value::Text("alice".into())],
+            indirect: false,
+        };
         let reversed = op.reverse();
-        assert!(matches!(reversed, Operation::Insert(_)));
-        if let Operation::Insert(values) = reversed {
-            assert_eq!(
-                values,
-                vec![
-                    Value::<String, Vec<u8>>::Integer(1),
-                    Value::Text("alice".into())
-                ]
-            );
-        }
+        let Operation::Insert { values, .. } = reversed else {
+            panic!("Expected Insert operation");
+        };
+        assert_eq!(
+            values,
+            vec![
+                Value::<String, Vec<u8>>::Integer(1),
+                Value::Text("alice".into())
+            ]
+        );
     }
 
     #[test]
     fn test_reverse_operation_update_swaps_old_new() {
-        let op: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Update(vec![
-            (Some(Value::Integer(1)), Some(Value::Integer(1))),
-            (
-                Some(Value::Text("alice".into())),
-                Some(Value::Text("bob".into())),
-            ),
-        ]);
-        let reversed = op.reverse();
-        if let Operation::Update(values) = reversed {
-            assert_eq!(
-                values[0],
-                (Some(Value::Integer(1)), Some(Value::Integer(1)))
-            );
-            assert_eq!(
-                values[1],
+        let op: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Update {
+            values: vec![
+                (Some(Value::Integer(1)), Some(Value::Integer(1))),
                 (
+                    Some(Value::Text("alice".into())),
                     Some(Value::Text("bob".into())),
-                    Some(Value::Text("alice".into()))
-                )
-            );
-        } else {
+                ),
+            ],
+            indirect: false,
+        };
+        let reversed = op.reverse();
+        let Operation::Update { values, .. } = reversed else {
             panic!("Expected Update operation");
-        }
+        };
+        assert_eq!(
+            values[0],
+            (Some(Value::Integer(1)), Some(Value::Integer(1)))
+        );
+        assert_eq!(
+            values[1],
+            (
+                Some(Value::Text("bob".into())),
+                Some(Value::Text("alice".into()))
+            )
+        );
     }
 
     #[test]
@@ -1526,7 +1503,7 @@ mod tests {
         let rows = reversed.tables.get(&table).unwrap();
         assert!(matches!(
             rows.values().next().unwrap(),
-            Operation::Delete(_)
+            Operation::Delete { .. }
         ));
     }
 
@@ -1547,7 +1524,7 @@ mod tests {
         let rows = reversed.tables.get(&table).unwrap();
         assert!(matches!(
             rows.values().next().unwrap(),
-            Operation::Insert(_)
+            Operation::Insert { .. }
         ));
     }
 
@@ -1566,17 +1543,16 @@ mod tests {
         assert_eq!(reversed.len(), 1);
         // The reversed builder should have an update operation with swapped values
         let rows = reversed.tables.get(&table).unwrap();
-        if let Operation::Update(values) = rows.values().next().unwrap() {
-            assert_eq!(
-                values[1],
-                (
-                    Some(Value::Text("bob".into())),
-                    Some(Value::Text("alice".into()))
-                )
-            );
-        } else {
+        let Operation::Update { values, .. } = rows.values().next().unwrap() else {
             panic!("Expected Update operation");
-        }
+        };
+        assert_eq!(
+            values[1],
+            (
+                Some(Value::Text("bob".into())),
+                Some(Value::Text("alice".into()))
+            )
+        );
     }
 
     #[test]
@@ -1600,11 +1576,10 @@ mod tests {
 
         assert_eq!(double_reversed.len(), 1);
         let rows = double_reversed.tables.get(&table).unwrap();
-        if let Operation::Insert(values) = rows.values().next().unwrap() {
-            assert_eq!(values, &original_values);
-        } else {
+        let Operation::Insert { values, .. } = rows.values().next().unwrap() else {
             panic!("Expected Insert operation");
-        }
+        };
+        assert_eq!(values, &original_values);
     }
 
     // ========================================================================
@@ -1934,5 +1909,631 @@ mod tests {
         let reparsed = crate::parser::ParsedDiffSet::try_from(bytes.as_slice()).unwrap();
         let reparsed_bytes: Vec<u8> = reparsed.into();
         assert_eq!(bytes, reparsed_bytes);
+    }
+
+    // ========================================================================
+    // Indirect-flag tests
+    // ========================================================================
+
+    /// Header offset of the indirect byte within a single-op single-table
+    /// changeset. Layout: 'T' marker (1) + col_count (1) + pk_flags (2)
+    /// + table_name "t\0" (2) + op_code (1) = 7. Patchset is identical.
+    const INDIRECT_BYTE_OFFSET: usize = 7;
+
+    #[test]
+    fn test_build_insert_indirect_byte_set() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+        assert_eq!(bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_build_delete_indirect_byte_set() {
+        let table = TestTable::new("t", 2, 0);
+        let delete = ChangeDelete::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+
+        let bytes = ChangesetBuilder::new().delete(delete).build();
+        assert_eq!(bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_build_update_indirect_byte_set() {
+        let table = TestTable::new("t", 2, 0);
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table)
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "a", "b")
+            .unwrap()
+            .indirect(true);
+
+        let bytes = ChangesetBuilder::new().update(update).build();
+        assert_eq!(bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_build_patchset_insert_indirect_byte() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+
+        let patchset: PatchSet<TestTable, String, Vec<u8>> = PatchSet::new().insert(insert);
+        let bytes = patchset.build();
+        assert_eq!(bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_reverse_preserves_indirect() {
+        // INSERT -> DELETE: indirect carries
+        let insert: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Insert {
+            values: vec![Value::Integer(1)],
+            indirect: true,
+        };
+        let reversed = insert.reverse();
+        assert!(reversed.indirect());
+        assert!(matches!(reversed, Operation::Delete { .. }));
+
+        // DELETE -> INSERT: indirect carries
+        let delete: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Delete {
+            data: vec![Value::Integer(1)],
+            indirect: true,
+        };
+        let reversed = delete.reverse();
+        assert!(reversed.indirect());
+        assert!(matches!(reversed, Operation::Insert { .. }));
+
+        // UPDATE -> UPDATE swapped: indirect carries
+        let update: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Update {
+            values: vec![(Some(Value::Integer(1)), Some(Value::Integer(2)))],
+            indirect: true,
+        };
+        let reversed = update.reverse();
+        assert!(reversed.indirect());
+        assert!(matches!(reversed, Operation::Update { .. }));
+    }
+
+    #[test]
+    fn test_patchdelete_indirect_byte_set() {
+        let table = TestTable::new("t", 2, 0);
+        let delete: PatchDelete<TestTable, String, Vec<u8>> =
+            PatchDelete::new(table, vec![Value::Integer(1)]).indirect(true);
+        let bytes = PatchSet::new().delete(delete).build();
+        assert_eq!(bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_operation_eq_indirect_differs() {
+        // Two ops with identical payload but different indirect flags must not be equal.
+        let a: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Insert {
+            values: vec![Value::Integer(1)],
+            indirect: false,
+        };
+        let b: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Insert {
+            values: vec![Value::Integer(1)],
+            indirect: true,
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_operation_eq_variant_mismatch() {
+        // Different variants must compare unequal regardless of payload.
+        let insert: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Insert {
+            values: vec![Value::Integer(1)],
+            indirect: false,
+        };
+        let delete: Operation<ChangesetFormat, String, Vec<u8>> = Operation::Delete {
+            data: vec![Value::Integer(1)],
+            indirect: false,
+        };
+        assert_ne!(insert, delete);
+    }
+
+    #[test]
+    fn test_bitor_indirect_rhs_wins() {
+        // Two INSERTs on the same PK with opposite indirect bits. The merged
+        // op should carry the rhs's bit (last-write-wins).
+        let table = TestTable::new("t", 2, 0);
+        let lhs_insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+        let rhs_insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(false);
+
+        let merged =
+            ChangesetBuilder::new().insert(lhs_insert) | ChangesetBuilder::new().insert(rhs_insert);
+        let rows = merged.tables.get(&table).unwrap();
+        let op = rows.values().next().unwrap();
+        assert!(!op.indirect(), "rhs (false) should win over lhs (true)");
+
+        // Reverse direction: rhs=true wins over lhs=false.
+        let lhs_insert = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "b")
+            .unwrap()
+            .indirect(false);
+        let rhs_insert = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "b")
+            .unwrap()
+            .indirect(true);
+
+        let merged =
+            ChangesetBuilder::new().insert(lhs_insert) | ChangesetBuilder::new().insert(rhs_insert);
+        let rows = merged.tables.get(&table).unwrap();
+        let op = rows.values().next().unwrap();
+        assert!(op.indirect(), "rhs (true) should win over lhs (false)");
+    }
+
+    #[test]
+    fn test_roundtrip_indirect_changeset() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+        let reparsed = crate::parser::ParsedDiffSet::try_from(bytes.as_slice()).unwrap();
+        let reparsed_bytes: Vec<u8> = reparsed.into();
+        assert_eq!(bytes, reparsed_bytes);
+        assert_eq!(reparsed_bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_roundtrip_indirect_patchset() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap()
+            .indirect(true);
+
+        let patchset: PatchSet<TestTable, String, Vec<u8>> = PatchSet::new().insert(insert);
+        let bytes = patchset.build();
+        let reparsed = crate::parser::ParsedDiffSet::try_from(bytes.as_slice()).unwrap();
+        let reparsed_bytes: Vec<u8> = reparsed.into();
+        assert_eq!(bytes, reparsed_bytes);
+        assert_eq!(reparsed_bytes[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    #[test]
+    fn test_indirect_full_pipeline_roundtrip() {
+        // Serialize -> parse -> reverse -> reverse -> BitOr(empty) -> re-serialize.
+        // The indirect bit must survive every stage.
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap()
+            .indirect(true);
+        let original = ChangesetBuilder::new().insert(insert);
+        let bytes_a = original.build();
+        assert_eq!(bytes_a[INDIRECT_BYTE_OFFSET], 1);
+
+        // Parse the bytes back into a builder over TableSchema<String>.
+        let parsed = crate::parser::ParsedDiffSet::try_from(bytes_a.as_slice()).unwrap();
+        let crate::parser::ParsedDiffSet::Changeset(parsed_set) = parsed else {
+            panic!("expected Changeset variant");
+        };
+
+        let parsed_builder: DiffSetBuilder<
+            ChangesetFormat,
+            crate::parser::TableSchema<String>,
+            String,
+            Vec<u8>,
+        > = parsed_set.into();
+        let empty: DiffSetBuilder<
+            ChangesetFormat,
+            crate::parser::TableSchema<String>,
+            String,
+            Vec<u8>,
+        > = DiffSetBuilder::new();
+        let doubled = parsed_builder.reverse().reverse();
+        let merged = doubled | empty;
+
+        let bytes_b = merged.build();
+        assert_eq!(bytes_a, bytes_b);
+        assert_eq!(bytes_b[INDIRECT_BYTE_OFFSET], 1);
+    }
+
+    // ========================================================================
+    // Operation merge (Add) arms
+    // ========================================================================
+
+    fn changeset_insert(v: i64) -> Operation<ChangesetFormat, String, Vec<u8>> {
+        Operation::Insert {
+            values: vec![Value::Integer(v), Value::Text("a".into())],
+            indirect: false,
+        }
+    }
+
+    fn changeset_delete(v: i64) -> Operation<ChangesetFormat, String, Vec<u8>> {
+        Operation::Delete {
+            data: vec![Value::Integer(v), Value::Text("a".into())],
+            indirect: false,
+        }
+    }
+
+    fn changeset_update(old: i64, new: i64) -> Operation<ChangesetFormat, String, Vec<u8>> {
+        Operation::Update {
+            values: vec![
+                (Some(Value::Integer(old)), Some(Value::Integer(new))),
+                (Some(Value::Text("a".into())), Some(Value::Text("b".into()))),
+            ],
+            indirect: false,
+        }
+    }
+
+    #[test]
+    fn test_add_changeset_insert_plus_update() {
+        let merged = (changeset_insert(1) + changeset_update(1, 2)).unwrap();
+        let Operation::Insert { values, .. } = merged else {
+            panic!("expected Insert");
+        };
+        assert_eq!(values[0], Value::Integer(2));
+        assert_eq!(values[1], Value::Text("b".into()));
+    }
+
+    #[test]
+    fn test_add_changeset_update_plus_insert() {
+        // UPDATE wins, values are the UPDATE's, indirect is rhs (=false here).
+        let merged = (changeset_update(1, 2) + changeset_insert(99)).unwrap();
+        assert!(matches!(merged, Operation::Update { .. }));
+    }
+
+    #[test]
+    fn test_add_changeset_update_plus_update() {
+        // First old, last new.
+        let merged = (changeset_update(1, 2) + changeset_update(2, 3)).unwrap();
+        let Operation::Update { values, .. } = merged else {
+            panic!("expected Update");
+        };
+        assert_eq!(values[0].0, Some(Value::Integer(1)));
+        assert_eq!(values[0].1, Some(Value::Integer(3)));
+    }
+
+    #[test]
+    fn test_add_changeset_update_plus_delete() {
+        // UPDATE+DELETE collapses to DELETE carrying the UPDATE's old values.
+        let merged = (changeset_update(1, 2) + changeset_delete(99)).unwrap();
+        let Operation::Delete { data, .. } = merged else {
+            panic!("expected Delete");
+        };
+        assert_eq!(data[0], Value::Integer(1));
+        assert_eq!(data[1], Value::Text("a".into()));
+    }
+
+    #[test]
+    fn test_add_changeset_delete_plus_update_keeps_delete() {
+        let merged = (changeset_delete(1) + changeset_update(1, 2)).unwrap();
+        assert!(matches!(merged, Operation::Delete { .. }));
+    }
+
+    #[test]
+    fn test_add_changeset_delete_plus_delete_keeps_first() {
+        let merged = (changeset_delete(1) + changeset_delete(2)).unwrap();
+        let Operation::Delete { data, .. } = merged else {
+            panic!("expected Delete");
+        };
+        assert_eq!(data[0], Value::Integer(1));
+    }
+
+    fn patchset_insert(v: i64) -> Operation<PatchsetFormat, String, Vec<u8>> {
+        Operation::Insert {
+            values: vec![Value::Integer(v), Value::Text("a".into())],
+            indirect: false,
+        }
+    }
+
+    fn patchset_update(new: i64) -> Operation<PatchsetFormat, String, Vec<u8>> {
+        Operation::Update {
+            values: vec![
+                ((), Some(Value::Integer(new))),
+                ((), Some(Value::Text("b".into()))),
+            ],
+            indirect: false,
+        }
+    }
+
+    fn patchset_delete() -> Operation<PatchsetFormat, String, Vec<u8>> {
+        Operation::Delete {
+            data: (),
+            indirect: false,
+        }
+    }
+
+    #[test]
+    fn test_add_patchset_insert_plus_update() {
+        let merged = (patchset_insert(1) + patchset_update(2)).unwrap();
+        let Operation::Insert { values, .. } = merged else {
+            panic!("expected Insert");
+        };
+        assert_eq!(values[0], Value::Integer(2));
+        assert_eq!(values[1], Value::Text("b".into()));
+    }
+
+    #[test]
+    fn test_add_patchset_update_plus_insert() {
+        let merged = (patchset_update(2) + patchset_insert(99)).unwrap();
+        assert!(matches!(merged, Operation::Update { .. }));
+    }
+
+    #[test]
+    fn test_add_patchset_update_plus_update() {
+        let merged = (patchset_update(2) + patchset_update(3)).unwrap();
+        let Operation::Update { values, .. } = merged else {
+            panic!("expected Update");
+        };
+        assert_eq!(values[0].1, Some(Value::Integer(3)));
+    }
+
+    #[test]
+    fn test_add_patchset_update_plus_delete() {
+        let merged = (patchset_update(2) + patchset_delete()).unwrap();
+        assert!(matches!(merged, Operation::Delete { .. }));
+    }
+
+    #[test]
+    fn test_add_patchset_delete_plus_insert_promotes_to_update() {
+        // Patchset can't compare old values, so DELETE + INSERT always becomes UPDATE.
+        let merged = (patchset_delete() + patchset_insert(1)).unwrap();
+        assert!(matches!(merged, Operation::Update { .. }));
+    }
+
+    #[test]
+    fn test_add_patchset_delete_plus_update_keeps_delete() {
+        let merged = (patchset_delete() + patchset_update(2)).unwrap();
+        assert!(matches!(merged, Operation::Delete { .. }));
+    }
+
+    #[test]
+    fn test_add_patchset_delete_plus_delete_keeps_first() {
+        let merged = (patchset_delete() + patchset_delete()).unwrap();
+        assert!(matches!(merged, Operation::Delete { .. }));
+    }
+
+    // ========================================================================
+    // Session-hash coverage: PKs of every Value type
+    // ========================================================================
+
+    #[test]
+    fn test_session_hash_real_pk() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 2.5f64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_session_hash_text_pk() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, "alice")
+            .unwrap()
+            .set(1, 42i64)
+            .unwrap();
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_session_hash_blob_pk() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, alloc::vec![0xDE_u8, 0xAD, 0xBE, 0xEF])
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let bytes = ChangesetBuilder::new().insert(insert).build();
+        assert!(!bytes.is_empty());
+    }
+
+    // ========================================================================
+    // session_row_order empty-rows short-circuit
+    // ========================================================================
+
+    #[test]
+    fn test_session_row_order_empty() {
+        // An empty builder builds to empty bytes (no headers, no ops).
+        let cs: ChangesetBuilder = ChangesetBuilder::new();
+        let bytes = cs.build();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn test_session_row_order_empty_rows_returns_empty_vec() {
+        // Direct exercise of the empty-rows short-circuit (line 157-158).
+        let rows: RowMap<ChangesetFormat, String, Vec<u8>> = IndexMap::default();
+        assert!(session_row_order(&rows).is_empty());
+    }
+
+    #[test]
+    fn test_diffset_patchset_build_skips_empty_table() {
+        // A patchset DiffSet with a registered-but-empty table builds to nothing.
+        let table = TestTable::new("t", 2, 0);
+        let mut builder: PatchSet<TestTable, String, Vec<u8>> = PatchSet::new();
+        builder.add_table(&table);
+        let frozen: DiffSet<PatchsetFormat, TestTable, String, Vec<u8>> = builder.into();
+        let bytes = frozen.build();
+        assert!(bytes.is_empty());
+    }
+
+    // ========================================================================
+    // From<DiffSetBuilder> / From<&DiffSetBuilder> / From<DiffSet> / From<&DiffSet> for Vec<u8>
+    // ========================================================================
+
+    #[test]
+    fn test_from_changeset_builder_into_vec() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let builder = ChangesetBuilder::new().insert(insert);
+        let bytes_owned: Vec<u8> = builder.clone().into();
+        let bytes_ref: Vec<u8> = (&builder).into();
+        assert_eq!(bytes_owned, bytes_ref);
+        let frozen: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = builder.into();
+        let bytes_frozen_owned: Vec<u8> = frozen.clone().into();
+        let bytes_frozen_ref: Vec<u8> = (&frozen).into();
+        assert_eq!(bytes_frozen_owned, bytes_frozen_ref);
+    }
+
+    #[test]
+    fn test_from_patchset_builder_into_vec() {
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let builder: PatchSet<TestTable, String, Vec<u8>> = PatchSet::new().insert(insert);
+        let bytes_owned: Vec<u8> = builder.clone().into();
+        let bytes_ref: Vec<u8> = (&builder).into();
+        assert_eq!(bytes_owned, bytes_ref);
+        let frozen: DiffSet<PatchsetFormat, TestTable, String, Vec<u8>> = builder.into();
+        let bytes_frozen_owned: Vec<u8> = frozen.clone().into();
+        let bytes_frozen_ref: Vec<u8> = (&frozen).into();
+        assert_eq!(bytes_frozen_owned, bytes_frozen_ref);
+    }
+
+    // ========================================================================
+    // add_operation INSERT+UPDATE pk-change branch
+    // ========================================================================
+
+    #[test]
+    fn test_add_operation_insert_then_update_changes_pk() {
+        // Insert id=1, then update id=1 to id=2. Triggers the special-case branch
+        // in add_operation that re-extracts the PK from the merged INSERT values.
+        let table = TestTable::new("t", 2, 0);
+        let insert = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "alice")
+            .unwrap();
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
+            .set(0, 1i64, 2i64)
+            .unwrap()
+            .set(1, "alice", "bob")
+            .unwrap();
+        let builder = ChangesetBuilder::new().insert(insert).update(update);
+        let rows = builder.tables.get(&table).unwrap();
+        assert_eq!(rows.len(), 1);
+        // The row should now be keyed by id=2.
+        let (pk, op) = rows.iter().next().unwrap();
+        assert_eq!(pk[0], Value::Integer(2));
+        let Operation::Insert { values, .. } = op else {
+            panic!("expected merged INSERT");
+        };
+        assert_eq!(values[0], Value::Integer(2));
+        assert_eq!(values[1], Value::Text("bob".into()));
+    }
+
+    // ========================================================================
+    // DiffOps for DiffSet<F> wrappers
+    // ========================================================================
+
+    #[test]
+    fn test_diffset_changeset_diffops_wrappers() {
+        let table = TestTable::new("t", 2, 0);
+        let initial = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let frozen: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> =
+            ChangesetBuilder::new().insert(initial).into();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "b")
+            .unwrap();
+        let after_insert = <_ as DiffOps<_, _, _>>::insert(frozen.clone(), insert2);
+        assert_eq!(after_insert.len(), 2);
+
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let after_delete = <_ as DiffOps<_, _, _>>::delete(frozen.clone(), delete);
+        assert_eq!(after_delete.len(), 0);
+
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table)
+            .set(0, 1i64, 1i64)
+            .unwrap()
+            .set(1, "a", "z")
+            .unwrap();
+        let after_update = <_ as DiffOps<_, _, _>>::update(frozen, update);
+        assert_eq!(after_update.len(), 1);
+    }
+
+    #[test]
+    fn test_diffset_patchset_diffops_wrappers() {
+        let table = TestTable::new("t", 2, 0);
+        let initial = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let frozen: DiffSet<PatchsetFormat, TestTable, String, Vec<u8>> =
+            PatchSet::new().insert(initial).into();
+
+        let insert2 = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .set(1, "b")
+            .unwrap();
+        let after_insert = <_ as DiffOps<_, _, _>>::insert(frozen.clone(), insert2);
+        assert_eq!(after_insert.len(), 2);
+
+        let delete: PatchDelete<TestTable, String, Vec<u8>> =
+            PatchDelete::new(table.clone(), vec![Value::Integer(1)]);
+        let after_delete = <_ as DiffOps<_, _, _>>::delete(frozen.clone(), delete);
+        // Insert(id=1) + PatchDelete(id=1) cancel out.
+        assert_eq!(after_delete.len(), 0);
+
+        let update = Update::<TestTable, PatchsetFormat, String, Vec<u8>>::from(table)
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "z")
+            .unwrap();
+        let after_update = <_ as DiffOps<_, _, _>>::update(frozen, update);
+        assert_eq!(after_update.len(), 1);
     }
 }

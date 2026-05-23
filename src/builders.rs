@@ -14,6 +14,6 @@ pub use delete_operation::{ChangeDelete, PatchDelete};
 pub use format::{ChangesetFormat, PatchsetFormat};
 pub use insert_operation::Insert;
 pub(crate) use operation::Operation;
-pub use operation::Reverse;
+pub use operation::{Indirect, Reverse};
 pub use sql_output::ColumnNames;
 pub use update_operation::Update;

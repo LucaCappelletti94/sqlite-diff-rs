@@ -6,6 +6,10 @@
 //! envelopes and converts them into changeset operations compatible with
 //! this crate's builders.
 //!
+//! Debezium envelopes carry no trigger-origin marker, so converted ops default
+//! to `indirect = false`. Override via the [`Indirect`](crate::Indirect) trait
+//! if you know out-of-band that the event was trigger-induced.
+//!
 //! # Example
 //!
 //! ```
@@ -742,6 +746,14 @@ mod tests {
         assert_eq!(values[1], Value::Text("Anne".into()));
         assert_eq!(values[2], Value::Text("Kretchmar".into()));
         assert_eq!(values[3], Value::Text("annek@noanswer.org".into()));
+    }
+
+    #[test]
+    fn test_cdc_default_indirect_false() {
+        let table = customers_table();
+        let envelope = parse::<serde_json::Value>(CREATE_EVENT_JSON).unwrap();
+        let insert: Insert<_, String, Vec<u8>> = (&envelope, &table).try_into().unwrap();
+        assert!(!insert.indirect);
     }
 
     #[test]

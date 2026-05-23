@@ -6,7 +6,7 @@ use core::fmt::Debug;
 
 use crate::{
     DynTable, SchemaWithPK,
-    builders::{ChangesetFormat, PatchsetFormat, format::Format},
+    builders::{ChangesetFormat, PatchsetFormat, format::Format, operation::Indirect},
     encoding::{MaybeValue, Value},
 };
 
@@ -18,6 +18,8 @@ pub struct Update<T, F: Format<S, B>, S, B> {
     /// Values for the updated row, stored as pairs of (old, new) values.
     /// New values use `MaybeValue<S, B>` (Option<Value<S, B>>) where `None` = undefined/unchanged.
     pub(super) values: Vec<(F::Old, MaybeValue<S, B>)>,
+    /// SQLite session-extension indirect flag. See [`Indirect`].
+    pub(crate) indirect: bool,
 }
 
 impl<
@@ -30,7 +32,7 @@ where
     F::Old: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.table == other.table && self.values == other.values
+        self.table == other.table && self.values == other.values && self.indirect == other.indirect
     }
 }
 
@@ -85,7 +87,16 @@ where
         Self {
             table,
             values: vec![(F::Old::default(), None); num_cols],
+            indirect: false,
         }
+    }
+}
+
+impl<T, F: Format<S, B>, S, B> Indirect for Update<T, F, S, B> {
+    #[inline]
+    fn indirect(mut self, indirect: bool) -> Self {
+        self.indirect = indirect;
+        self
     }
 }
 
@@ -321,5 +332,21 @@ mod tests {
             matches!(err, Error::ColumnIndexOutOfBounds(5, 2)),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn test_update_eq() {
+        let a = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
+            .set(0, 1i64, 2i64)
+            .unwrap();
+        let b = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
+            .set(0, 1i64, 2i64)
+            .unwrap();
+        assert_eq!(a, b);
+
+        let c = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
+            .set(0, 1i64, 3i64)
+            .unwrap();
+        assert_ne!(a, c);
     }
 }

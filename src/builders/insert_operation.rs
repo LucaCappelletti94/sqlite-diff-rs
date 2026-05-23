@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use crate::{DynTable, SchemaWithPK, encoding::Value};
+use crate::{DynTable, SchemaWithPK, builders::operation::Indirect, encoding::Value};
 
 #[derive(Debug)]
 /// Builder for an insert operation.
@@ -13,6 +13,8 @@ pub struct Insert<T: DynTable, S, B> {
     table: T,
     /// Values for the inserted row.
     pub(super) values: Vec<Value<S, B>>,
+    /// SQLite session-extension indirect flag. See [`Indirect`].
+    pub(crate) indirect: bool,
 }
 
 impl<T: DynTable, S: Clone, B: Clone> Clone for Insert<T, S, B> {
@@ -20,6 +22,7 @@ impl<T: DynTable, S: Clone, B: Clone> Clone for Insert<T, S, B> {
         Self {
             table: self.table.clone(),
             values: self.values.clone(),
+            indirect: self.indirect,
         }
     }
 }
@@ -36,7 +39,7 @@ impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u
     for Insert<T, S, B>
 {
     fn eq(&self, other: &Self) -> bool {
-        self.table == other.table && self.values == other.values
+        self.table == other.table && self.values == other.values && self.indirect == other.indirect
     }
 }
 
@@ -49,6 +52,7 @@ impl<T: DynTable, S: Clone, B: Clone> From<T> for Insert<T, S, B> {
         Self {
             table,
             values: vec![Value::Null; num_cols],
+            indirect: false,
         }
     }
 }
@@ -125,6 +129,14 @@ impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Insert<T, S, B> {
     }
 }
 
+impl<T: DynTable, S, B> Indirect for Insert<T, S, B> {
+    #[inline]
+    fn indirect(mut self, indirect: bool) -> Self {
+        self.indirect = indirect;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Insert;
@@ -157,5 +169,19 @@ mod tests {
             matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn test_insert_clone_and_eq() {
+        let a = Insert::<_, String, Vec<u8>>::from(users())
+            .set(0, 1i64)
+            .unwrap();
+        let b = a.clone();
+        assert_eq!(a, b);
+
+        let c = Insert::<_, String, Vec<u8>>::from(users())
+            .set(0, 2i64)
+            .unwrap();
+        assert_ne!(a, c);
     }
 }

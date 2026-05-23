@@ -26,7 +26,7 @@ pub mod wal2json;
 // Re-export main types
 pub use builders::{
     ChangeDelete, ChangeSet, ChangesetFormat, ColumnNames, DiffOps, DiffSet, DiffSetBuilder,
-    Insert, PatchDelete, PatchSet, PatchsetFormat, Reverse, Update,
+    Indirect, Insert, PatchDelete, PatchSet, PatchsetFormat, Reverse, Update,
 };
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};

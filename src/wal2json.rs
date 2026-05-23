@@ -8,6 +8,10 @@
 //! Two formats are supported: v1 emits one transaction-level JSON object with
 //! a full `change` array, and v2 emits one JSON object per row tuple.
 //!
+//! Wal2json does not carry trigger-origin metadata, so converted ops default
+//! to `indirect = false`. Override via the [`Indirect`](crate::Indirect) trait
+//! if you know out-of-band that the event was trigger-induced.
+//!
 //! # Example
 //!
 //! ```
@@ -726,6 +730,16 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(values[0], Value::Integer(1));
         assert_eq!(values[1], Value::Text("Alice".into()));
+    }
+
+    #[test]
+    fn test_cdc_default_indirect_false() {
+        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let json = r#"{"action":"I","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1},{"name":"name","type":"text","value":"Alice"}]}"#;
+        let msg = parse_v2(json).unwrap();
+
+        let insert: Insert<_, String, Vec<u8>> = (&msg, &table).try_into().unwrap();
+        assert!(!insert.indirect);
     }
 
     #[test]
