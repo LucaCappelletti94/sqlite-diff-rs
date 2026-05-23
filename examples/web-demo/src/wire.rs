@@ -1,5 +1,5 @@
-// Items in this module are wired up by checkpoint 3 of the multi-peer
-// plan. Until then the bin target sees them as dead.
+// Some items here are reserved for upcoming gossip extensions
+// (additional kinds, snapshot frames, etc.) and not all are used yet.
 #![allow(dead_code)]
 
 //! Wire envelope for inter-peer messages on the WebRTC data channel.

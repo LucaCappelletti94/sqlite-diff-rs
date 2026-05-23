@@ -35,6 +35,7 @@ use crate::rtc::{Peer, PeerState};
 use crate::signal::{
     Decoded, decode_answer_blob, encode_answer_blob, encode_offer_url, fragment_from_url,
 };
+use crate::wire::{DedupCache, Kind};
 
 fn main() {
     launch(App);
@@ -68,6 +69,8 @@ fn App() -> Element {
         ))
     });
     let peers: Signal<SharedPeers> = use_signal(|| Rc::new(RefCell::new(Vec::new())));
+    let dedup_cache: Signal<Rc<RefCell<DedupCache>>> =
+        use_signal(|| Rc::new(RefCell::new(DedupCache::new())));
 
     // Chat state.
     let mut messages: Signal<Vec<Message>> = use_signal(Vec::new);
@@ -120,6 +123,7 @@ fn App() -> Element {
     let capture_and_send = {
         let db = db.read().clone();
         let peers = peers.read().clone();
+        let dedup = dedup_cache.read().clone();
         let mut inspector_entries = inspector_entries;
         move || {
             let bytes = match db.borrow_mut().take_changeset() {
@@ -138,11 +142,15 @@ fn App() -> Element {
             if bytes.is_empty() {
                 return;
             }
-            // Snapshot the current neighbor list so we don't hold the
-            // RefCell borrow while calling into JS land.
+            // Frame, mark our own message ID as seen so we drop the echo
+            // if any peer gossips it back to us, then broadcast to every
+            // direct neighbor.
+            let msg_id = Uuid::new_v4();
+            let framed = wire::encode(Kind::Changeset, msg_id, &bytes);
+            dedup.borrow_mut().insert(msg_id);
             let neighbors: Vec<Peer> = peers.borrow().iter().map(|p| p.peer.clone()).collect();
             for neighbor in &neighbors {
-                if let Err(e) = neighbor.send(&bytes) {
+                if let Err(e) = neighbor.send(&framed) {
                     error.set(format!("send: {e:?}"));
                 }
             }
@@ -229,12 +237,14 @@ fn App() -> Element {
     let create_room = {
         let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
+        let dedup = dedup_cache.read().clone();
         move |_| {
             let peers_handle = peers_handle.clone();
             let peer_id = Uuid::new_v4();
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers_handle.clone(),
+                dedup.clone(),
                 peer_id,
                 messages,
                 inspector_entries,
@@ -270,6 +280,7 @@ fn App() -> Element {
     let join_room = {
         let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
+        let dedup = dedup_cache.read().clone();
         move |_| {
             let Some(offer_sdp) = incoming_offer.read().clone() else {
                 error.set("no offer fragment on this URL".into());
@@ -280,6 +291,7 @@ fn App() -> Element {
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers_handle.clone(),
+                dedup.clone(),
                 peer_id,
                 messages,
                 inspector_entries,
@@ -654,6 +666,7 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
 fn build_peer_callbacks(
     db: SharedDb,
     peers: SharedPeers,
+    dedup: Rc<RefCell<DedupCache>>,
     peer_id: Uuid,
     mut messages: Signal<Vec<Message>>,
     mut inspector_entries: Signal<Vec<Entry>>,
@@ -665,31 +678,68 @@ fn build_peer_callbacks(
     impl FnMut(PeerState) + 'static,
 ) {
     let db_for_msg = db;
-    let on_message = move |bytes: Vec<u8>| {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
-        let mut entry = inspector::parse_entry(&bytes, Direction::In, ts);
-
-        let apply_result = db_for_msg
-            .borrow_mut()
-            .apply_changeset(&bytes, conflict_policy);
-        if let Err(ref e) = apply_result {
-            entry.apply_error = Some(format!("{e}"));
-        }
-        inspector_entries.with_mut(|v| {
-            v.push(entry);
-            let overflow = v.len().saturating_sub(50);
-            if overflow > 0 {
-                v.drain(..overflow);
+    let peers_for_msg = peers.clone();
+    let on_message = move |framed: Vec<u8>| {
+        let frame = match wire::decode(&framed) {
+            Ok(f) => f,
+            Err(e) => {
+                error.set(format!("wire decode: {e}"));
+                return;
             }
-        });
-        if apply_result.is_err() {
+        };
+
+        // Gossip dedup. If we've seen this msg_id before, drop the
+        // frame without applying or forwarding.
+        if !dedup.borrow_mut().insert(frame.msg_id) {
             return;
         }
 
-        match db_for_msg.borrow_mut().list_messages() {
-            Ok(rows) => messages.set(rows),
-            Err(e) => error.set(format!("list after apply: {e}")),
+        match frame.kind {
+            Kind::Hello => {
+                // Identity exchange lands in checkpoint 4.
+            }
+            Kind::Changeset => {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
+                let mut entry = inspector::parse_entry(frame.payload, Direction::In, ts);
+
+                let apply_result = db_for_msg
+                    .borrow_mut()
+                    .apply_changeset(frame.payload, conflict_policy);
+                if let Err(ref e) = apply_result {
+                    entry.apply_error = Some(format!("{e}"));
+                }
+                inspector_entries.with_mut(|v| {
+                    v.push(entry);
+                    let overflow = v.len().saturating_sub(50);
+                    if overflow > 0 {
+                        v.drain(..overflow);
+                    }
+                });
+
+                if apply_result.is_ok() {
+                    match db_for_msg.borrow_mut().list_messages() {
+                        Ok(rows) => messages.set(rows),
+                        Err(e) => error.set(format!("list after apply: {e}")),
+                    }
+                }
+
+                // Forward the original framed bytes (verbatim, same
+                // msg_id) to every neighbor except the one we received
+                // it from. Idempotency in the conflict handler covers
+                // any duplicate that arrives along another path.
+                let to_forward: Vec<Peer> = peers_for_msg
+                    .borrow()
+                    .iter()
+                    .filter(|p| p.id != peer_id)
+                    .map(|p| p.peer.clone())
+                    .collect();
+                for neighbor in &to_forward {
+                    if let Err(e) = neighbor.send(&framed) {
+                        error.set(format!("forward: {e:?}"));
+                    }
+                }
+            }
         }
     };
     let on_state = move |s: PeerState| {
