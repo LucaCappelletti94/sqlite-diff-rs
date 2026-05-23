@@ -18,8 +18,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelEvent, RtcDataChannelType,
-    RtcIceGatheringState, RtcIceServer, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit,
+    MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelEvent, RtcDataChannelState,
+    RtcDataChannelType, RtcIceGatheringState, RtcIceServer, RtcPeerConnection, RtcSdpType,
+    RtcSessionDescriptionInit,
 };
 
 /// High-level connection state surfaced to the UI.
@@ -170,6 +171,18 @@ impl Peer {
             .as_ref()
             .ok_or_else(|| JsValue::from_str("data channel not yet established"))?;
         ch.send_with_u8_array(bytes)
+    }
+
+    /// Returns `true` if the data channel is in the `open` state. Use
+    /// this before `send` to skip neighbors whose channel has just
+    /// transitioned to `closing` or `closed` but whose `onclose`
+    /// callback has not yet had a chance to fire.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.channel
+            .borrow()
+            .as_ref()
+            .is_some_and(|ch| ch.ready_state() == RtcDataChannelState::Open)
     }
 
     async fn wait_ice_complete(&self) {

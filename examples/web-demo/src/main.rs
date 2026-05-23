@@ -187,11 +187,17 @@ fn App() -> Element {
             let msg_id = Uuid::new_v4();
             let framed = wire::encode(Kind::Changeset, msg_id, &bytes);
             dedup.borrow_mut().insert(msg_id);
-            let neighbors: Vec<Peer> = peers.read().iter().map(|p| p.peer.clone()).collect();
+            let neighbors: Vec<Peer> = peers
+                .read()
+                .iter()
+                .filter(|p| p.peer.is_open())
+                .map(|p| p.peer.clone())
+                .collect();
             for neighbor in &neighbors {
-                if let Err(e) = neighbor.send(&framed) {
-                    error.set(format!("send: {e:?}"));
-                }
+                // Tolerate send failure: the channel may have just
+                // started closing in the gap between the is_open
+                // filter above and now.
+                let _ = neighbor.send(&framed);
             }
         }
     };
@@ -831,13 +837,14 @@ fn build_peer_callbacks(
                 let to_forward: Vec<Peer> = peers
                     .read()
                     .iter()
-                    .filter(|p| p.id != peer_id)
+                    .filter(|p| p.id != peer_id && p.peer.is_open())
                     .map(|p| p.peer.clone())
                     .collect();
                 for neighbor in &to_forward {
-                    if let Err(e) = neighbor.send(&framed) {
-                        error.set(format!("hello forward: {e:?}"));
-                    }
+                    // Tolerate send failure: the channel may have just
+                    // started closing. The `onclose` callback will reap
+                    // the dead entry on the next tick.
+                    let _ = neighbor.send(&framed);
                 }
             }
             Kind::Changeset => {
@@ -873,13 +880,13 @@ fn build_peer_callbacks(
                 let to_forward: Vec<Peer> = peers
                     .read()
                     .iter()
-                    .filter(|p| p.id != peer_id)
+                    .filter(|p| p.id != peer_id && p.peer.is_open())
                     .map(|p| p.peer.clone())
                     .collect();
                 for neighbor in &to_forward {
-                    if let Err(e) = neighbor.send(&framed) {
-                        error.set(format!("forward: {e:?}"));
-                    }
+                    // Tolerate send failure for the same race-window
+                    // reason as the hello path above.
+                    let _ = neighbor.send(&framed);
                 }
             }
         }
@@ -952,9 +959,10 @@ fn send_membership_and_snapshot(
         .map(|m| (m.name.clone(), m.hello_bytes.clone()))
         .collect();
     for (name, bytes) in &members {
-        if let Err(e) = peer.send(bytes) {
-            error.set(format!("hello send: {e:?}"));
-        }
+        // Tolerate failure: this fires from the on-open callback,
+        // and in principle the channel could have transitioned to
+        // closing between the open event and these sends.
+        let _ = peer.send(bytes);
         inspector_entries.with_mut(|v| {
             v.push(inspector::hello_entry(
                 name,
