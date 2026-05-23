@@ -14,6 +14,7 @@ use diesel::sql_query;
 use diesel_sqlite_session::{
     ApplyError, ConflictAction, ConflictType, Session, SessionError, SqliteSessionExt,
 };
+use sqlite_diff_rs::DiffOps;
 use uuid::Uuid;
 
 use crate::schema::{INIT_DDL, messages};
@@ -133,6 +134,35 @@ impl Db {
             .select(Message::as_select())
             .load(&mut self.conn)
             .map_err(DbError::Diesel)
+    }
+
+    /// Build a single changeset that re-creates every current row via
+    /// INSERT operations. Sent to freshly joined peers so they catch up
+    /// to the local state. Idempotent on the receiving side because
+    /// `apply_changeset` is configured to `Replace` on data conflicts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Diesel`] if listing the rows fails.
+    pub fn snapshot_changeset(&mut self) -> Result<Vec<u8>, DbError> {
+        let rows = self.list_messages()?;
+        let table = crate::schema::messages_table();
+        let mut builder = sqlite_diff_rs::ChangeSet::<_, String, Vec<u8>>::new();
+        for row in rows {
+            let insert = sqlite_diff_rs::Insert::from(table.clone())
+                .set(0, row.id)
+                .expect("column 0 of messages")
+                .set(1, row.author)
+                .expect("column 1 of messages")
+                .set(2, row.body)
+                .expect("column 2 of messages")
+                .set(3, row.created_at)
+                .expect("column 3 of messages")
+                .set(4, row.edited_at)
+                .expect("column 4 of messages");
+            builder = builder.insert(insert);
+        }
+        Ok(builder.into())
     }
 
     /// Extract the current session's changeset bytes and replace the

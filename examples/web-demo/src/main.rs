@@ -245,6 +245,7 @@ fn App() -> Element {
                 db.clone(),
                 peers_handle.clone(),
                 dedup.clone(),
+                display_name,
                 peer_id,
                 messages,
                 inspector_entries,
@@ -292,6 +293,7 @@ fn App() -> Element {
                 db.clone(),
                 peers_handle.clone(),
                 dedup.clone(),
+                display_name,
                 peer_id,
                 messages,
                 inspector_entries,
@@ -667,6 +669,7 @@ fn build_peer_callbacks(
     db: SharedDb,
     peers: SharedPeers,
     dedup: Rc<RefCell<DedupCache>>,
+    display_name: Signal<String>,
     peer_id: Uuid,
     mut messages: Signal<Vec<Message>>,
     mut inspector_entries: Signal<Vec<Entry>>,
@@ -677,8 +680,9 @@ fn build_peer_callbacks(
     impl FnMut(Vec<u8>) + 'static,
     impl FnMut(PeerState) + 'static,
 ) {
-    let db_for_msg = db;
+    let db_for_msg = db.clone();
     let peers_for_msg = peers.clone();
+    let dedup_for_msg = dedup.clone();
     let on_message = move |framed: Vec<u8>| {
         let frame = match wire::decode(&framed) {
             Ok(f) => f,
@@ -690,13 +694,30 @@ fn build_peer_callbacks(
 
         // Gossip dedup. If we've seen this msg_id before, drop the
         // frame without applying or forwarding.
-        if !dedup.borrow_mut().insert(frame.msg_id) {
+        if !dedup_for_msg.borrow_mut().insert(frame.msg_id) {
             return;
         }
 
         match frame.kind {
             Kind::Hello => {
-                // Identity exchange lands in checkpoint 4.
+                let name = String::from_utf8_lossy(frame.payload).into_owned();
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
+                let entry = inspector::hello_entry(&name, framed.len(), Direction::In, ts);
+                inspector_entries.with_mut(|v| {
+                    v.push(entry);
+                    let overflow = v.len().saturating_sub(50);
+                    if overflow > 0 {
+                        v.drain(..overflow);
+                    }
+                });
+
+                // Record the sender's display name on its PeerEntry so
+                // the UI can show a real peer list (checkpoint 5).
+                let mut peers_mut = peers_for_msg.borrow_mut();
+                if let Some(p) = peers_mut.iter_mut().find(|p| p.id == peer_id) {
+                    p.display_name = Some(name);
+                }
             }
             Kind::Changeset => {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -744,11 +765,103 @@ fn build_peer_callbacks(
     };
     let on_state = move |s: PeerState| {
         peer_state.set(Some(s));
-        if s == PeerState::Closed {
-            peers.borrow_mut().retain(|p| p.id != peer_id);
+        match s {
+            PeerState::Connected => {
+                send_hello_and_snapshot(
+                    &peers,
+                    &dedup,
+                    &db,
+                    peer_id,
+                    &display_name,
+                    &mut inspector_entries,
+                    &mut error,
+                    page_start_ms,
+                );
+            }
+            PeerState::Closed => {
+                peers.borrow_mut().retain(|p| p.id != peer_id);
+            }
         }
     };
     (on_message, on_state)
+}
+
+/// Send our `Hello` envelope followed by a snapshot changeset to a
+/// freshly-connected neighbor. Called from the `on_state` callback when
+/// the data channel first opens.
+#[allow(clippy::too_many_arguments)]
+fn send_hello_and_snapshot(
+    peers: &SharedPeers,
+    dedup: &Rc<RefCell<DedupCache>>,
+    db: &SharedDb,
+    peer_id: Uuid,
+    display_name: &Signal<String>,
+    inspector_entries: &mut Signal<Vec<Entry>>,
+    error: &mut Signal<String>,
+    page_start_ms: f64,
+) {
+    // Look up this peer's data channel. We do not hold the borrow
+    // across any `send()` calls because send is synchronous.
+    let peer_clone = peers
+        .borrow()
+        .iter()
+        .find(|p| p.id == peer_id)
+        .map(|e| e.peer.clone());
+    let Some(peer) = peer_clone else {
+        // Should not happen: the entry was pushed before this state
+        // callback can fire, but be defensive.
+        return;
+    };
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
+
+    // Hello.
+    let name = display_name.read().clone();
+    let hello_id = Uuid::new_v4();
+    let hello_bytes = wire::encode(Kind::Hello, hello_id, name.as_bytes());
+    dedup.borrow_mut().insert(hello_id);
+    if let Err(e) = peer.send(&hello_bytes) {
+        error.set(format!("hello send: {e:?}"));
+    }
+    inspector_entries.with_mut(|v| {
+        v.push(inspector::hello_entry(
+            &name,
+            hello_bytes.len(),
+            Direction::Out,
+            ts,
+        ));
+        let overflow = v.len().saturating_sub(50);
+        if overflow > 0 {
+            v.drain(..overflow);
+        }
+    });
+
+    // Snapshot of current database state. Empty payload (no rows yet)
+    // produces a zero-length changeset; skip sending it in that case.
+    let snapshot = match db.borrow_mut().snapshot_changeset() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error.set(format!("snapshot: {e}"));
+            return;
+        }
+    };
+    if snapshot.is_empty() {
+        return;
+    }
+    let snap_id = Uuid::new_v4();
+    let snap_framed = wire::encode(Kind::Changeset, snap_id, &snapshot);
+    dedup.borrow_mut().insert(snap_id);
+    if let Err(e) = peer.send(&snap_framed) {
+        error.set(format!("snapshot send: {e:?}"));
+    }
+    inspector_entries.with_mut(|v| {
+        v.push(inspector::parse_entry(&snapshot, Direction::Out, ts));
+        let overflow = v.len().saturating_sub(50);
+        if overflow > 0 {
+            v.drain(..overflow);
+        }
+    });
 }
 
 /// Parse a byte buffer and append an inspector entry, trimming the log
