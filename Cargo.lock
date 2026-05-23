@@ -5044,6 +5044,7 @@ dependencies = [
  "getrandom 0.4.2",
  "hex",
  "js-sys",
+ "miniz_oxide",
  "sqlite-diff-rs",
  "uuid",
  "wasm-bindgen",
