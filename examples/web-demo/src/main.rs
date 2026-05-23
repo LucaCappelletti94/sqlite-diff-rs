@@ -15,6 +15,7 @@ mod inspector;
 mod rtc;
 mod schema;
 mod signal;
+mod wire;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,6 +27,7 @@ use dioxus_free_icons::icons::fa_solid_icons::{
     FaArrowRight, FaCheck, FaPaperPlane, FaPenToSquare, FaPlug, FaReply, FaRotateRight, FaTrash,
     FaUserPlus, FaXmark,
 };
+use uuid::Uuid;
 
 use crate::db::{Db, Message};
 use crate::inspector::{Direction, Entry, InspectorPane, parse_entry};
@@ -40,9 +42,21 @@ fn main() {
 
 /// Shared, single-threaded handle to the in-memory database.
 type SharedDb = Rc<RefCell<Db>>;
-/// Shared, single-threaded slot for the live peer connection (None until
-/// either "Create room" or "Join room" has been clicked).
-type SharedPeer = Rc<RefCell<Option<Peer>>>;
+
+/// One direct WebRTC neighbor in the gossip mesh. The `id` is local-only
+/// and is used to identify the entry when callbacks fire (e.g. to remove
+/// the entry on channel close). The `display_name` is filled in when the
+/// remote `Hello` envelope arrives (checkpoint 4); for now it remains
+/// `None`.
+#[derive(Clone)]
+pub struct PeerEntry {
+    pub id: Uuid,
+    pub display_name: Option<String>,
+    pub peer: Peer,
+}
+
+/// Shared, single-threaded list of currently connected peers.
+type SharedPeers = Rc<RefCell<Vec<PeerEntry>>>;
 
 #[component]
 #[allow(clippy::too_many_lines)] // demo file, single-component-by-design
@@ -53,7 +67,7 @@ fn App() -> Element {
             Db::open().expect("opening in-memory SQLite must succeed"),
         ))
     });
-    let peer: Signal<SharedPeer> = use_signal(|| Rc::new(RefCell::new(None)));
+    let peers: Signal<SharedPeers> = use_signal(|| Rc::new(RefCell::new(Vec::new())));
 
     // Chat state.
     let mut messages: Signal<Vec<Message>> = use_signal(Vec::new);
@@ -105,7 +119,7 @@ fn App() -> Element {
     // connected.
     let capture_and_send = {
         let db = db.read().clone();
-        let peer = peer.read().clone();
+        let peers = peers.read().clone();
         let mut inspector_entries = inspector_entries;
         move || {
             let bytes = match db.borrow_mut().take_changeset() {
@@ -121,11 +135,16 @@ fn App() -> Element {
                 Direction::Out,
                 page_start_ms,
             );
-            if !bytes.is_empty()
-                && let Some(p) = peer.borrow().as_ref()
-                && let Err(e) = p.send(&bytes)
-            {
-                error.set(format!("send: {e:?}"));
+            if bytes.is_empty() {
+                return;
+            }
+            // Snapshot the current neighbor list so we don't hold the
+            // RefCell borrow while calling into JS land.
+            let neighbors: Vec<Peer> = peers.borrow().iter().map(|p| p.peer.clone()).collect();
+            for neighbor in &neighbors {
+                if let Err(e) = neighbor.send(&bytes) {
+                    error.set(format!("send: {e:?}"));
+                }
             }
         }
     };
@@ -208,12 +227,15 @@ fn App() -> Element {
     let db_for_callbacks = db.read().clone();
 
     let create_room = {
-        let peer = peer.read().clone();
+        let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
         move |_| {
-            let peer = peer.clone();
+            let peers_handle = peers_handle.clone();
+            let peer_id = Uuid::new_v4();
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
+                peers_handle.clone(),
+                peer_id,
                 messages,
                 inspector_entries,
                 peer_state,
@@ -236,22 +258,29 @@ fn App() -> Element {
                     }
                 };
                 offer_url.set(Some(encode_offer_url(&sdp)));
-                *peer.borrow_mut() = Some(p);
+                peers_handle.borrow_mut().push(PeerEntry {
+                    id: peer_id,
+                    display_name: None,
+                    peer: p,
+                });
             });
         }
     };
 
     let join_room = {
-        let peer = peer.read().clone();
+        let peers_handle = peers.read().clone();
         let db = db_for_callbacks.clone();
         move |_| {
             let Some(offer_sdp) = incoming_offer.read().clone() else {
                 error.set("no offer fragment on this URL".into());
                 return;
             };
-            let peer = peer.clone();
+            let peers_handle = peers_handle.clone();
+            let peer_id = Uuid::new_v4();
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
+                peers_handle.clone(),
+                peer_id,
                 messages,
                 inspector_entries,
                 peer_state,
@@ -274,16 +303,20 @@ fn App() -> Element {
                     }
                 };
                 answer_blob.set(Some(encode_answer_blob(&sdp)));
-                *peer.borrow_mut() = Some(p);
+                peers_handle.borrow_mut().push(PeerEntry {
+                    id: peer_id,
+                    display_name: None,
+                    peer: p,
+                });
             });
         }
     };
 
     let connect_with_answer = {
-        let peer = peer.read().clone();
+        let peers_handle = peers.read().clone();
         move |_| {
             let text = answer_input.read().clone();
-            let peer = peer.clone();
+            let peers_handle = peers_handle.clone();
             spawn(async move {
                 let sdp = match decode_answer_blob(&text) {
                     Ok(s) => s,
@@ -292,9 +325,11 @@ fn App() -> Element {
                         return;
                     }
                 };
-                // Clone the Peer out so we don't hold a RefCell borrow
-                // across the await point.
-                let peer_clone = peer.borrow().clone();
+                // Clone the most recently added Peer out so we don't
+                // hold a RefCell borrow across the await point. With a
+                // single pending invite at a time (checkpoint 5 will
+                // generalize), this is just the last entry.
+                let peer_clone = peers_handle.borrow().last().map(|e| e.peer.clone());
                 let Some(p) = peer_clone else {
                     error.set("no local peer yet".into());
                     return;
@@ -329,11 +364,12 @@ fn App() -> Element {
     };
 
     // Reset the connection signals so the user can create a fresh room.
-    // Drops the existing Peer (which also drops its underlying data channel).
+    // Dropping the `PeerEntry` values also drops their underlying data
+    // channels.
     let reset_connection = {
-        let peer_handle = peer.read().clone();
+        let peers_handle = peers.read().clone();
         move |_| {
-            *peer_handle.borrow_mut() = None;
+            peers_handle.borrow_mut().clear();
             offer_url.set(None);
             answer_blob.set(None);
             answer_input.set(String::new());
@@ -611,9 +647,14 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
 /// constructed [`Peer`] needs. The message callback applies incoming
 /// bytes through diesel-sqlite-session (session capture paused so the
 /// peer's changes are not echoed back), refreshes the message list, and
-/// pushes a parsed entry into the diff inspector.
+/// pushes a parsed entry into the diff inspector. The state callback
+/// removes this peer's `PeerEntry` from the shared registry when the
+/// data channel closes.
+#[allow(clippy::too_many_arguments)] // demo file, callback construction
 fn build_peer_callbacks(
     db: SharedDb,
+    peers: SharedPeers,
+    peer_id: Uuid,
     mut messages: Signal<Vec<Message>>,
     mut inspector_entries: Signal<Vec<Entry>>,
     mut peer_state: Signal<Option<PeerState>>,
@@ -653,6 +694,9 @@ fn build_peer_callbacks(
     };
     let on_state = move |s: PeerState| {
         peer_state.set(Some(s));
+        if s == PeerState::Closed {
+            peers.borrow_mut().retain(|p| p.id != peer_id);
+        }
     };
     (on_message, on_state)
 }
@@ -716,4 +760,4 @@ fn store_display_name(name: &str) {
 // Module-level type alias documented for downstream callers; reference
 // from a no-op fn so dead-code analysis does not flag it.
 #[allow(dead_code)]
-fn _assert_shared_db_type(_: SharedDb, _: SharedPeer) {}
+fn _assert_shared_db_type(_: SharedDb, _: SharedPeers) {}
