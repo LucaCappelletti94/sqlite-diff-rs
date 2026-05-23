@@ -244,6 +244,9 @@ fn App() -> Element {
                 inspector_entries,
                 peer_state,
                 error,
+                offer_url,
+                answer_blob,
+                incoming_offer,
                 page_start_ms,
             );
             spawn(async move {
@@ -292,6 +295,9 @@ fn App() -> Element {
                 inspector_entries,
                 peer_state,
                 error,
+                offer_url,
+                answer_blob,
+                incoming_offer,
                 page_start_ms,
             );
             spawn(async move {
@@ -702,6 +708,9 @@ fn build_peer_callbacks(
     mut inspector_entries: Signal<Vec<Entry>>,
     mut peer_state: Signal<Option<PeerState>>,
     mut error: Signal<String>,
+    mut offer_url: Signal<Option<String>>,
+    mut answer_blob: Signal<Option<String>>,
+    mut incoming_offer: Signal<Option<String>>,
     page_start_ms: f64,
 ) -> (
     impl FnMut(Vec<u8>) + 'static,
@@ -804,6 +813,12 @@ fn build_peer_callbacks(
                     &mut error,
                     page_start_ms,
                 );
+                // The pending-invite UI is now stale: whichever role
+                // brought us here (offerer or answerer), we are a peer
+                // in the mesh and can issue fresh invites symmetrically.
+                offer_url.set(None);
+                answer_blob.set(None);
+                incoming_offer.set(None);
             }
             PeerState::Closed => {
                 peers.with_mut(|v| v.retain(|p| p.id != peer_id));
