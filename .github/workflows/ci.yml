@@ -25,7 +25,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --all-features --workspace --exclude chat-frontend
+        run: cargo test --all-features --workspace --exclude web-demo
 
       - name: Build benchmarks (test mode)
         run: cargo test --benches --all-features --no-run
@@ -55,9 +55,14 @@ jobs:
 
       - name: Clippy (workspace, excluding WASM-only crates)
         run: |
-          cargo clippy --all-features -p sqlite-diff-rs -p chat-shared -p chat-backend \
+          cargo clippy --all-features -p sqlite-diff-rs \
             -p payload-size-bench -p apply-bench-report -p wal2json-integration-tests \
             -p pg-walstream-integration-tests -- -D warnings
+
+      - name: Clippy (web-demo, wasm32 target)
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo clippy -p web-demo --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Validate SVG files
         run: |

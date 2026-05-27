@@ -51,8 +51,8 @@ use core::ops::{BitOr, BitOrAssign};
 use crate::{
     SchemaWithPK,
     builders::{
-        ChangeDelete, ChangesetFormat, Insert, Operation, PatchDelete, PatchsetFormat, Update,
-        format::Format,
+        ChangeDelete, ChangesetFormat, ChangesetOp, Insert, Operation, PatchDelete, PatchsetFormat,
+        PatchsetOp, Update, format::Format,
     },
     encoding::{
         MaybeValue, Value, encode_defined_value, encode_undefined, encode_value, markers, op_codes,
@@ -1033,6 +1033,85 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     #[must_use]
     pub fn len(&self) -> usize {
         self.tables.iter().map(|(_, rows)| rows.len()).sum()
+    }
+}
+
+// -- Changeset iter (DiffSet) -------------------------------------------------
+
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]> + Hash + Eq>
+    DiffSet<F, T, S, B>
+{
+    /// Returns the schema of each table that holds at least one operation,
+    /// in stored order.
+    pub fn tables(&self) -> impl Iterator<Item = &T> {
+        self.tables
+            .iter()
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|(t, _)| t)
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
+    DiffSet<ChangesetFormat, T, S, B>
+{
+    /// Iterate over every operation in the changeset.
+    ///
+    /// Operations are yielded in stored order, grouped by table. Each
+    /// [`ChangesetOp`] borrows from this `DiffSet`, so the returned
+    /// iterator is invalidated when the `DiffSet` is dropped or mutated.
+    pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
+        self.tables.iter().flat_map(|(table, rows)| {
+            rows.iter().map(move |(_pk, op)| match op {
+                Operation::Insert { values, indirect } => ChangesetOp::Insert {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Update { values, indirect } => ChangesetOp::Update {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Delete { data, indirect } => ChangesetOp::Delete {
+                    table,
+                    old_values: data.as_slice(),
+                    indirect: *indirect,
+                },
+            })
+        })
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
+    DiffSet<PatchsetFormat, T, S, B>
+{
+    /// Iterate over every operation in the patchset.
+    ///
+    /// Operations are yielded in stored order, grouped by table. Each
+    /// [`PatchsetOp`] borrows from this `DiffSet`. For DELETE and UPDATE
+    /// ops only the primary-key columns are available (patchset format
+    /// does not carry full old-row values).
+    pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
+        self.tables.iter().flat_map(|(table, rows)| {
+            rows.iter().map(move |(pk, op)| match op {
+                Operation::Insert { values, indirect } => PatchsetOp::Insert {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Update { values, indirect } => PatchsetOp::Update {
+                    table,
+                    pk: pk.as_slice(),
+                    entries: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
+                    table,
+                    pk: pk.as_slice(),
+                    indirect: *indirect,
+                },
+            })
+        })
     }
 }
 
@@ -2535,5 +2614,133 @@ mod tests {
             .unwrap();
         let after_update = <_ as DiffOps<_, _, _>>::update(frozen, update);
         assert_eq!(after_update.len(), 1);
+    }
+
+    #[test]
+    fn test_diffset_changeset_iter_yields_inserts_and_indirect_flag() {
+        let table = TestTable::new("t", 2, 0);
+        let direct = Insert::from(table.clone()).set(0, 1i64).unwrap();
+        let indirect = Insert::from(table.clone())
+            .set(0, 2i64)
+            .unwrap()
+            .indirect(true);
+        let frozen: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = ChangesetBuilder::new()
+            .insert(direct)
+            .insert(indirect)
+            .into();
+
+        let ops: Vec<_> = frozen.iter().collect();
+        assert_eq!(ops.len(), 2);
+        for op in &ops {
+            assert_eq!(crate::DynTable::name(op.table()), "t");
+        }
+        assert!(matches!(
+            ops[0],
+            ChangesetOp::Insert {
+                indirect: false,
+                ..
+            }
+        ));
+        assert!(matches!(ops[1], ChangesetOp::Insert { indirect: true, .. }));
+    }
+
+    #[test]
+    fn test_diffset_changeset_iter_yields_update_and_delete() {
+        let table = TestTable::new("t", 2, 0);
+        let starting = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let update = Update::<TestTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
+            .set(0, 2i64, 2i64)
+            .unwrap()
+            .set(1, "before", "after")
+            .unwrap();
+        let delete = ChangeDelete::from(table.clone())
+            .set(0, 3i64)
+            .unwrap()
+            .set(1, "gone")
+            .unwrap();
+        let frozen: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = ChangesetBuilder::new()
+            .insert(starting)
+            .update(update)
+            .delete(delete)
+            .into();
+
+        let kinds: Vec<&'static str> = frozen
+            .iter()
+            .map(|op| match op {
+                ChangesetOp::Insert { .. } => "insert",
+                ChangesetOp::Update { .. } => "update",
+                ChangesetOp::Delete { .. } => "delete",
+            })
+            .collect();
+        assert_eq!(kinds, ["insert", "update", "delete"]);
+    }
+
+    #[test]
+    fn test_diffset_patchset_iter_exposes_pk_for_delete_and_update() {
+        let table = TestTable::new("t", 2, 0);
+        let starting = Insert::from(table.clone())
+            .set(0, 1i64)
+            .unwrap()
+            .set(1, "a")
+            .unwrap();
+        let update = Update::<TestTable, PatchsetFormat, String, Vec<u8>>::from(table.clone())
+            .set(0, 5i64)
+            .unwrap()
+            .set(1, "z")
+            .unwrap();
+        let delete: PatchDelete<TestTable, String, Vec<u8>> =
+            PatchDelete::new(table.clone(), vec![Value::Integer(7)]);
+
+        let frozen: DiffSet<PatchsetFormat, TestTable, String, Vec<u8>> = PatchSet::new()
+            .insert(starting)
+            .update(update)
+            .delete(delete)
+            .into();
+
+        let mut saw_insert = false;
+        let mut saw_update_pk: Option<i64> = None;
+        let mut saw_delete_pk: Option<i64> = None;
+        for op in frozen.iter() {
+            match op {
+                PatchsetOp::Insert { values, .. } => {
+                    saw_insert = true;
+                    assert!(matches!(values[0], Value::Integer(1)));
+                }
+                PatchsetOp::Update { pk, .. } => {
+                    if let Value::Integer(id) = pk[0] {
+                        saw_update_pk = Some(id);
+                    }
+                }
+                PatchsetOp::Delete { pk, .. } => {
+                    if let Value::Integer(id) = pk[0] {
+                        saw_delete_pk = Some(id);
+                    }
+                }
+            }
+        }
+        assert!(saw_insert);
+        assert_eq!(saw_update_pk, Some(5));
+        assert_eq!(saw_delete_pk, Some(7));
+    }
+
+    #[test]
+    fn test_diffset_tables_skips_empty() {
+        let t1 = TestTable::new("t1", 2, 0);
+        let t2 = TestTable::new("t2", 2, 0);
+        let insert_t1 = Insert::from(t1.clone()).set(0, 1i64).unwrap();
+        let insert_then_delete_t2 = Insert::from(t2.clone()).set(0, 9i64).unwrap();
+        let delete_t2 = ChangeDelete::from(t2.clone()).set(0, 9i64).unwrap();
+        let frozen: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = ChangesetBuilder::new()
+            .insert(insert_t1)
+            .insert(insert_then_delete_t2)
+            .delete(delete_t2)
+            .into();
+
+        let names: Vec<&str> = frozen.tables().map(crate::DynTable::name).collect();
+        assert_eq!(names, ["t1"]);
     }
 }

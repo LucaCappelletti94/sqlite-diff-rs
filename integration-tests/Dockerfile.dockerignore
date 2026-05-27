@@ -1,6 +1,0 @@
-# Keep the Docker context small. Exclude build artifacts and VCS.
-target/
-fuzz/hfuzz_target/
-fuzz/hfuzz_workspace/
-fuzz/target/
-.git/

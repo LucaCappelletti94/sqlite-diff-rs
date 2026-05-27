@@ -16,9 +16,7 @@ members = [
 	".",
 	"fuzz",
 	"compile-bench",
-	"integration-tests/shared",
-	"integration-tests/backend",
-	"integration-tests/frontend",
+	"examples/web-demo",
 	"integration-tests/payload-size-bench",
 	"integration-tests/apply-bench-report",
 	"integration-tests/wal2json",
@@ -127,3 +125,10 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Redirect the diesel git dep used by `web-demo` and `diesel-sqlite-session`
+# to the fork that carries PR #4969 (SQLite update_hook helpers). The
+# web-demo uses `on_table_change` to invalidate per-table view signals
+# when remote changesets land via `sqlite3changeset_apply`.
+[patch."https://github.com/diesel-rs/diesel"]
+diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite3_update_hook" }

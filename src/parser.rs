@@ -124,6 +124,16 @@ impl<S> TableSchema<S> {
         &self.name
     }
 
+    /// Returns the raw primary-key flags. Each byte at index `i`
+    /// represents column `i`: `0` means the column is not part of the
+    /// primary key, and a non-zero value `k` means it is the `k`-th
+    /// column in the composite primary key.
+    #[inline]
+    #[must_use]
+    pub fn pk_flags(&self) -> &[u8] {
+        &self.pk_flags
+    }
+
     /// Get the indices of primary key columns, in PK order.
     #[must_use]
     pub(crate) fn pk_indices(&self) -> Vec<usize> {
