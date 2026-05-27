@@ -1,14 +1,19 @@
 //! Serverless peer-to-peer chat demo for sqlite-diff-rs.
 //!
-//! Each browser runs its own SQLite database via sqlite-wasm-rs. Writes are
-//! captured as session-extension changesets and sent over a WebRTC data
-//! channel directly to the other peer, with no backend involved.
+//! Each browser runs its own SQLite database via sqlite-wasm-rs. Every
+//! event (chat messages, identity announcements, typing indicators)
+//! flows through SQLite tables: a write hits a session-attached table,
+//! the session extension captures it as raw changeset bytes, and the
+//! bytes are gossipped over a WebRTC data channel directly between
+//! peers. Incoming changesets are applied through `sqlite3changeset_apply`,
+//! which fires the diesel update-hook (PR #4969) so the UI knows
+//! exactly which tables need re-querying.
 //!
-//! Each browser holds its own in-memory SQLite, writes go through
-//! diesel with the session extension attached, and the captured
-//! changeset bytes flow directly to the other peer over a WebRTC data
-//! channel. The diff inspector at the bottom of the page parses every
-//! outgoing and incoming byte buffer through sqlite-diff-rs.
+//! The result: identity and presence are not bespoke wire envelopes,
+//! they are just rows in `peers` and `typing` that ride the same
+//! gossip path as message rows. The diff inspector at the bottom of
+//! the page parses every outgoing and incoming byte buffer through
+//! sqlite-diff-rs.
 
 mod db;
 mod inspector;
@@ -17,8 +22,7 @@ mod schema;
 mod signal;
 mod wire;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use diesel_sqlite_session::{ConflictAction, ConflictType};
@@ -30,13 +34,13 @@ use dioxus_free_icons::icons::fa_solid_icons::{
 };
 use uuid::Uuid;
 
-use crate::db::{Db, Message};
+use crate::db::{ChangedTable, Db, Message, PeerRow, TypingRow};
 use crate::inspector::{Direction, Entry, InspectorPane, parse_entry};
 use crate::rtc::{Peer, PeerState};
 use crate::signal::{
     Decoded, decode_answer_blob, encode_answer_blob, encode_offer_url, fragment_from_url,
 };
-use crate::wire::{DedupCache, HelloPayload, Kind};
+use crate::wire::{DedupCache, Kind};
 
 fn main() {
     launch(App);
@@ -45,52 +49,112 @@ fn main() {
 /// Shared, single-threaded handle to the in-memory database.
 type SharedDb = Rc<RefCell<Db>>;
 
-/// One direct WebRTC neighbor in the gossip mesh. The `id` is local-only
-/// and is used to identify the entry when callbacks fire (e.g. to remove
-/// the entry on channel close). Identity (display name) of the remote
-/// peer is stored in the App-scope `known_members` map keyed by the
-/// remote's `self_id`, not on the per-edge `PeerEntry`.
+/// Per-table dirty counters owned by the diesel update-hook closure.
+///
+/// The hook fires synchronously on every row write (local diesel call
+/// or `sqlite3changeset_apply` of a peer's bytes) and bumps the
+/// counter matching the affected table. A `use_effect` watching each
+/// signal then re-queries the corresponding view signal on the next
+/// tick. Bundling the three signals in one struct (rather than three
+/// captured locals) sidesteps the Rust 2021 disjoint-capture rule and
+/// lets us assert `Send` for the whole bundle in one place.
+struct DirtyCounters {
+    messages: Signal<u64>,
+    peers: Signal<u64>,
+    typing: Signal<u64>,
+}
+
+// SAFETY: wasm32 is single-threaded; values never actually cross
+// threads, so the marker is decorative. The diesel update-hook API
+// inherits its `Send` bound from non-wasm targets where SQLite
+// connections can move between threads.
+unsafe impl Send for DirtyCounters {}
+
+impl DirtyCounters {
+    fn bump(&mut self, table: ChangedTable) {
+        let sig = match table {
+            ChangedTable::Messages => &mut self.messages,
+            ChangedTable::Peers => &mut self.peers,
+            ChangedTable::Typing => &mut self.typing,
+        };
+        let next = *sig.peek() + 1;
+        sig.set(next);
+    }
+}
+
+/// A direct WebRTC neighbor in the gossip mesh. `id` is local-only and
+/// identifies the entry to callbacks (e.g. to drop the entry when the
+/// data channel closes). The remote peer's identity (display name,
+/// `self_id`) is not stored here; it lives in the `peers` table and
+/// is rendered from `peer_rows`.
 #[derive(Clone)]
 pub struct PeerEntry {
     pub id: Uuid,
     pub peer: Peer,
 }
 
-/// One member of the room learned via a `Kind::Hello` frame (directly
-/// from this peer or gossip-forwarded from someone else). Stored in the
-/// App-scope `known_members` map keyed by the originator's `self_id`.
-///
-/// `hello_bytes` is the verbatim framed envelope. Storing it lets us
-/// replay the hello to a freshly-connected neighbor without re-encoding
-/// or generating a new `msg_id`.
-#[derive(Clone)]
-pub struct KnownMember {
-    pub name: String,
-    pub hello_bytes: Vec<u8>,
-}
+/// Typing rows older than this are treated as stale and hidden in
+/// the UI. The local peer touches its typing row at most every
+/// [`TYPING_THROTTLE_MS`], so this leaves room for ~2 missed refreshes
+/// before a peer is considered to have stopped typing.
+const TYPING_TTL_MS: i64 = 4000;
+
+/// Minimum interval between consecutive local UPSERTs into the
+/// `typing` table while the user keeps pressing keys. Lower values
+/// produce more gossip traffic for no UI benefit.
+const TYPING_THROTTLE_MS: f64 = 1500.0;
+
+/// How often the local peer refreshes its own `peers` row to advertise
+/// that it is still in the room. Each refresh is gossiped through the
+/// mesh.
+const PRESENCE_HEARTBEAT_MS: u32 = 3000;
+
+/// A peer is rendered in the room list only while its `last_seen` is
+/// newer than this. Set to several heartbeats so a couple of dropped or
+/// delayed gossip messages do not flicker a peer out. A peer that closes
+/// its tab stops heartbeating and ages out within roughly this window.
+const PRESENCE_TTL_MS: i64 = 10_000;
 
 #[component]
 #[allow(clippy::too_many_lines)] // demo file, single-component-by-design
 fn App() -> Element {
-    // Persistent shared resources.
-    let db: Signal<SharedDb> = use_signal(|| {
-        Rc::new(RefCell::new(
-            Db::open().expect("opening in-memory SQLite must succeed"),
-        ))
-    });
-    let mut peers: Signal<Vec<PeerEntry>> = use_signal(Vec::new);
-    let dedup_cache: Signal<Rc<RefCell<DedupCache>>> =
-        use_signal(|| Rc::new(RefCell::new(DedupCache::new())));
     // This peer's session-scoped identity. Stable for the lifetime of
     // the page (a refresh starts a new session with a fresh id).
     let local_self_id: Uuid = use_hook(Uuid::new_v4);
-    // Every member we know about in the room, keyed by their session
-    // self_id. Includes our own entry. Populated by `Kind::Hello`
-    // frames (gossiped) and rendered as the peer list.
-    let mut known_members: Signal<HashMap<Uuid, KnownMember>> = use_signal(HashMap::new);
+    let local_self_id_bytes: Vec<u8> = local_self_id.as_bytes().to_vec();
 
-    // Chat state.
+    // Per-table dirty counters. The diesel update-hook bumps the
+    // matching counter every time a row in that table is written
+    // (whether by a local diesel call or by `sqlite3changeset_apply`
+    // of a peer's bytes). A `use_effect` watches each counter and
+    // re-queries the corresponding view signal on the next tick.
+    let messages_dirty: Signal<u64> = use_signal(|| 0);
+    let peers_dirty: Signal<u64> = use_signal(|| 0);
+    let typing_dirty: Signal<u64> = use_signal(|| 0);
+
+    let db: Signal<SharedDb> = use_signal(|| {
+        let mut counters = DirtyCounters {
+            messages: messages_dirty,
+            peers: peers_dirty,
+            typing: typing_dirty,
+        };
+        let db = Db::open(move |table| counters.bump(table))
+            .expect("opening in-memory SQLite must succeed");
+        Rc::new(RefCell::new(db))
+    });
+
+    // Direct WebRTC neighbors.
+    let mut peers: Signal<Vec<PeerEntry>> = use_signal(Vec::new);
+    let dedup_cache: Signal<Rc<RefCell<DedupCache>>> =
+        use_signal(|| Rc::new(RefCell::new(DedupCache::new())));
+
+    // View signals re-populated from the database when the matching
+    // dirty counter ticks.
     let mut messages: Signal<Vec<Message>> = use_signal(Vec::new);
+    let mut peer_rows: Signal<Vec<PeerRow>> = use_signal(Vec::new);
+    let mut typing_rows: Signal<Vec<TypingRow>> = use_signal(Vec::new);
+
+    // Editor state.
     let mut input = use_signal(String::new);
     let mut editing: Signal<Option<Vec<u8>>> = use_signal(|| None);
     let mut edit_buffer = use_signal(String::new);
@@ -104,7 +168,7 @@ fn App() -> Element {
     let mut incoming_offer: Signal<Option<String>> = use_signal(|| None);
 
     // Identity. Loaded from localStorage on first render; the user is
-    // prompted for one if the slot is empty.
+    // prompted for a name if the slot is empty.
     let mut display_name = use_signal(load_display_name);
     let name_input = use_signal(|| display_name.read().clone());
 
@@ -113,18 +177,44 @@ fn App() -> Element {
     let inspector_entries: Signal<Vec<Entry>> = use_signal(Vec::new);
     let page_start_ms = use_hook(js_sys::Date::now);
 
-    // Refresh the message list from the local database.
-    let refresh_messages = {
-        let db = db.read().clone();
-        move || match db.borrow_mut().list_messages() {
-            Ok(rows) => messages.set(rows),
-            Err(e) => error.set(format!("list: {e}")),
-        }
-    };
+    // Last time (page-relative ms) the local user touched their
+    // typing row. Used to throttle UPSERTs to TYPING_THROTTLE_MS.
+    let last_typing_touch: Rc<Cell<f64>> = use_hook(|| Rc::new(Cell::new(0.0)));
 
+    // Re-query the messages list when the messages table changes.
     use_effect({
-        let mut refresh = refresh_messages.clone();
-        move || refresh()
+        let db = db.read().clone();
+        move || {
+            let _ = messages_dirty.read();
+            match db.borrow_mut().list_messages() {
+                Ok(rows) => messages.set(rows),
+                Err(e) => error.set(format!("list messages: {e}")),
+            }
+        }
+    });
+
+    // Re-query the peers list when the peers table changes.
+    use_effect({
+        let db = db.read().clone();
+        move || {
+            let _ = peers_dirty.read();
+            match db.borrow_mut().list_peers() {
+                Ok(rows) => peer_rows.set(rows),
+                Err(e) => error.set(format!("list peers: {e}")),
+            }
+        }
+    });
+
+    // Re-query the typing list when the typing table changes.
+    use_effect({
+        let db = db.read().clone();
+        move || {
+            let _ = typing_dirty.read();
+            match db.borrow_mut().list_typing() {
+                Ok(rows) => typing_rows.set(rows),
+                Err(e) => error.set(format!("list typing: {e}")),
+            }
+        }
     });
 
     // On first render, see if we landed on a URL with an offer fragment.
@@ -134,32 +224,9 @@ fn App() -> Element {
         Err(e) => error.set(format!("fragment: {e}")),
     });
 
-    // Keep our own entry in the known-members map in sync with the
-    // display name signal. The hello_bytes we store here are the
-    // verbatim frame we will replay to every freshly-connected peer.
-    use_effect({
-        let dedup = dedup_cache.read().clone();
-        move || {
-            let name = display_name.read().clone();
-            if name.is_empty() {
-                return;
-            }
-            let payload = HelloPayload {
-                self_id: local_self_id,
-                name: name.clone(),
-            };
-            let msg_id = Uuid::new_v4();
-            let hello_bytes = wire::encode(Kind::Hello, msg_id, &payload.encode_payload());
-            dedup.borrow_mut().insert(msg_id);
-            known_members.with_mut(|m| {
-                m.insert(local_self_id, KnownMember { name, hello_bytes });
-            });
-        }
-    });
-
-    // Capture the session changeset after a successful local write, log
-    // it in the diff inspector, then push it over the wire if a peer is
-    // connected.
+    // Capture the session changeset after a successful local write,
+    // log it in the diff inspector, then push it over the wire to
+    // every direct neighbor.
     let capture_and_send = {
         let db = db.read().clone();
         let dedup = dedup_cache.read().clone();
@@ -172,18 +239,15 @@ fn App() -> Element {
                     return;
                 }
             };
+            if bytes.is_empty() {
+                return;
+            }
             push_entry(
                 &mut inspector_entries,
                 &bytes,
                 Direction::Out,
                 page_start_ms,
             );
-            if bytes.is_empty() {
-                return;
-            }
-            // Frame, mark our own message ID as seen so we drop the echo
-            // if any peer gossips it back to us, then broadcast to every
-            // direct neighbor.
             let msg_id = Uuid::new_v4();
             let framed = wire::encode(Kind::Changeset, msg_id, &bytes);
             dedup.borrow_mut().insert(msg_id);
@@ -196,16 +260,68 @@ fn App() -> Element {
             for neighbor in &neighbors {
                 // Tolerate send failure: the channel may have just
                 // started closing in the gap between the is_open
-                // filter above and now.
+                // filter and now.
                 let _ = neighbor.send(&framed);
             }
         }
     };
 
+    // Keep our own row in the `peers` table in sync with the display
+    // name signal. Each change re-UPSERTs and emits a gossip changeset
+    // so other peers learn (or relearn) our identity.
+    use_effect({
+        let db = db.read().clone();
+        let mut capture = capture_and_send.clone();
+        let self_id = local_self_id_bytes.clone();
+        move || {
+            let name = display_name.read().clone();
+            if name.is_empty() {
+                return;
+            }
+            let result = db.borrow_mut().upsert_peer(&self_id, &name);
+            match result {
+                Ok(()) => capture(),
+                Err(e) => error.set(format!("upsert self peer: {e}")),
+            }
+        }
+    });
+
+    // Presence heartbeat. Every PRESENCE_HEARTBEAT_MS we re-UPSERT our
+    // own `peers` row (refreshing `last_seen`) and gossip it, so other
+    // peers keep seeing us. The same write bumps `peers_dirty` locally,
+    // which re-renders the room list on a timer and ages out peers whose
+    // own heartbeats have stopped (for example because they closed their
+    // tab). A peer that leaves therefore disappears from every list
+    // within PRESENCE_TTL_MS, with no explicit "leave" message.
+    use_future({
+        let db = db.read().clone();
+        let capture = capture_and_send.clone();
+        let self_id = local_self_id_bytes.clone();
+        move || {
+            let db = db.clone();
+            let mut capture = capture.clone();
+            let self_id = self_id.clone();
+            async move {
+                loop {
+                    gloo_timers::future::TimeoutFuture::new(PRESENCE_HEARTBEAT_MS).await;
+                    let name = display_name.read().clone();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let result = db.borrow_mut().upsert_peer(&self_id, &name);
+                    match result {
+                        Ok(()) => capture(),
+                        Err(e) => error.set(format!("heartbeat: {e}")),
+                    }
+                }
+            }
+        }
+    });
+
     let mut send_message = {
         let db = db.read().clone();
-        let mut refresh = refresh_messages.clone();
         let mut capture = capture_and_send.clone();
+        let self_id = local_self_id_bytes.clone();
         move |_| {
             let body = input.read().trim().to_string();
             if body.is_empty() {
@@ -216,7 +332,8 @@ fn App() -> Element {
             match result {
                 Ok(_) => {
                     input.set(String::new());
-                    refresh();
+                    // Pressing send also stops the typing indicator.
+                    let _ = db.borrow_mut().clear_typing(&self_id);
                     capture();
                 }
                 Err(e) => error.set(format!("insert: {e}")),
@@ -236,7 +353,6 @@ fn App() -> Element {
 
     let save_edit = {
         let db = db.read().clone();
-        let mut refresh = refresh_messages.clone();
         let mut capture = capture_and_send.clone();
         move |_| {
             let Some(id) = editing.read().clone() else {
@@ -251,7 +367,6 @@ fn App() -> Element {
                 Ok(()) => {
                     editing.set(None);
                     edit_buffer.set(String::new());
-                    refresh();
                     capture();
                 }
                 Err(e) => error.set(format!("edit: {e}")),
@@ -261,16 +376,34 @@ fn App() -> Element {
 
     let delete_message = {
         let db = db.read().clone();
-        let mut refresh = refresh_messages.clone();
         let mut capture = capture_and_send.clone();
         move |id: Vec<u8>| {
             let result = db.borrow_mut().delete_message(&id);
             match result {
-                Ok(()) => {
-                    refresh();
-                    capture();
-                }
+                Ok(()) => capture(),
                 Err(e) => error.set(format!("delete: {e}")),
+            }
+        }
+    };
+
+    // Called on each keystroke in the message input. Throttled to
+    // [`TYPING_THROTTLE_MS`] so we do not flood the wire with one
+    // typing-update changeset per character.
+    let on_input_typed = {
+        let db = db.read().clone();
+        let mut capture = capture_and_send.clone();
+        let last_touch = last_typing_touch.clone();
+        let self_id = local_self_id_bytes.clone();
+        move || {
+            let now = js_sys::Date::now();
+            if now - last_touch.get() < TYPING_THROTTLE_MS {
+                return;
+            }
+            last_touch.set(now);
+            let result = db.borrow_mut().touch_typing(&self_id);
+            match result {
+                Ok(()) => capture(),
+                Err(e) => error.set(format!("typing: {e}")),
             }
         }
     };
@@ -287,10 +420,8 @@ fn App() -> Element {
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers,
-                known_members,
                 dedup.clone(),
                 peer_id,
-                messages,
                 inspector_entries,
                 peer_state,
                 error,
@@ -337,10 +468,8 @@ fn App() -> Element {
             let (on_message, on_state) = build_peer_callbacks(
                 db.clone(),
                 peers,
-                known_members,
                 dedup.clone(),
                 peer_id,
-                messages,
                 inspector_entries,
                 peer_state,
                 error,
@@ -403,7 +532,20 @@ fn App() -> Element {
         });
     };
 
-    let peer_count = known_members.read().len();
+    // Room membership is everyone whose presence heartbeat is recent,
+    // plus ourselves unconditionally (we never need a heartbeat to know
+    // we are here, and exempting self avoids a flicker if our own
+    // heartbeat is briefly late). Peers that stopped heartbeating, e.g.
+    // by closing their tab, fall outside the TTL and drop off the list.
+    #[allow(clippy::cast_possible_truncation)]
+    let now = js_sys::Date::now() as i64;
+    let present_peers: Vec<PeerRow> = peer_rows
+        .read()
+        .iter()
+        .filter(|p| p.self_id == local_self_id_bytes || p.last_seen > now - PRESENCE_TTL_MS)
+        .cloned()
+        .collect();
+    let peer_count = present_peers.len();
     let has_offer = offer_url.read().is_some();
     let has_answer = answer_blob.read().is_some();
     let has_incoming_offer = incoming_offer.read().is_some();
@@ -419,14 +561,12 @@ fn App() -> Element {
         display_name.set(typed);
     };
 
-    // Tear down every neighbor connection and reset the invite UI.
-    // Dropping each `PeerEntry` value drops its underlying data
-    // channel. `known_members` is also cleared; the use_effect that
-    // tracks `display_name` will re-seed our own entry on the next
-    // render.
+    // Tear down every WebRTC neighbor. The local DB state (messages,
+    // peers, typing) is left untouched: refreshing the page is the
+    // explicit "start fresh" gesture (it starts a new session with a
+    // new local_self_id and a fresh :memory: database).
     let reset_connection = move |_| {
         peers.with_mut(Vec::clear);
-        known_members.with_mut(HashMap::clear);
         offer_url.set(None);
         answer_blob.set(None);
         answer_input.set(String::new());
@@ -451,7 +591,7 @@ fn App() -> Element {
                     span { "Logged in as " strong { "{display_name}" } }
                     span { class: "spacer" }
                     span { "Peers: " strong { "{peer_count}" } }
-                    if peer_count > 0 {
+                    if !peers.read().is_empty() {
                         button {
                             class: "btn",
                             style: "margin-left: 0.5rem;",
@@ -463,7 +603,7 @@ fn App() -> Element {
                     }
                 }
 
-                PeerList { known_members, local_self_id }
+                PeerList { peers: present_peers.clone(), local_self_id }
 
                 ConnectionPanel {
                     has_offer,
@@ -512,6 +652,12 @@ fn App() -> Element {
                     }
                 }
 
+                TypingIndicator {
+                    typing_rows,
+                    peer_rows,
+                    local_self_id_bytes: local_self_id_bytes.clone(),
+                }
+
                 form {
                     class: "input-row",
                     onsubmit: move |evt| {
@@ -522,7 +668,13 @@ fn App() -> Element {
                         class: "input-text",
                         placeholder: "Type a message",
                         value: "{input}",
-                        oninput: move |evt| input.set(evt.value()),
+                        oninput: {
+                            let mut on_typed = on_input_typed.clone();
+                            move |evt: Event<FormData>| {
+                                input.set(evt.value());
+                                on_typed();
+                            }
+                        },
                     }
                     button { class: "btn-primary", r#type: "submit",
                         Icon { width: 14, height: 14, fill: "currentColor", icon: FaPaperPlane }
@@ -539,18 +691,8 @@ fn App() -> Element {
 }
 
 #[component]
-fn PeerList(known_members: Signal<HashMap<Uuid, KnownMember>>, local_self_id: Uuid) -> Element {
-    // Sort by name for stable rendering. The local entry is always
-    // labeled, regardless of where it falls in the alphabet.
-    let mut entries: Vec<(Uuid, KnownMember)> = known_members
-        .read()
-        .iter()
-        .map(|(id, m)| (*id, m.clone()))
-        .collect();
-    entries.sort_by(|a, b| a.1.name.cmp(&b.1.name));
-
-    if entries.len() <= 1 {
-        // Only ourselves (or no one): collapse to a hint.
+fn PeerList(peers: Vec<PeerRow>, local_self_id: Uuid) -> Element {
+    if peers.len() <= 1 {
         return rsx! {
             section { class: "peer-list peer-list-empty",
                 "You are alone in this room. Invite a guest below."
@@ -558,19 +700,23 @@ fn PeerList(known_members: Signal<HashMap<Uuid, KnownMember>>, local_self_id: Uu
         };
     }
 
+    let local_bytes = local_self_id.as_bytes().to_vec();
+    let mut entries: Vec<PeerRow> = peers;
+    entries.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+
     rsx! {
         section { class: "peer-list",
             div { class: "peer-list-header", "Peers in this room" }
             ul { class: "peer-list-items",
-                for (id, member) in entries {
-                    li { key: "{id}", class: "peer-item",
+                for row in entries {
+                    li { key: "{hex::encode(&row.self_id)}", class: "peer-item",
                         span { class: "peer-name",
-                            "{member.name}"
-                            if id == local_self_id {
+                            "{row.display_name}"
+                            if row.self_id == local_bytes {
                                 em { class: "peer-self-tag", " (you)" }
                             }
                         }
-                        span { class: "peer-id-suffix", "#{short_id(id)}" }
+                        span { class: "peer-id-suffix", "#{short_self_id(&row.self_id)}" }
                     }
                 }
             }
@@ -578,11 +724,57 @@ fn PeerList(known_members: Signal<HashMap<Uuid, KnownMember>>, local_self_id: Uu
     }
 }
 
-/// Render the first 8 hex characters of a UUID for compact identification
-/// in the peer list before the remote `Hello` arrives.
-fn short_id(id: Uuid) -> String {
-    let s = id.simple().to_string();
-    s.chars().take(8).collect()
+#[component]
+fn TypingIndicator(
+    typing_rows: Signal<Vec<TypingRow>>,
+    peer_rows: Signal<Vec<PeerRow>>,
+    local_self_id_bytes: Vec<u8>,
+) -> Element {
+    #[allow(clippy::cast_possible_truncation)]
+    let now = js_sys::Date::now() as i64;
+    let cutoff = now - TYPING_TTL_MS;
+
+    let rows = typing_rows.read();
+    let names_by_id: std::collections::HashMap<Vec<u8>, String> = peer_rows
+        .read()
+        .iter()
+        .map(|p| (p.self_id.clone(), p.display_name.clone()))
+        .collect();
+
+    let mut active: Vec<String> = rows
+        .iter()
+        .filter(|t| t.updated_at >= cutoff)
+        .filter(|t| t.self_id != local_self_id_bytes)
+        .filter_map(|t| names_by_id.get(&t.self_id).cloned())
+        .collect();
+    active.sort();
+    active.dedup();
+
+    if active.is_empty() {
+        return rsx! {
+            div { class: "typing-indicator typing-indicator-empty" }
+        };
+    }
+
+    let label = match active.len() {
+        1 => format!("{} is typing...", active[0]),
+        2 => format!("{} and {} are typing...", active[0], active[1]),
+        _ => format!(
+            "{} and {} others are typing...",
+            active[0],
+            active.len() - 1
+        ),
+    };
+
+    rsx! {
+        div { class: "typing-indicator", "{label}" }
+    }
+}
+
+/// Render the first 8 hex characters of a peer's `self_id` for compact
+/// identification next to their display name.
+fn short_self_id(bytes: &[u8]) -> String {
+    hex::encode(bytes).chars().take(8).collect()
 }
 
 #[component]
@@ -753,18 +945,16 @@ fn NamePrompt(name_input: Signal<String>, on_save: EventHandler<()>) -> Element 
 /// Build the pair of callbacks (`on_message`, `on_state`) that a freshly
 /// constructed [`Peer`] needs. The message callback applies incoming
 /// bytes through diesel-sqlite-session (session capture paused so the
-/// peer's changes are not echoed back), refreshes the message list, and
-/// pushes a parsed entry into the diff inspector. The state callback
-/// removes this peer's `PeerEntry` from the shared registry when the
-/// data channel closes.
+/// peer's changes are not echoed back) and gossip-forwards the original
+/// framed bytes verbatim. The state callback sends a one-shot snapshot
+/// of every session-attached table to the new neighbor on connect and
+/// removes this peer's `PeerEntry` from the shared registry on close.
 #[allow(clippy::too_many_arguments)] // demo file, callback construction
 fn build_peer_callbacks(
     db: SharedDb,
     mut peers: Signal<Vec<PeerEntry>>,
-    mut known_members: Signal<HashMap<Uuid, KnownMember>>,
     dedup: Rc<RefCell<DedupCache>>,
     peer_id: Uuid,
-    mut messages: Signal<Vec<Message>>,
     mut inspector_entries: Signal<Vec<Entry>>,
     mut peer_state: Signal<Option<PeerState>>,
     mut error: Signal<String>,
@@ -794,59 +984,6 @@ fn build_peer_callbacks(
         }
 
         match frame.kind {
-            Kind::Hello => {
-                let payload = match HelloPayload::decode_payload(frame.payload) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        error.set(format!("hello decode: {e}"));
-                        return;
-                    }
-                };
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
-                let entry = inspector::hello_entry(&payload.name, framed.len(), Direction::In, ts);
-                inspector_entries.with_mut(|v| {
-                    v.push(entry);
-                    let overflow = v.len().saturating_sub(50);
-                    if overflow > 0 {
-                        v.drain(..overflow);
-                    }
-                });
-
-                // Content-level dedup keyed by the announcer's self_id.
-                // If this identity is already known, we already forwarded
-                // it the first time we saw it; drop now.
-                let is_new = !known_members.read().contains_key(&payload.self_id);
-                if !is_new {
-                    return;
-                }
-                known_members.with_mut(|m| {
-                    m.insert(
-                        payload.self_id,
-                        KnownMember {
-                            name: payload.name,
-                            hello_bytes: framed.clone(),
-                        },
-                    );
-                });
-
-                // Gossip-forward the original framed bytes verbatim to
-                // every direct neighbor except the one that delivered
-                // them. Existing neighbors will dedup-reject by wire
-                // `msg_id`; only previously-unreached neighbors process.
-                let to_forward: Vec<Peer> = peers
-                    .read()
-                    .iter()
-                    .filter(|p| p.id != peer_id && p.peer.is_open())
-                    .map(|p| p.peer.clone())
-                    .collect();
-                for neighbor in &to_forward {
-                    // Tolerate send failure: the channel may have just
-                    // started closing. The `onclose` callback will reap
-                    // the dead entry on the next tick.
-                    let _ = neighbor.send(&framed);
-                }
-            }
             Kind::Changeset => {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
@@ -866,17 +1003,10 @@ fn build_peer_callbacks(
                     }
                 });
 
-                if apply_result.is_ok() {
-                    match db_for_msg.borrow_mut().list_messages() {
-                        Ok(rows) => messages.set(rows),
-                        Err(e) => error.set(format!("list after apply: {e}")),
-                    }
-                }
-
                 // Forward the original framed bytes (verbatim, same
                 // msg_id) to every neighbor except the one we received
                 // it from. Idempotency in the conflict handler covers
-                // any duplicate that arrives along another path.
+                // duplicates that arrive along another path.
                 let to_forward: Vec<Peer> = peers
                     .read()
                     .iter()
@@ -884,8 +1014,8 @@ fn build_peer_callbacks(
                     .map(|p| p.peer.clone())
                     .collect();
                 for neighbor in &to_forward {
-                    // Tolerate send failure for the same race-window
-                    // reason as the hello path above.
+                    // Tolerate send failure: the channel may have
+                    // started closing between is_open and now.
                     let _ = neighbor.send(&framed);
                 }
             }
@@ -895,9 +1025,8 @@ fn build_peer_callbacks(
         peer_state.set(Some(s));
         match s {
             PeerState::Connected => {
-                send_membership_and_snapshot(
+                send_snapshot(
                     peers,
-                    known_members,
                     &dedup,
                     &db,
                     peer_id,
@@ -920,19 +1049,14 @@ fn build_peer_callbacks(
     (on_message, on_state)
 }
 
-/// Replay every known member's `Hello` envelope on a freshly-connected
-/// neighbor's channel, then send the database snapshot. Called from the
-/// `on_state` callback when the data channel first opens.
-///
-/// Replaying the stored `hello_bytes` rather than synthesizing fresh
-/// frames means the new neighbor catches up on every identity we know
-/// about (direct and indirect) without us having to re-encode anything.
-/// Existing direct neighbors would dedup-reject these bytes by `msg_id`
-/// if the new neighbor gossipped them onward, so traffic stays bounded.
+/// Send a single bundled snapshot of every session-attached table to
+/// a freshly-connected neighbor. The receiving side applies it through
+/// `sqlite3changeset_apply` (idempotent via the `Replace` conflict
+/// policy), which fires the local update hooks and pulls in messages,
+/// peer identities, and typing rows in one shot.
 #[allow(clippy::too_many_arguments)]
-fn send_membership_and_snapshot(
+fn send_snapshot(
     peers: Signal<Vec<PeerEntry>>,
-    known_members: Signal<HashMap<Uuid, KnownMember>>,
     dedup: &Rc<RefCell<DedupCache>>,
     db: &SharedDb,
     peer_id: Uuid,
@@ -949,36 +1073,6 @@ fn send_membership_and_snapshot(
         return;
     };
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
-
-    // Replay every known member's hello to the new neighbor.
-    let members: Vec<(String, Vec<u8>)> = known_members
-        .read()
-        .values()
-        .map(|m| (m.name.clone(), m.hello_bytes.clone()))
-        .collect();
-    for (name, bytes) in &members {
-        // Tolerate failure: this fires from the on-open callback,
-        // and in principle the channel could have transitioned to
-        // closing between the open event and these sends.
-        let _ = peer.send(bytes);
-        inspector_entries.with_mut(|v| {
-            v.push(inspector::hello_entry(
-                name,
-                bytes.len(),
-                Direction::Out,
-                ts,
-            ));
-            let overflow = v.len().saturating_sub(50);
-            if overflow > 0 {
-                v.drain(..overflow);
-            }
-        });
-    }
-
-    // Snapshot of the current database state. Empty payload (no rows
-    // yet) produces a zero-length changeset; skip sending in that case.
     let snapshot = match db.borrow_mut().snapshot_changeset() {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -989,6 +1083,9 @@ fn send_membership_and_snapshot(
     if snapshot.is_empty() {
         return;
     }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ts = ((js_sys::Date::now() - page_start_ms).max(0.0)) as u32;
     let snap_id = Uuid::new_v4();
     let snap_framed = wire::encode(Kind::Changeset, snap_id, &snapshot);
     dedup.borrow_mut().insert(snap_id);
@@ -1030,8 +1127,9 @@ fn push_entry(
 /// touches: data-level conflicts (the row exists locally with different
 /// values) replace, foreign-key and constraint failures replace, and a
 /// `NotFound` (the peer is updating or deleting a row we never saw) is
-/// silently omitted. This is the simplest policy that keeps the two
-/// tabs consistent for INSERT, UPDATE, and DELETE.
+/// silently omitted. This is the simplest policy that keeps every peer
+/// consistent for INSERT, UPDATE, and DELETE on `messages`, `peers`,
+/// and `typing` alike.
 fn conflict_policy(conflict: ConflictType) -> ConflictAction {
     match conflict {
         ConflictType::NotFound => ConflictAction::Omit,
@@ -1059,8 +1157,3 @@ fn store_display_name(name: &str) {
         let _ = storage.set_item(DISPLAY_NAME_KEY, name);
     }
 }
-
-// Module-level type alias documented for downstream callers; reference
-// from a no-op fn so dead-code analysis does not flag it.
-#[allow(dead_code)]
-fn _assert_shared_db_type(_: SharedDb) {}

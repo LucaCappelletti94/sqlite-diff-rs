@@ -1,5 +1,5 @@
-// Some items here are reserved for upcoming gossip extensions
-// (additional kinds, snapshot frames, etc.) and not all are used yet.
+// Items in this module are wired up by the App-scope code; some helper
+// methods are exercised only by tests.
 #![allow(dead_code)]
 
 //! Wire envelope for inter-peer messages on the WebRTC data channel.
@@ -9,15 +9,17 @@
 //! ```text
 //! [version: u8 = 1]
 //! [msg_id: 16 bytes (UUIDv4)]
-//! [kind: u8]
-//! [payload: remaining bytes]
+//! [kind: u8 = 0x02 (changeset)]
+//! [payload: remaining bytes, the raw sqlite-diff-rs changeset]
 //! ```
 //!
-//! The 16-byte `msg_id` lets receivers deduplicate gossiped messages
-//! that arrive along more than one path through the mesh. The `kind`
-//! byte distinguishes a hello frame (sender announcing its display
-//! name) from a changeset frame (raw sqlite-diff-rs binary). Future
-//! kinds can be added without breaking forward compatibility.
+//! The 16-byte `msg_id` is per-edge: it lets receivers deduplicate
+//! gossiped changesets that arrive along more than one path through the
+//! mesh. There is only one kind of payload, raw session-extension
+//! changeset bytes. Identity announcements ("Alice is here") and
+//! ephemeral status events ("Alice is typing") both flow as
+//! changesets to dedicated tables; the wire format does not have a
+//! separate envelope for them.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -30,20 +32,20 @@ const HEADER_LEN: usize = 1 + 16 + 1;
 /// is full and a new ID arrives, the oldest is evicted.
 pub const DEDUP_CAPACITY: usize = 256;
 
-/// Type of frame carried in an envelope.
+/// Type of frame carried in an envelope. The wire currently uses only
+/// the single `Changeset` variant; the enum exists so that hypothetical
+/// future kinds (e.g., compressed payloads) can be added without
+/// breaking forward compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Kind {
-    /// Sender announces its display name (payload is UTF-8).
-    Hello = 0x01,
-    /// Raw sqlite-diff-rs changeset bytes (payload is the binary changeset).
+    /// Raw sqlite-diff-rs changeset bytes.
     Changeset = 0x02,
 }
 
 impl Kind {
     fn from_byte(byte: u8) -> Option<Self> {
         match byte {
-            0x01 => Some(Self::Hello),
             0x02 => Some(Self::Changeset),
             _ => None,
         }
@@ -70,9 +72,6 @@ pub enum WireError {
     UnsupportedVersion(u8),
     /// Kind byte did not match a known kind.
     UnknownKind(u8),
-    /// Hello payload was malformed: either shorter than the 16-byte
-    /// `self_id` prefix or carried a non-UTF-8 name.
-    BadHello,
 }
 
 impl core::fmt::Display for WireError {
@@ -81,56 +80,11 @@ impl core::fmt::Display for WireError {
             Self::Truncated => write!(f, "frame shorter than 18-byte header"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported wire version {v}"),
             Self::UnknownKind(k) => write!(f, "unknown frame kind {k:#x}"),
-            Self::BadHello => write!(f, "hello payload is malformed"),
         }
     }
 }
 
 impl std::error::Error for WireError {}
-
-/// Structured view of a [`Kind::Hello`] payload.
-///
-/// The hello payload layout is `[self_id: 16 bytes][name: UTF-8 bytes]`.
-/// The `self_id` is the originating peer's per-session UUIDv4, used by
-/// receivers to deduplicate identity announcements arriving via gossip.
-/// It is distinct from the per-edge `msg_id` used by [`encode`] / [`decode`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HelloPayload {
-    /// The originator's session-scoped identity (NOT the per-edge msg_id).
-    pub self_id: Uuid,
-    /// The originator's display name.
-    pub name: String,
-}
-
-impl HelloPayload {
-    /// Serialize this payload as the body bytes that go into a
-    /// `Kind::Hello` envelope.
-    #[must_use]
-    pub fn encode_payload(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(16 + self.name.len());
-        out.extend_from_slice(self.self_id.as_bytes());
-        out.extend_from_slice(self.name.as_bytes());
-        out
-    }
-
-    /// Decode a payload previously produced by [`Self::encode_payload`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WireError::BadHello`] if `bytes` is shorter than the
-    /// 16-byte `self_id` prefix or if the name region is not valid UTF-8.
-    pub fn decode_payload(bytes: &[u8]) -> Result<Self, WireError> {
-        if bytes.len() < 16 {
-            return Err(WireError::BadHello);
-        }
-        let id_bytes: [u8; 16] = bytes[..16].try_into().expect("16-byte prefix");
-        let self_id = Uuid::from_bytes(id_bytes);
-        let name = core::str::from_utf8(&bytes[16..])
-            .map_err(|_| WireError::BadHello)?
-            .to_string();
-        Ok(Self { self_id, name })
-    }
-}
 
 /// Build a binary frame ready to push through the data channel.
 #[must_use]
@@ -220,16 +174,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_hello() {
-        let id = Uuid::new_v4();
-        let bytes = encode(Kind::Hello, id, b"Alice");
-        let frame = decode(&bytes).expect("decode");
-        assert_eq!(frame.msg_id, id);
-        assert_eq!(frame.kind, Kind::Hello);
-        assert_eq!(frame.payload, b"Alice");
-    }
-
-    #[test]
     fn round_trip_changeset() {
         let id = Uuid::new_v4();
         let payload = (0u8..32).collect::<Vec<_>>();
@@ -249,7 +193,7 @@ mod tests {
     #[test]
     fn decode_rejects_bad_version() {
         let id = Uuid::new_v4();
-        let mut bytes = encode(Kind::Hello, id, b"x");
+        let mut bytes = encode(Kind::Changeset, id, b"x");
         bytes[0] = 9;
         assert!(matches!(
             decode(&bytes),
@@ -260,7 +204,7 @@ mod tests {
     #[test]
     fn decode_rejects_unknown_kind() {
         let id = Uuid::new_v4();
-        let mut bytes = encode(Kind::Hello, id, b"x");
+        let mut bytes = encode(Kind::Changeset, id, b"x");
         bytes[17] = 0xFF;
         assert!(matches!(decode(&bytes), Err(WireError::UnknownKind(0xFF))));
     }
@@ -275,38 +219,6 @@ mod tests {
     }
 
     #[test]
-    fn hello_payload_round_trip() {
-        let id = Uuid::new_v4();
-        let p = HelloPayload {
-            self_id: id,
-            name: "Alice".into(),
-        };
-        let bytes = p.encode_payload();
-        assert_eq!(bytes.len(), 16 + "Alice".len());
-        let decoded = HelloPayload::decode_payload(&bytes).expect("decode");
-        assert_eq!(decoded.self_id, id);
-        assert_eq!(decoded.name, "Alice");
-    }
-
-    #[test]
-    fn hello_payload_rejects_truncated() {
-        assert!(matches!(
-            HelloPayload::decode_payload(&[1u8; 8]),
-            Err(WireError::BadHello)
-        ));
-    }
-
-    #[test]
-    fn hello_payload_rejects_non_utf8() {
-        let mut bytes = vec![0u8; 16];
-        bytes.extend_from_slice(&[0xFF, 0xFE, 0xFD]);
-        assert!(matches!(
-            HelloPayload::decode_payload(&bytes),
-            Err(WireError::BadHello)
-        ));
-    }
-
-    #[test]
     fn dedup_evicts_oldest_at_capacity() {
         let mut cache = DedupCache::new();
         let mut ids = Vec::new();
@@ -315,11 +227,9 @@ mod tests {
             ids.push(id);
             assert!(cache.insert(id));
         }
-        // Oldest ID still present
         assert!(!cache.insert(ids[0]));
-        // Push one more, the oldest should be evicted
         let extra = Uuid::new_v4();
         assert!(cache.insert(extra));
-        assert!(cache.insert(ids[0])); // re-insertable because evicted
+        assert!(cache.insert(ids[0]));
     }
 }

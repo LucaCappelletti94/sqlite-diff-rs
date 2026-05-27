@@ -53,11 +53,6 @@ pub struct Entry {
 pub enum EntryBody {
     /// Empty input, no operations, no parse attempt.
     Empty,
-    /// A peer's hello frame carrying their display name.
-    Hello {
-        /// Name the peer announced.
-        name: String,
-    },
     /// Parsed changeset or patchset successfully.
     Parsed {
         /// `changeset` or `patchset`.
@@ -118,25 +113,6 @@ pub fn parse_entry(bytes: &[u8], direction: Direction, timestamp_ms: u32) -> Ent
         direction,
         byte_count: bytes.len(),
         body,
-        apply_error: None,
-    }
-}
-
-/// Build an inspector entry for a hello frame.
-#[must_use]
-pub fn hello_entry(
-    name: &str,
-    byte_count: usize,
-    direction: Direction,
-    timestamp_ms: u32,
-) -> Entry {
-    Entry {
-        timestamp_ms,
-        direction,
-        byte_count,
-        body: EntryBody::Hello {
-            name: name.to_string(),
-        },
         apply_error: None,
     }
 }
@@ -346,11 +322,6 @@ fn EntryRow(entry: Entry) -> Element {
 fn EntryHeadline(body: EntryBody) -> Element {
     match body {
         EntryBody::Empty => rsx! { span { "(empty)" } },
-        EntryBody::Hello { name } => rsx! {
-            span { style: "color: #2a6f2a; font-weight: bold;", "HELLO" }
-            " "
-            span { "{name}" }
-        },
         EntryBody::ParseError(e) => rsx! { span { style: "color: #b00;", "parse error: {e}" } },
         EntryBody::Parsed { format, ops } => {
             let op_count = ops.len();
@@ -363,7 +334,7 @@ fn EntryHeadline(body: EntryBody) -> Element {
 #[component]
 fn EntryDetail(body: EntryBody) -> Element {
     match body {
-        EntryBody::Empty | EntryBody::Hello { .. } | EntryBody::ParseError(_) => rsx! {},
+        EntryBody::Empty | EntryBody::ParseError(_) => rsx! {},
         EntryBody::Parsed { ops, .. } => rsx! {
             ul { style: "list-style: none; padding-left: 1rem;",
                 for op in ops {
