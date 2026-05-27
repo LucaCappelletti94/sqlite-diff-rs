@@ -3,6 +3,12 @@ name: Deploy demo to GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "examples/web-demo/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/deploy-demo.yml"
   workflow_dispatch:
 
 permissions:
@@ -34,8 +40,16 @@ jobs:
         with:
           tool: dioxus-cli@0.7.9
 
+      # Served at the root of the custom domain chat.luca.phd, so the
+      # bundle is built for "/" (no project-pages base path).
       - name: Build web-demo
-        run: dx build --release --platform web -p web-demo --base-path /sqlite-diff-rs/
+        run: dx build --release --platform web -p web-demo
+
+      # Tell GitHub Pages to serve the artifact on the custom domain. The
+      # CNAME must live in the published artifact so the Actions-based
+      # deployment does not clear the domain on each run.
+      - name: Write CNAME for custom domain
+        run: echo 'chat.luca.phd' > target/dx/web-demo/release/web/public/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
