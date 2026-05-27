@@ -1,0 +1,60 @@
+name: AddressSanitizer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  asan:
+    name: AddressSanitizer (memory + leaks)
+    runs-on: ubuntu-latest
+    env:
+      # Instrument the Rust code, and (via -Zbuild-std below) a freshly rebuilt
+      # standard library, with AddressSanitizer. AddressSanitizer bundles
+      # LeakSanitizer, which reports allocations still live at process exit.
+      RUSTFLAGS: -Zsanitizer=address
+      # The crate itself contains no `unsafe`; the memory-safety surface is the
+      # FFI path where tests apply changesets through rusqlite's bundled SQLite
+      # C library. Instrument that C code too so any leak or corruption inside
+      # SQLite gets an accurate stack trace instead of an anonymous frame.
+      CFLAGS: -fsanitize=address -fno-omit-frame-pointer
+      CXXFLAGS: -fsanitize=address -fno-omit-frame-pointer
+      # Turn on leak detection and stack-use-after-return checking. A detected
+      # leak makes the test binary exit non-zero, which fails the job.
+      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # ubuntu-24.04 runners ship vm.mmap_rnd_bits=32, which collides with
+      # AddressSanitizer's shadow memory layout ("Shadow memory range
+      # interleaves with an existing memory mapping"). Lowering ASLR entropy
+      # restores a layout ASan can use.
+      - name: Relax ASLR entropy for AddressSanitizer
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      # rust-src is required so -Zbuild-std can recompile the standard library
+      # with the sanitizer enabled.
+      - name: Install Rust nightly with rust-src
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: asan
+
+      # Passing --target (even though it matches the host) keeps RUSTFLAGS off
+      # build scripts and proc-macros, which must stay uninstrumented. --lib and
+      # --tests cover the library and integration tests; doctests are skipped as
+      # they link unreliably under -Zbuild-std with the sanitizer.
+      - name: Run tests under AddressSanitizer
+        run: |
+          cargo test -p sqlite-diff-rs --all-features --lib --tests \
+            -Zbuild-std --target x86_64-unknown-linux-gnu
