@@ -16,7 +16,6 @@ members = [
 	".",
 	"fuzz",
 	"compile-bench",
-	"examples/web-demo",
 	"integration-tests/payload-size-bench",
 	"integration-tests/apply-bench-report",
 	"integration-tests/wal2json",
@@ -56,28 +55,23 @@ pedantic = { level = "deny", priority = -1 }
 thiserror = "2"
 hashbrown = "0.17.1"
 indexmap = { version = "2", default-features = false }
-rusqlite = { version = "0.39", features = [
+rusqlite = { version = "0.40", features = [
 	"bundled",
 	"session",
 ], optional = true }
 arbitrary = { version = "1", features = ["derive"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
-pg_walstream = { version = "0.6.3", optional = true }
+pg_walstream = { version = "0.7", optional = true }
 
 [dev-dependencies]
-rusqlite = { version = "0.39", features = ["bundled", "session", "backup"] }
+rusqlite = { version = "0.40", features = ["bundled", "session", "backup"] }
 arbitrary = { version = "1", features = ["derive"] }
 rand = "0.10.1"
 uuid = { version = "1", features = ["v7"] }
 hex = "0.4"
 bytes = "1"
 criterion = { version = "0.8.2", features = ["html_reports"] }
-
-[dev-dependencies.cargo-husky]
-version = "1"
-default-features = false
-features = ["user-hooks"]
 
 [features]
 default = []
@@ -125,10 +119,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
-# Redirect the diesel git dep used by `web-demo` and `diesel-sqlite-session`
-# to the fork that carries PR #4969 (SQLite update_hook helpers). The
-# web-demo uses `on_table_change` to invalidate per-table view signals
-# when remote changesets land via `sqlite3changeset_apply`.
-[patch."https://github.com/diesel-rs/diesel"]
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite3_update_hook" }
