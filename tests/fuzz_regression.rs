@@ -91,21 +91,29 @@ fn fuzz_regression_crash_4() {
 
 /// Crash 5: Patchset UPDATE losing PK values during serialization.
 ///
-/// Bug: Patchset UPDATE serialization wrote Undefined for ALL old values,
-///      including PK columns. When re-parsed, `extract_pk` got all Undefined.
-/// Fix: Serialize PK values from `HashMap` key into the `old_values` PK positions.
+/// Original bug: patchset UPDATE serialization wrote Undefined for ALL old
+/// values, including PK columns. When re-parsed, `extract_pk` got all
+/// Undefined and the roundtrip lost the PK.
+/// Original fix: serialize PK values from the `HashMap` key into the
+/// `old_values` PK positions.
 ///
-/// Note: after the patchset UPDATE wire layout was tightened to match SQLite
-/// (PK-only old side, non-PK-only new side), this synthesized input no longer
-/// parses because the trailing bytes fall through to an invalid op-code. The
-/// test still guards against panics: `test_roundtrip` returns silently on a
-/// parse error. See `tests/session_output_parser_roundtrip.rs` for the current
-/// UPDATE PK-preservation coverage.
+/// The original synthesized input no longer decodes cleanly after the
+/// patchset UPDATE wire layout was tightened to match SQLite (PK-only old
+/// side, non-PK-only new side). The bytes below are the real
+/// `Session::patchset_strm` output for
+/// `UPDATE orders SET status = 'shipped' WHERE id = 5` against a
+/// pre-existing row on
+/// `CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT)`.
+/// If the PK value (`INTEGER 5`) is lost anywhere along parse → serialize,
+/// the roundtrip mismatches on byte 14 (the type tag of the old-side PK
+/// slot). See `tests/session_output_parser_roundtrip.rs` for the full
+/// coverage matrix.
 #[test]
 fn fuzz_regression_crash_5() {
-    let input = [
-        0x50, 0x02, 0xff, 0x40, 0x00, 0x17, 0x00, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0x09, 0x00, 0x00, 0x00, 0x50, 0x02, 0xff, 0x40, 0x00,
+    let input: [u8; 33] = [
+        0x50, 0x03, 0x01, 0x00, 0x00, b'o', b'r', b'd', b'e', b'r', b's', 0x00, 0x17, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x03, 0x07, b's', b'h', b'i', b'p',
+        b'p', b'e', b'd',
     ];
     test_roundtrip(&input);
 }
