@@ -11,7 +11,10 @@
 //! This file catches both classes of bug by comparing raw `Vec<u8>` output.
 #![cfg(feature = "testing")]
 
-use sqlite_diff_rs::testing::{assert_bit_parity, assert_patchset_sql_parity};
+use sqlite_diff_rs::testing::{
+    assert_bit_parity, assert_patchset_sql_parity, byte_diff_report,
+    session_changeset_and_patchset_with_setup,
+};
 use sqlite_diff_rs::{
     ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, PatchDelete, PatchSet,
     PatchsetFormat, SimpleTable, Update, Value,
@@ -587,5 +590,140 @@ fn bit_parity_all_nulls() {
             "CREATE TABLE items (id INTEGER PRIMARY KEY, a TEXT, b REAL, c INTEGER)",
             "INSERT INTO items (id, a, b, c) VALUES (1, NULL, NULL, NULL)",
         ],
+    );
+}
+
+// =============================================================================
+// Standalone UPDATE / DELETE against a pre-existing row.
+//
+// These are the only scenarios that expose SQLite's real patchset UPDATE wire
+// layout. When INSERT and UPDATE are recorded in the same session they
+// consolidate to a single INSERT, so the UPDATE branch of the encoder is never
+// exercised. The tests below insert the row BEFORE the session attaches, so
+// the session records only the UPDATE (or DELETE), matching the flow used by
+// downstream tools that stream a session's output.
+// =============================================================================
+
+#[test]
+fn bit_parity_standalone_update_single_pk() {
+    // Regression: `parse_patchset_operation`'s UPDATE branch used to read
+    // `column_count` values on both sides. SQLite writes only `pk_count` on the
+    // old side and `column_count - pk_count` on the new side. This test drives
+    // the reported bug by producing a real standalone patchset UPDATE (the
+    // session sees only the UPDATE because the initial INSERT ran before
+    // `Session::attach`) and comparing bytes.
+    //
+    // Note: only patchset parity is asserted here. The changeset UPDATE builder
+    // has a separate, adjacent gap on the new side for PK columns that is out
+    // of scope for this fix.
+    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(0, 5i64)
+                .unwrap()
+                .set(2, "shipped")
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT)",
+            "INSERT INTO orders VALUES (5, 100, 'pending')",
+        ],
+        &["UPDATE orders SET status = 'shipped' WHERE id = 5"],
+    );
+
+    let ps_report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "standalone UPDATE patchset bit-parity failure\n{ps_report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_update_composite_pk() {
+    let schema = SimpleTable::new("items", &["a", "b", "val"], &[0, 1]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(0, 1i64)
+                .unwrap()
+                .set(1, 2i64)
+                .unwrap()
+                .set(2, "v2")
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE items (a INTEGER NOT NULL, b INTEGER NOT NULL, val TEXT, PRIMARY KEY(a, b))",
+            "INSERT INTO items VALUES (1, 2, 'v1')",
+        ],
+        &["UPDATE items SET val = 'v2' WHERE a = 1 AND b = 2"],
+    );
+
+    let ps_report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "composite PK standalone UPDATE bit-parity failure\n{ps_report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_update_all_non_pk_changed() {
+    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(0, 5i64)
+                .unwrap()
+                .set(1, 200i64)
+                .unwrap()
+                .set(2, "shipped")
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT)",
+            "INSERT INTO orders VALUES (5, 100, 'pending')",
+        ],
+        &["UPDATE orders SET amount = 200, status = 'shipped' WHERE id = 5"],
+    );
+
+    let ps_report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "all-non-PK UPDATE bit-parity failure\n{ps_report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_delete_single_pk() {
+    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .delete(PatchDelete::new(schema, vec![Value::Integer(5)]))
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT)",
+            "INSERT INTO orders VALUES (5, 100, 'pending')",
+        ],
+        &["DELETE FROM orders WHERE id = 5"],
+    );
+
+    let ps_report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "standalone DELETE bit-parity failure\n{ps_report}",
     );
 }

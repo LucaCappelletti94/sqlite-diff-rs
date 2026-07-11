@@ -546,22 +546,46 @@ fn parse_patchset_operation(
             builder.add_operation(schema, pk, Operation::Delete { data: (), indirect });
         }
         op_codes::UPDATE => {
-            // Patchset UPDATE old values contain PK column values (non-PK are Undefined).
-            // New values contain all column updates (Undefined for unchanged columns).
-            let (old_values, old_len) =
-                parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
+            // Patchset UPDATE wire layout (matching SQLite's session extension):
+            //   old side: PK-only values, in column order, exactly `pk_count` entries
+            //            (no padding / undefined markers for non-PK columns).
+            //   new side: non-PK columns, in column order, exactly
+            //            `column_count - pk_count` entries; each entry is either the
+            //            new column value or `0x00` (undefined) if that non-PK column
+            //            did not change.
+            //
+            // Internally we rehydrate the operation into a full-width
+            // `Vec<((), MaybeValue)>` of length `column_count` so downstream code
+            // (`extract_pk`, `sql_output`, consolidation, reversal) keeps working
+            // uniformly: PK slots hold `Some(pk_value)`, non-PK slots hold either
+            // `Some(new_value)` or `None` for undefined.
+            let pk_count = schema.pk_flags.iter().filter(|&&b| b > 0).count();
+            let non_pk_count = schema.column_count.saturating_sub(pk_count);
+
+            let (old_pk_values, old_len) = parse_values(&data[pos..], base_pos + pos, pk_count)?;
             pos += old_len;
-            let (new_values, new_len) =
-                parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
+            let (new_non_pk_values, new_len) =
+                parse_values(&data[pos..], base_pos + pos, non_pk_count)?;
             pos += new_len;
-            // Extract PK from old values (that's where build() writes PK columns)
-            let pk_values: Vec<Value<String, Vec<u8>>> = old_values
-                .iter()
-                .map(|v| v.clone().unwrap_or(Value::Null))
-                .collect();
-            let pk = schema.extract_pk(&pk_values);
-            let values: Vec<((), MaybeValue<String, Vec<u8>>)> =
-                new_values.into_iter().map(|v| ((), v)).collect();
+
+            let mut values: Vec<((), MaybeValue<String, Vec<u8>>)> =
+                alloc::vec![((), None); schema.column_count];
+            let mut old_iter = old_pk_values.into_iter();
+            let mut new_iter = new_non_pk_values.into_iter();
+            for (col_idx, &pk_flag) in schema.pk_flags.iter().enumerate() {
+                if pk_flag > 0 {
+                    // PK columns always carry a defined value on the old side; a
+                    // stray undefined marker is normalized to Null to stay lenient
+                    // for fuzz-generated inputs (matches `expand_pk_values` in the
+                    // DELETE path).
+                    let old = old_iter.next().flatten().unwrap_or(Value::Null);
+                    values[col_idx] = ((), Some(old));
+                } else {
+                    values[col_idx] = ((), new_iter.next().flatten());
+                }
+            }
+
+            let pk = schema.extract_pk(&values);
             builder.add_operation(schema, pk, Operation::Update { values, indirect });
         }
         _ => return Err(ParseError::InvalidOpCode(op_code, base_pos)),
@@ -925,5 +949,128 @@ mod tests {
             .find_map(|(_schema, rows)| rows.first().map(|(_, op)| op.indirect()))
             .expect("expected at least one op");
         assert!(indirect);
+    }
+
+    /// Assert a real SQLite patchset UPDATE byte string parses to a single
+    /// UPDATE operation, run caller-supplied checks against the destructured
+    /// state, and confirm the parsed value re-serializes byte-identically.
+    ///
+    /// Centralizing the destructures here keeps the individual scenario tests
+    /// focused on their assertions and folds the defensive `panic!` arms into
+    /// one place. Each test below feeds bytes captured from a real
+    /// `Session::patchset_strm` call, so the checker sees the exact wire
+    /// layout the parser now targets.
+    fn assert_patchset_update_roundtrip(
+        data: &[u8],
+        check: impl FnOnce(
+            &TableSchema<String>,
+            &[Value<String, Vec<u8>>],
+            &[((), MaybeValue<String, Vec<u8>>)],
+            bool,
+        ),
+    ) {
+        let parsed = ParsedDiffSet::parse(data).expect("SQLite patchset UPDATE must parse");
+        let ParsedDiffSet::Patchset(set) = parsed else {
+            panic!("expected Patchset, got {parsed:?}");
+        };
+        let (schema, rows) = set.tables.first().expect("expected one table");
+        assert_eq!(rows.len(), 1, "expected exactly one row");
+        let (pk, op) = rows.first().expect("row map non-empty");
+        let Operation::Update { values, indirect } = op else {
+            panic!("expected Update, got {op:?}");
+        };
+        check(schema, pk.as_slice(), values.as_slice(), *indirect);
+        let serialized: Vec<u8> = set.into();
+        assert_eq!(serialized, data, "roundtrip must match SQLite output");
+    }
+
+    /// Real SQLite session output for a standalone patchset UPDATE against a
+    /// pre-existing row on a single-column PK table:
+    ///
+    /// ```text
+    /// CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT);
+    /// INSERT INTO orders VALUES (5, 100, 'pending'); -- before session.attach()
+    /// UPDATE orders SET status = 'shipped' WHERE id = 5; -- after attach, tracked
+    /// ```
+    ///
+    /// Wire layout:
+    /// - 12 bytes header ('P', 3, [1,0,0], "orders\0")
+    /// - 2 bytes op header (UPDATE, indirect=0)
+    /// - 9 bytes old side: INTEGER 5 (only the PK column)
+    /// - 10 bytes new side: undefined (amount unchanged) + TEXT 'shipped'
+    ///
+    /// Total 33 bytes. Historically the parser expected `column_count` values on
+    /// each side (padded with undefined) and returned `InvalidValue` mid-buffer.
+    #[test]
+    fn test_parse_patchset_update_sqlite_wire_layout_single_pk() {
+        let data: [u8; 33] = [
+            0x50, 0x03, 0x01, 0x00, 0x00, b'o', b'r', b'd', b'e', b'r', b's', 0x00, 0x17, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x03, 0x07, b's', b'h',
+            b'i', b'p', b'p', b'e', b'd',
+        ];
+        assert_patchset_update_roundtrip(&data, |schema, pk, values, indirect| {
+            assert_eq!(schema.name, "orders");
+            assert_eq!(schema.column_count, 3);
+            assert_eq!(schema.pk_flags, vec![1, 0, 0]);
+            assert_eq!(pk, &[Value::Integer(5)]);
+            assert!(!indirect);
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0].1, Some(Value::Integer(5))); // PK preserved
+            assert_eq!(values[1].1, None); // amount unchanged
+            assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
+        });
+    }
+
+    /// Real SQLite output for a composite PK, `PRIMARY KEY(a, b)`:
+    ///
+    /// ```text
+    /// CREATE TABLE items (a INTEGER NOT NULL, b INTEGER NOT NULL, val TEXT, PRIMARY KEY(a, b));
+    /// INSERT INTO items VALUES (1, 2, 'v1'); -- before attach
+    /// UPDATE items SET val = 'v2' WHERE a = 1 AND b = 2;
+    /// ```
+    ///
+    /// Wire layout: two PK values on the old side (INTEGER 1, INTEGER 2), one
+    /// non-PK value on the new side (TEXT 'v2'). 35 bytes total.
+    #[test]
+    fn test_parse_patchset_update_sqlite_wire_layout_composite_pk() {
+        let data: [u8; 35] = [
+            0x50, 0x03, 0x01, 0x02, 0x00, b'i', b't', b'e', b'm', b's', 0x00, 0x17, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x03, 0x02, b'v', b'2',
+        ];
+        assert_patchset_update_roundtrip(&data, |schema, pk, values, _indirect| {
+            assert_eq!(schema.name, "items");
+            assert_eq!(schema.pk_flags, vec![1, 2, 0]);
+            // `extract_pk` returns values sorted by PK ordinal. With PK(a, b) and
+            // pk_flags [1, 2, 0], ordinal 1 is column `a`, ordinal 2 is column `b`.
+            assert_eq!(pk, &[Value::Integer(1), Value::Integer(2)]);
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0].1, Some(Value::Integer(1))); // a (PK)
+            assert_eq!(values[1].1, Some(Value::Integer(2))); // b (PK)
+            assert_eq!(values[2].1, Some(Value::Text("v2".into())));
+        });
+    }
+
+    /// Every non-PK column is present on the new side, in column order, either
+    /// as its new value or as the undefined marker `0x00` when unchanged.
+    ///
+    /// ```text
+    /// UPDATE orders SET amount = 200, status = 'shipped' WHERE id = 5;
+    /// ```
+    ///
+    /// Two non-PK columns changed, so both are defined values (no undefined
+    /// markers). 41 bytes total.
+    #[test]
+    fn test_parse_patchset_update_all_non_pk_changed() {
+        let data: [u8; 41] = [
+            0x50, 0x03, 0x01, 0x00, 0x00, b'o', b'r', b'd', b'e', b'r', b's', 0x00, 0x17, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0xc8, 0x03, 0x07, b's', b'h', b'i', b'p', b'p', b'e', b'd',
+        ];
+        assert_patchset_update_roundtrip(&data, |_schema, _pk, values, _indirect| {
+            assert_eq!(values[0].1, Some(Value::Integer(5)));
+            assert_eq!(values[1].1, Some(Value::Integer(200)));
+            assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
+        });
     }
 }

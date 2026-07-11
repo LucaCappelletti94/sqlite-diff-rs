@@ -165,8 +165,8 @@ structure of table sections, each with a header followed by change records.
 |--------|-------------------|------------------|
 | INSERT | All column values | All column values |
 | DELETE | All old column values | PK values only |
-| UPDATE old | All old column values | PK values + Undefined for non-PK |
-| UPDATE new | All new column values | All new column values |
+| UPDATE old | All old column values | PK values only (in column order, no padding for non-PK) |
+| UPDATE new | All new column values | Non-PK columns only (in column order); each entry is either the new value or `0x00` (undefined) if unchanged |
 | Reversible | Yes | No |
 | Wire size | Larger | Smaller |
 
