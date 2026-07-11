@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "sqlite-diff-rs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arbitrary",
  "bytes",
