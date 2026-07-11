@@ -54,9 +54,7 @@ use crate::{
         ChangeDelete, ChangesetFormat, ChangesetOp, Insert, Operation, PatchDelete, PatchsetFormat,
         PatchsetOp, Update, format::Format,
     },
-    encoding::{
-        MaybeValue, Value, encode_defined_value, encode_undefined, encode_value, markers, op_codes,
-    },
+    encoding::{MaybeValue, Value, encode_defined_value, encode_value, markers, op_codes},
 };
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
@@ -274,7 +272,12 @@ fn encode_patchset_delete_values<S: AsRef<str>, B: AsRef<[u8]>>(
     }
 }
 
-/// Encode patchset UPDATE old values: PK columns get their values, non-PK columns are undefined.
+/// Encode patchset UPDATE old values: PK columns only, in column order.
+///
+/// Matches SQLite's session-extension wire layout: the old side of a patchset
+/// UPDATE contains exactly `pk_count` values (no undefined padding for non-PK
+/// columns). The trailing new side (written by the caller) is symmetric and
+/// carries only the `column_count - pk_count` non-PK entries.
 fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
     out: &mut Vec<u8>,
     pk_flags: &[u8],
@@ -282,14 +285,10 @@ fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
     pk: &[Value<S, B>],
 ) {
     for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-        if pk_flag > 0 {
-            if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
-                encode_defined_value(out, &pk[pk_pos]);
-            } else {
-                encode_undefined(out);
-            }
-        } else {
-            encode_undefined(out);
+        if pk_flag > 0
+            && let Some(pk_pos) = pk_col_to_pk_pos[col_idx]
+        {
+            encode_defined_value(out, &pk[pk_pos]);
         }
     }
 }
@@ -357,8 +356,14 @@ fn encode_patchset_op<S: AsRef<str>, B: AsRef<[u8]>>(
             out.push(op_codes::UPDATE);
             out.push(u8::from(*indirect));
             encode_patchset_update_old_values(out, pk_flags, pk_col_to_pk_pos, pk);
-            for ((), new) in values {
-                encode_value(out, new.as_ref());
+            // New side: non-PK columns in column order. Each entry is either the
+            // new column value or `0x00` (undefined) if that non-PK column did not
+            // change. PK columns are skipped entirely, matching SQLite's session
+            // extension patchset output.
+            for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
+                if pk_flag == 0 {
+                    encode_value(out, values[col_idx].1.as_ref());
+                }
             }
         }
     }

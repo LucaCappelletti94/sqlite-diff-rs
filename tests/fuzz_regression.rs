@@ -94,6 +94,13 @@ fn fuzz_regression_crash_4() {
 /// Bug: Patchset UPDATE serialization wrote Undefined for ALL old values,
 ///      including PK columns. When re-parsed, `extract_pk` got all Undefined.
 /// Fix: Serialize PK values from `HashMap` key into the `old_values` PK positions.
+///
+/// Note: after the patchset UPDATE wire layout was tightened to match SQLite
+/// (PK-only old side, non-PK-only new side), this synthesized input no longer
+/// parses because the trailing bytes fall through to an invalid op-code. The
+/// test still guards against panics: `test_roundtrip` returns silently on a
+/// parse error. See `tests/session_output_parser_roundtrip.rs` for the current
+/// UPDATE PK-preservation coverage.
 #[test]
 fn fuzz_regression_crash_5() {
     let input = [

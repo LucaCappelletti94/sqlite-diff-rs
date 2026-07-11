@@ -508,6 +508,56 @@ pub fn session_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>)
     (changeset, patchset)
 }
 
+/// Create an in-memory `SQLite` database, run pre-session setup DML, attach a
+/// session, run tracked DML, and return the raw changeset and patchset bytes.
+///
+/// Unlike [`session_changeset_and_patchset`], this helper takes two SQL lists:
+/// `setup` runs before `Session::attach` (so its writes are NOT recorded), and
+/// `tracked` runs after (so only those writes end up in the emitted bytes).
+/// This lets tests exercise a standalone `UPDATE` or `DELETE` against a
+/// pre-existing row, which is the only way to see SQLite's real patchset
+/// UPDATE wire layout: `INSERT` + `UPDATE` inside the same session
+/// consolidates to `INSERT`, hiding the UPDATE format.
+///
+/// # Panics
+///
+/// Panics if database creation, statement execution, or session operations fail.
+#[must_use]
+pub fn session_changeset_and_patchset_with_setup(
+    setup: &[&str],
+    tracked: &[&str],
+) -> (Vec<u8>, Vec<u8>) {
+    fn run_session(
+        setup: &[&str],
+        tracked: &[&str],
+        extract: impl Fn(&mut Session<'_>) -> Vec<u8>,
+    ) -> Vec<u8> {
+        let conn = Connection::open_in_memory().unwrap();
+        for &sql in setup {
+            conn.execute(sql, []).unwrap();
+        }
+        let mut session = Session::new(&conn).unwrap();
+        session.attach::<&str>(None).unwrap();
+        for &sql in tracked {
+            conn.execute(sql, []).unwrap();
+        }
+        extract(&mut session)
+    }
+
+    let changeset = run_session(setup, tracked, |session| {
+        let mut buf = Vec::new();
+        session.changeset_strm(&mut buf).unwrap();
+        buf
+    });
+    let patchset = run_session(setup, tracked, |session| {
+        let mut buf = Vec::new();
+        session.patchset_strm(&mut buf).unwrap();
+        buf
+    });
+
+    (changeset, patchset)
+}
+
 /// Pretty-print a byte-level diff between two changeset/patchset buffers.
 ///
 /// Returns a human-readable string describing where they differ.
