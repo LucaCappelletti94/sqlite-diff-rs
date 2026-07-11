@@ -951,6 +951,39 @@ mod tests {
         assert!(indirect);
     }
 
+    /// Assert a real SQLite patchset UPDATE byte string parses to a single
+    /// UPDATE operation, run caller-supplied checks against the destructured
+    /// state, and confirm the parsed value re-serializes byte-identically.
+    ///
+    /// Centralizing the destructures here keeps the individual scenario tests
+    /// focused on their assertions and folds the defensive `panic!` arms into
+    /// one place. Each test below feeds bytes captured from a real
+    /// `Session::patchset_strm` call, so the checker sees the exact wire
+    /// layout the parser now targets.
+    fn assert_patchset_update_roundtrip(
+        data: &[u8],
+        check: impl FnOnce(
+            &TableSchema<String>,
+            &[Value<String, Vec<u8>>],
+            &[((), MaybeValue<String, Vec<u8>>)],
+            bool,
+        ),
+    ) {
+        let parsed = ParsedDiffSet::parse(data).expect("SQLite patchset UPDATE must parse");
+        let ParsedDiffSet::Patchset(set) = parsed else {
+            panic!("expected Patchset, got {parsed:?}");
+        };
+        let (schema, rows) = set.tables.first().expect("expected one table");
+        assert_eq!(rows.len(), 1, "expected exactly one row");
+        let (pk, op) = rows.first().expect("row map non-empty");
+        let Operation::Update { values, indirect } = op else {
+            panic!("expected Update, got {op:?}");
+        };
+        check(schema, pk.as_slice(), values.as_slice(), *indirect);
+        let serialized: Vec<u8> = set.into();
+        assert_eq!(serialized, data, "roundtrip must match SQLite output");
+    }
+
     /// Real SQLite session output for a standalone patchset UPDATE against a
     /// pre-existing row on a single-column PK table:
     ///
@@ -975,35 +1008,17 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x03, 0x07, b's', b'h',
             b'i', b'p', b'p', b'e', b'd',
         ];
-
-        let parsed = ParsedDiffSet::parse(&data).expect("SQLite patchset UPDATE must parse");
-        let ParsedDiffSet::Patchset(set) = parsed else {
-            panic!("expected Patchset");
-        };
-
-        let (schema, rows) = set.tables.first().expect("expected one table");
-        assert_eq!(schema.name, "orders");
-        assert_eq!(schema.column_count, 3);
-        assert_eq!(schema.pk_flags, vec![1, 0, 0]);
-        assert_eq!(rows.len(), 1);
-
-        let (pk, op) = rows.first().unwrap();
-        assert_eq!(pk, &vec![Value::Integer(5)]);
-
-        match op {
-            Operation::Update { values, indirect } => {
-                assert!(!*indirect);
-                assert_eq!(values.len(), 3);
-                assert_eq!(values[0].1, Some(Value::Integer(5))); // PK preserved
-                assert_eq!(values[1].1, None); // amount unchanged
-                assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
-            }
-            other => panic!("expected Update, got {other:?}"),
-        }
-
-        // Round-trip: serialize back and compare byte-for-byte against SQLite.
-        let serialized: Vec<u8> = set.into();
-        assert_eq!(serialized, data, "roundtrip must match SQLite output");
+        assert_patchset_update_roundtrip(&data, |schema, pk, values, indirect| {
+            assert_eq!(schema.name, "orders");
+            assert_eq!(schema.column_count, 3);
+            assert_eq!(schema.pk_flags, vec![1, 0, 0]);
+            assert_eq!(pk, &[Value::Integer(5)]);
+            assert!(!indirect);
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0].1, Some(Value::Integer(5))); // PK preserved
+            assert_eq!(values[1].1, None); // amount unchanged
+            assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
+        });
     }
 
     /// Real SQLite output for a composite PK, `PRIMARY KEY(a, b)`:
@@ -1023,33 +1038,17 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x02, 0x03, 0x02, b'v', b'2',
         ];
-
-        let parsed = ParsedDiffSet::parse(&data).expect("SQLite composite PK UPDATE must parse");
-        let ParsedDiffSet::Patchset(set) = parsed else {
-            panic!("expected Patchset");
-        };
-
-        let (schema, rows) = set.tables.first().expect("expected one table");
-        assert_eq!(schema.name, "items");
-        assert_eq!(schema.pk_flags, vec![1, 2, 0]);
-
-        let (pk, op) = rows.first().unwrap();
-        // `extract_pk` returns values sorted by PK ordinal. With PK(a, b) and
-        // pk_flags [1, 2, 0], ordinal 1 is column `a`, ordinal 2 is column `b`.
-        assert_eq!(pk, &vec![Value::Integer(1), Value::Integer(2)]);
-
-        match op {
-            Operation::Update { values, .. } => {
-                assert_eq!(values.len(), 3);
-                assert_eq!(values[0].1, Some(Value::Integer(1))); // a (PK)
-                assert_eq!(values[1].1, Some(Value::Integer(2))); // b (PK)
-                assert_eq!(values[2].1, Some(Value::Text("v2".into())));
-            }
-            other => panic!("expected Update, got {other:?}"),
-        }
-
-        let serialized: Vec<u8> = set.into();
-        assert_eq!(serialized, data, "roundtrip must match SQLite output");
+        assert_patchset_update_roundtrip(&data, |schema, pk, values, _indirect| {
+            assert_eq!(schema.name, "items");
+            assert_eq!(schema.pk_flags, vec![1, 2, 0]);
+            // `extract_pk` returns values sorted by PK ordinal. With PK(a, b) and
+            // pk_flags [1, 2, 0], ordinal 1 is column `a`, ordinal 2 is column `b`.
+            assert_eq!(pk, &[Value::Integer(1), Value::Integer(2)]);
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0].1, Some(Value::Integer(1))); // a (PK)
+            assert_eq!(values[1].1, Some(Value::Integer(2))); // b (PK)
+            assert_eq!(values[2].1, Some(Value::Text("v2".into())));
+        });
     }
 
     /// Every non-PK column is present on the new side, in column order, either
@@ -1068,24 +1067,10 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0xc8, 0x03, 0x07, b's', b'h', b'i', b'p', b'p', b'e', b'd',
         ];
-
-        let parsed = ParsedDiffSet::parse(&data).expect("must parse");
-        let ParsedDiffSet::Patchset(set) = parsed else {
-            panic!("expected Patchset");
-        };
-
-        let (_schema, rows) = set.tables.first().unwrap();
-        let (_pk, op) = rows.first().unwrap();
-        match op {
-            Operation::Update { values, .. } => {
-                assert_eq!(values[0].1, Some(Value::Integer(5)));
-                assert_eq!(values[1].1, Some(Value::Integer(200)));
-                assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
-            }
-            other => panic!("expected Update, got {other:?}"),
-        }
-
-        let serialized: Vec<u8> = set.into();
-        assert_eq!(serialized, data);
+        assert_patchset_update_roundtrip(&data, |_schema, _pk, values, _indirect| {
+            assert_eq!(values[0].1, Some(Value::Integer(5)));
+            assert_eq!(values[1].1, Some(Value::Integer(200)));
+            assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
+        });
     }
 }
