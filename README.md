@@ -159,20 +159,6 @@ End-to-end tests against real SQLite, Postgres, and MySQL containers live under 
 
 This crate is `no_std` compatible (requires `alloc`). It can be used in embedded or WebAssembly environments.
 
-## Live demo
-
-A serverless, two-peer chat demo lives at [https://lucacappelletti94.github.io/sqlite-diff-rs/](https://lucacappelletti94.github.io/sqlite-diff-rs/). Each browser runs its own SQLite (via [sqlite-wasm-rs](https://crates.io/crates/sqlite-wasm-rs)) accessed through [diesel-sqlite-session](https://github.com/LucaCappelletti94/diesel-sqlite-session), and the two peers exchange changeset bytes directly over a WebRTC data channel. There is no backend, no signaling server, and no STUN configuration beyond Google's public STUN endpoint.
-
-To connect two browsers:
-
-1. Open the demo URL in tab A and pick a display name. Click **Create room**.
-2. The tab shows an offer URL containing the full SDP in its fragment (`#o=...`). Send it to tab B (chat app, paste, QR code).
-3. Tab B opens the URL, picks its own name, and clicks **Generate reply code**. Send the resulting base64 blob back to tab A by any means (paste, chat app, QR code).
-4. Tab A pastes the reply code into the "Paste their reply" box and clicks **Connect**. The data channel opens.
-5. Every message, edit, and delete in either tab is captured as a SQLite session changeset and applied on the other side. The diff inspector at the bottom shows the wire bytes parsed back through `sqlite-diff-rs`.
-
-The demo source is at [`examples/web-demo/`](examples/web-demo).
-
 ## License
 
 MIT License, see [LICENSE](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE) for details.
