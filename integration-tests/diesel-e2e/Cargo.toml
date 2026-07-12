@@ -1,0 +1,41 @@
+[package]
+name = "diesel-e2e"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "End-to-end tests: sqlite-diff-rs patchset -> Diesel query fragments -> real databases"
+
+# Standalone workspace: `libsqlite3-sys` (via rusqlite dev-dep of the main
+# crate) and `pq-sys` (via `pg_walstream` in another workspace member) both
+# use `links` on native libs that Diesel's `sqlite` and `postgres` features
+# also link. Cargo forbids duplicate `links` values in one graph, so this
+# crate is excluded from the main workspace.
+[workspace]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_panics_doc = "allow"
+missing_errors_doc = "allow"
+unreadable_literal = "allow"
+doc_markdown = "allow"
+
+[dependencies]
+sqlite-diff-rs = { path = "../..", default-features = false, features = ["diesel"] }
+diesel = { version = "2", default-features = false, features = [
+	"postgres",
+	"mysql",
+	"sqlite",
+] }
+
+[dev-dependencies]
+testcontainers-modules = { version = "0.15", features = [
+	"postgres",
+	"mysql",
+	"blocking",
+] }
+
+[lints]
+workspace = true
