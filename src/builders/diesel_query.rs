@@ -657,7 +657,8 @@ pub trait ApplyOps: Iterator + Sized {
         Conn: diesel::Connection,
         Self::Item: QueryFragment<Conn::Backend> + QueryId + RunQueryDsl<Conn>;
 
-    /// Same as [`Self::apply`] wrapped in [`Connection::transaction`], so a
+    /// Same as [`Self::apply`] wrapped in a diesel
+    /// [`Connection::transaction`](diesel::Connection::transaction), so a
     /// mid-op failure rolls the whole batch back.
     ///
     /// # Errors
