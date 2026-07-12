@@ -17,6 +17,8 @@ pub mod maxwell;
 pub mod parser;
 #[cfg(feature = "pg-walstream")]
 pub mod pg_walstream;
+#[cfg(feature = "pg-walstream")]
+pub mod pg_walstream_reverse;
 pub mod schema;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
