@@ -55,6 +55,7 @@ let bytes: Vec<u8> = patchset.into();
 | `pg-walstream` | Integration with `pg_walstream` crate |
 | `debezium` | Parse Debezium CDC JSON events |
 | `maxwell` | Parse Maxwell CDC JSON events |
+| `diesel` | Execute patchsets as backend-generic Diesel queries via a downstream [`Adapter`] |
 
 Enable features in `Cargo.toml`:
 
@@ -85,6 +86,74 @@ Patchsets (`'P'` / `0x50`) omit old values for non-PK columns, producing a small
 | Wire size | Larger (carries full old state) | Smaller (omits non-PK old values) |
 
 See the [SQLite session extension docs](https://www.sqlite.org/session.html) for the full specification.
+
+## Apply patchsets with Diesel
+
+The `diesel` feature turns each `PatchsetOp` into a backend-generic Diesel query. Downstream implements one `Adapter` per schema (the set of tables), and it maps `(table_name, column_index)` pairs to column identifiers and to per-column `Binder`s. Each `Binder` calls `push_bind_param` with the target `SqlType` the column expects, so values travel as native binary binds and the emitted SQL contains no `CAST` wrappers regardless of backend. The `ApplyOps` extension trait wraps the batch-execute and `conn.transaction` shapes so a full apply reads as one call.
+
+```rust,ignore
+use diesel::pg::Pg;
+use diesel::prelude::*;
+use diesel::query_builder::AstPass;
+use diesel::result::QueryResult;
+use diesel::sql_types::Bool;
+use sqlite_diff_rs::{
+    Adapter, ApplyOps, Binder, DefaultBinder, DiffOps, Insert, PatchSet, SimpleTable, Value,
+};
+
+// A binder for target BOOLEAN columns. Native SQL type, no CAST.
+struct BoolBinder(bool);
+impl Binder<Pg> for BoolBinder {
+    fn walk<'b>(&'b self, out: &mut AstPass<'_, 'b, Pg>) -> QueryResult<()> {
+        out.push_bind_param::<Bool, bool>(&self.0)
+    }
+}
+
+// One adapter per schema, dispatching on (table_name, column_index).
+struct MyAdapter;
+impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Pg, S, B> for MyAdapter {
+    fn column_name(&self, _table: &str, index: usize) -> &str {
+        ["id", "active"][index]
+    }
+    fn bind<'a>(
+        &self,
+        table: &str,
+        column_index: usize,
+        value: &'a Value<S, B>,
+    ) -> Box<dyn Binder<Pg> + Send + 'a> {
+        match (table, column_index, value) {
+            ("users", 1, Value::Integer(v)) => Box::new(BoolBinder(*v != 0)),
+            _ => Box::new(DefaultBinder::from(value)),
+        }
+    }
+}
+
+let schema = SimpleTable::new("users", &["id", "active"], &[0]);
+let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
+    Insert::from(schema.clone())
+        .set(0, 1_i64)
+        .unwrap()
+        .set(1, 1_i64)
+        .unwrap(),
+);
+
+let mut conn = PgConnection::establish("postgres://...")?;
+patchset
+    .iter()
+    .map(|op| op.with_adapter::<Pg, _>(&MyAdapter))
+    .apply_transactional(&mut conn)?;
+# Ok::<_, diesel::result::Error>(())
+```
+
+Enable via `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlite-diff-rs = { version = "0.1", features = ["diesel"] }
+diesel = { version = "2", features = ["postgres"] }
+```
+
+End-to-end tests against real SQLite, Postgres, and MySQL containers live under [`integration-tests/diesel-e2e/`](integration-tests/diesel-e2e/). The unit test file [`tests/diesel_patchset.rs`](tests/diesel_patchset.rs) has the fully runnable version of the example above.
 
 ## `no_std` Support
 
