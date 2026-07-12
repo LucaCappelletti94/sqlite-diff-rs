@@ -21,6 +21,7 @@ members = [
 	"integration-tests/wal2json",
 	"integration-tests/pg-walstream",
 ]
+exclude = ["integration-tests/diesel-e2e"]
 
 [workspace.lints.rust]
 missing_docs = "forbid"
@@ -63,6 +64,7 @@ arbitrary = { version = "1", features = ["derive"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
 pg_walstream = { version = "0.7", default-features = false, optional = true }
+diesel = { version = "2", default-features = false, optional = true }
 
 [dev-dependencies]
 rusqlite = { version = "0.40", features = ["bundled", "session", "backup"] }
@@ -72,6 +74,7 @@ uuid = { version = "1", features = ["v7"] }
 hex = "0.4"
 bytes = "1"
 criterion = { version = "0.8.2", features = ["html_reports"] }
+diesel = { version = "2", default-features = false, features = ["postgres_backend", "mysql_backend"] }
 
 [features]
 default = []
@@ -80,6 +83,7 @@ wal2json = ["dep:serde", "dep:serde_json"]
 pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
 debezium = ["dep:serde", "dep:serde_json"]
 maxwell = ["dep:serde", "dep:serde_json"]
+diesel = ["dep:diesel"]
 
 [lints]
 workspace = true

@@ -860,6 +860,37 @@ impl<
     }
 }
 
+impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
+    DiffSetBuilder<ChangesetFormat, T, S, B>
+{
+    /// Walk operations grouped by table in DML insertion order.
+    ///
+    /// Mirrors [`DiffSet::iter`] but keeps insertion order; the
+    /// session-extension hash ordering only applies at [`build`](Self::build)
+    /// time.
+    pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
+        self.tables.iter().flat_map(|(table, rows)| {
+            rows.iter().map(move |(_pk, op)| match op {
+                Operation::Insert { values, indirect } => ChangesetOp::Insert {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Update { values, indirect } => ChangesetOp::Update {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Delete { data, indirect } => ChangesetOp::Delete {
+                    table,
+                    old_values: data.as_slice(),
+                    indirect: *indirect,
+                },
+            })
+        })
+    }
+}
+
 impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
     DiffSetBuilder<PatchsetFormat, T, S, B>
 {
@@ -891,6 +922,40 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
         }
 
         out
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
+    DiffSetBuilder<PatchsetFormat, T, S, B>
+{
+    /// Walk operations grouped by table in DML insertion order.
+    ///
+    /// Mirrors [`DiffSet::iter`] but keeps insertion order; the
+    /// session-extension hash ordering only applies at [`build`](Self::build)
+    /// time. With the `diesel` feature enabled, each item implements
+    /// [`QueryFragment`](diesel::query_builder::QueryFragment) and executes
+    /// via [`RunQueryDsl`](diesel::RunQueryDsl).
+    pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
+        self.tables.iter().flat_map(|(table, rows)| {
+            rows.iter().map(move |(pk, op)| match op {
+                Operation::Insert { values, indirect } => PatchsetOp::Insert {
+                    table,
+                    values: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Update { values, indirect } => PatchsetOp::Update {
+                    table,
+                    pk: pk.as_slice(),
+                    entries: values.as_slice(),
+                    indirect: *indirect,
+                },
+                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
+                    table,
+                    pk: pk.as_slice(),
+                    indirect: *indirect,
+                },
+            })
+        })
     }
 }
 

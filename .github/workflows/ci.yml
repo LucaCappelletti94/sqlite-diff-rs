@@ -128,3 +128,34 @@ jobs:
 
       - name: Run wal2json integration tests
         run: cargo test -p wal2json-integration-tests --test postgres_integration
+
+  # diesel E2E tests (standalone workspace, requires Docker for Pg and MySQL)
+  diesel-e2e:
+    name: Diesel E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev default-libmysqlclient-dev
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: integration-tests/diesel-e2e
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path integration-tests/diesel-e2e/Cargo.toml --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path integration-tests/diesel-e2e/Cargo.toml --tests -- -D warnings
+
+      - name: Run diesel E2E tests
+        run: cargo test --manifest-path integration-tests/diesel-e2e/Cargo.toml --release -- --test-threads=1

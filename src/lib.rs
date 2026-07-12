@@ -26,6 +26,8 @@ pub mod testing;
 pub mod wal2json;
 
 // Re-export main types
+#[cfg(feature = "diesel")]
+pub use builders::{Adapter, ApplyOps, Binder, BoundPatchsetOp, DefaultBinder};
 pub use builders::{
     ChangeDelete, ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePair, ColumnNames,
     DiffOps, DiffSet, DiffSetBuilder, Indirect, Insert, PatchDelete, PatchSet, PatchsetFormat,

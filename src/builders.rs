@@ -2,6 +2,8 @@
 
 mod change;
 mod delete_operation;
+#[cfg(feature = "diesel")]
+mod diesel_query;
 mod format;
 mod insert_operation;
 mod operation;
@@ -12,6 +14,8 @@ mod view;
 
 pub use change::{ChangeSet, DiffOps, DiffSet, DiffSetBuilder, PatchSet};
 pub use delete_operation::{ChangeDelete, PatchDelete};
+#[cfg(feature = "diesel")]
+pub use diesel_query::{Adapter, ApplyOps, Binder, BoundPatchsetOp, DefaultBinder};
 pub use format::{ChangesetFormat, PatchsetFormat};
 pub use insert_operation::Insert;
 pub(crate) use operation::Operation;
