@@ -359,9 +359,32 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// DecimalTextDecoder (Phase 7)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for DecimalTextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+            serde_json::Value::Number(_) => Err(DecodeError::DecimalPrecisionLoss {
+                column: payload.column_name.to_string(),
+            }),
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string decimal",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(DecimalTextDecoder);
 not_yet_impl!(TimestampVerbatimDecoder);
 not_yet_impl!(TimestampTzVerbatimDecoder);
 not_yet_impl!(DateVerbatimDecoder);
@@ -395,6 +418,8 @@ where
             .with(alloc::sync::Arc::from("char"), TextDecoder)
             .with(alloc::sync::Arc::from("name"), TextDecoder)
             .with(alloc::sync::Arc::from("bytea"), PgByteaTextModeDecoder)
+            .with(alloc::sync::Arc::from("numeric"), DecimalTextDecoder)
+            .with(alloc::sync::Arc::from("decimal"), DecimalTextDecoder)
             .with(alloc::sync::Arc::from("float8"), RealDecoder)
     }
 }

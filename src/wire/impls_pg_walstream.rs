@@ -467,6 +467,42 @@ where
     }
 }
 
+/// Postgres `numeric` OID.
+pub const PG_NUMERIC: crate::pg_walstream::Oid = 1700;
+
+// ------------------------------------------------------------------
+// DecimalTextDecoder (Phase 7)
+//
+// Preserve wire text verbatim. Reject binary payload since PG binary
+// numeric is a complex packed form we don't unpack here (Phase 10 or
+// later work).
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for DecimalTextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                Ok(Value::Text(S::from(s.to_string())))
+            }
+            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "text-mode numeric",
+                actual: "binary payload",
+            }),
+        }
+    }
+}
+
 // PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
 // specific to wal2json / maxwell respectively; on pg_walstream they
 // stay NotYetImplemented.
@@ -485,7 +521,6 @@ macro_rules! not_yet_impl {
 
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(DecimalTextDecoder);
 not_yet_impl!(TimestampVerbatimDecoder);
 not_yet_impl!(TimestampTzVerbatimDecoder);
 not_yet_impl!(DateVerbatimDecoder);
@@ -512,5 +547,6 @@ where
             .with(PG_BPCHAR, TextDecoder)
             .with(PG_NAME, TextDecoder)
             .with(PG_BYTEA, PgByteaBinaryDecoder)
+            .with(PG_NUMERIC, DecimalTextDecoder)
     }
 }
