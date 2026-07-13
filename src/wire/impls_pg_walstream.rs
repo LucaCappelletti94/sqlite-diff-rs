@@ -519,13 +519,68 @@ macro_rules! not_yet_impl {
     };
 }
 
+/// Postgres `timestamp` OID.
+pub const PG_TIMESTAMP: crate::pg_walstream::Oid = 1114;
+/// Postgres `timestamptz` OID.
+pub const PG_TIMESTAMPTZ: crate::pg_walstream::Oid = 1184;
+/// Postgres `date` OID.
+pub const PG_DATE: crate::pg_walstream::Oid = 1082;
+/// Postgres `time` OID.
+pub const PG_TIME: crate::pg_walstream::Oid = 1083;
+/// Postgres `interval` OID.
+pub const PG_INTERVAL: crate::pg_walstream::Oid = 1186;
+
+// ------------------------------------------------------------------
+// Temporal verbatim decoders (Phase 8)
+//
+// Preserve wire text form as `Value::Text`. Null pass-through.
+// Reject binary payloads.
+// ------------------------------------------------------------------
+
+fn decode_pg_text_verbatim<S, B>(payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError>
+where
+    S: From<alloc::string::String>,
+{
+    match payload.data {
+        ColumnValue::Null => Ok(Value::Null),
+        ColumnValue::Text(_) => {
+            let s = payload
+                .data
+                .as_str()
+                .ok_or_else(|| DecodeError::InvalidUtf8 {
+                    column: payload.column_name.to_string(),
+                })?;
+            Ok(Value::Text(S::from(s.to_string())))
+        }
+        ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name.to_string(),
+            expected: "text form",
+            actual: "binary payload",
+        }),
+    }
+}
+
+macro_rules! verbatim_impl {
+    ($decoder:ty) => {
+        impl<S, B> Decoder<PgWalstream, S, B> for $decoder
+        where
+            S: From<alloc::string::String>,
+        {
+            fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+                decode_pg_text_verbatim(payload)
+            }
+        }
+    };
+}
+
+verbatim_impl!(TimestampVerbatimDecoder);
+verbatim_impl!(TimestampTzVerbatimDecoder);
+verbatim_impl!(DateVerbatimDecoder);
+verbatim_impl!(TimeVerbatimDecoder);
+verbatim_impl!(IntervalVerbatimDecoder);
+
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(TimestampVerbatimDecoder);
-not_yet_impl!(TimestampTzVerbatimDecoder);
-not_yet_impl!(DateVerbatimDecoder);
-not_yet_impl!(TimeVerbatimDecoder);
-not_yet_impl!(IntervalVerbatimDecoder);
 not_yet_impl!(JsonVerbatimDecoder);
 not_yet_impl!(JsonCanonicalDecoder);
 
@@ -548,5 +603,10 @@ where
             .with(PG_NAME, TextDecoder)
             .with(PG_BYTEA, PgByteaBinaryDecoder)
             .with(PG_NUMERIC, DecimalTextDecoder)
+            .with(PG_TIMESTAMP, TimestampVerbatimDecoder)
+            .with(PG_TIMESTAMPTZ, TimestampTzVerbatimDecoder)
+            .with(PG_DATE, DateVerbatimDecoder)
+            .with(PG_TIME, TimeVerbatimDecoder)
+            .with(PG_INTERVAL, IntervalVerbatimDecoder)
     }
 }

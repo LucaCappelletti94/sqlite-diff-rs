@@ -374,13 +374,48 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// Temporal verbatim decoders (Phase 8)
+// ------------------------------------------------------------------
+
+fn decode_maxwell_string_verbatim<S, B>(
+    payload: MaxwellColumn<'_>,
+) -> Result<Value<S, B>, DecodeError>
+where
+    S: From<alloc::string::String>,
+{
+    match payload.value {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+        _ => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name.to_string(),
+            expected: "JSON string",
+            actual: "other JSON shape",
+        }),
+    }
+}
+
+macro_rules! verbatim_impl {
+    ($decoder:ty) => {
+        impl<S, B> Decoder<Maxwell, S, B> for $decoder
+        where
+            S: From<alloc::string::String>,
+        {
+            fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+                decode_maxwell_string_verbatim(payload)
+            }
+        }
+    };
+}
+
+verbatim_impl!(TimestampVerbatimDecoder);
+verbatim_impl!(TimestampTzVerbatimDecoder);
+verbatim_impl!(DateVerbatimDecoder);
+verbatim_impl!(TimeVerbatimDecoder);
+verbatim_impl!(IntervalVerbatimDecoder);
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
-not_yet_impl!(TimestampVerbatimDecoder);
-not_yet_impl!(TimestampTzVerbatimDecoder);
-not_yet_impl!(DateVerbatimDecoder);
-not_yet_impl!(TimeVerbatimDecoder);
-not_yet_impl!(IntervalVerbatimDecoder);
 not_yet_impl!(JsonVerbatimDecoder);
 not_yet_impl!(JsonCanonicalDecoder);
 
@@ -414,6 +449,14 @@ where
             .with(alloc::sync::Arc::from("longblob"), MySqlBinaryDecoder)
             .with(alloc::sync::Arc::from("decimal"), DecimalTextDecoder)
             .with(alloc::sync::Arc::from("numeric"), DecimalTextDecoder)
+            .with(alloc::sync::Arc::from("datetime"), TimestampVerbatimDecoder)
+            .with(
+                alloc::sync::Arc::from("timestamp"),
+                TimestampVerbatimDecoder,
+            )
+            .with(alloc::sync::Arc::from("date"), DateVerbatimDecoder)
+            .with(alloc::sync::Arc::from("time"), TimeVerbatimDecoder)
+            .with(alloc::sync::Arc::from("year"), TimeVerbatimDecoder)
             .with(
                 alloc::sync::Arc::from("bigint unsigned"),
                 Int64OverflowToTextDecoder,

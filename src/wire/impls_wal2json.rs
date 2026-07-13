@@ -383,13 +383,48 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// Temporal verbatim decoders (Phase 8)
+// ------------------------------------------------------------------
+
+fn decode_wal2json_string_verbatim<S, B>(
+    payload: Wal2JsonColumn<'_>,
+) -> Result<Value<S, B>, DecodeError>
+where
+    S: From<alloc::string::String>,
+{
+    match payload.value {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+        _ => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name.to_string(),
+            expected: "JSON string",
+            actual: "other JSON shape",
+        }),
+    }
+}
+
+macro_rules! verbatim_impl {
+    ($decoder:ty) => {
+        impl<S, B> Decoder<Wal2Json, S, B> for $decoder
+        where
+            S: From<alloc::string::String>,
+        {
+            fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+                decode_wal2json_string_verbatim(payload)
+            }
+        }
+    };
+}
+
+verbatim_impl!(TimestampVerbatimDecoder);
+verbatim_impl!(TimestampTzVerbatimDecoder);
+verbatim_impl!(DateVerbatimDecoder);
+verbatim_impl!(TimeVerbatimDecoder);
+verbatim_impl!(IntervalVerbatimDecoder);
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(TimestampVerbatimDecoder);
-not_yet_impl!(TimestampTzVerbatimDecoder);
-not_yet_impl!(DateVerbatimDecoder);
-not_yet_impl!(TimeVerbatimDecoder);
-not_yet_impl!(IntervalVerbatimDecoder);
 not_yet_impl!(JsonVerbatimDecoder);
 not_yet_impl!(JsonCanonicalDecoder);
 
@@ -420,6 +455,29 @@ where
             .with(alloc::sync::Arc::from("bytea"), PgByteaTextModeDecoder)
             .with(alloc::sync::Arc::from("numeric"), DecimalTextDecoder)
             .with(alloc::sync::Arc::from("decimal"), DecimalTextDecoder)
+            .with(
+                alloc::sync::Arc::from("timestamp"),
+                TimestampVerbatimDecoder,
+            )
+            .with(
+                alloc::sync::Arc::from("timestamp without time zone"),
+                TimestampVerbatimDecoder,
+            )
+            .with(
+                alloc::sync::Arc::from("timestamp with time zone"),
+                TimestampTzVerbatimDecoder,
+            )
+            .with(alloc::sync::Arc::from("date"), DateVerbatimDecoder)
+            .with(alloc::sync::Arc::from("time"), TimeVerbatimDecoder)
+            .with(
+                alloc::sync::Arc::from("time without time zone"),
+                TimeVerbatimDecoder,
+            )
+            .with(
+                alloc::sync::Arc::from("time with time zone"),
+                TimeVerbatimDecoder,
+            )
+            .with(alloc::sync::Arc::from("interval"), IntervalVerbatimDecoder)
             .with(alloc::sync::Arc::from("float8"), RealDecoder)
     }
 }
