@@ -889,7 +889,7 @@ pub fn run_crash_dir_regression(
 // ---------------------------------------------------------------------------
 
 /// Feed arbitrary bytes into every built-in decoder for the
-/// `pg_walstream` source via [`TypeMap::defaults`]. Asserts nothing
+/// `pg_walstream` source via [`TypeMap::defaults`](crate::wire::TypeMap::defaults). Asserts nothing
 /// panics.
 #[cfg(feature = "pg-walstream")]
 pub fn test_wire_pg_walstream(input: &[u8]) {
@@ -921,7 +921,7 @@ pub fn test_wire_pg_walstream(input: &[u8]) {
 }
 
 /// Feed arbitrary bytes as a JSON string into every wal2json type-key
-/// via [`TypeMap::defaults`]. Also tries the input as raw JSON.
+/// via [`TypeMap::defaults`](crate::wire::TypeMap::defaults). Also tries the input as raw JSON.
 #[cfg(feature = "wal2json")]
 pub fn test_wire_wal2json(input: &[u8]) {
     use crate::wal2json::{Wal2Json, Wal2JsonColumn};
@@ -980,7 +980,7 @@ pub fn test_wire_wal2json(input: &[u8]) {
 }
 
 /// Feed arbitrary bytes as a JSON string into every maxwell type-key
-/// via [`TypeMap::defaults`].
+/// via [`TypeMap::defaults`](crate::wire::TypeMap::defaults).
 #[cfg(feature = "maxwell")]
 pub fn test_wire_maxwell(input: &[u8]) {
     use crate::maxwell::{Maxwell, MaxwellColumn};

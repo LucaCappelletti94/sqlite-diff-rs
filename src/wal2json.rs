@@ -231,7 +231,7 @@ pub struct Wal2JsonColumn<'a> {
 }
 
 impl Wal2JsonColumn<'_> {
-    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// Ergonomic helper for calling a specific [`Decoder`](crate::wire::Decoder) on this
     /// payload without fully-qualified syntax. Fixes the `Src` generic
     /// to [`Wal2Json`] so the compiler can pick the impl.
     ///

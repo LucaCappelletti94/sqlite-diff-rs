@@ -22,6 +22,7 @@
 //! - [`TypeMapDefaults`]: per-source `defaults()` builder for a
 //!   [`TypeMap`] pre-populated with the crate's self-evident mappings.
 mod adapter;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod bytes_helpers;
 mod decoder;
 mod error;
@@ -30,6 +31,7 @@ mod json_helpers;
 mod sealed;
 mod source;
 mod type_map;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod uuid_helpers;
 
 #[cfg(feature = "maxwell")]
@@ -49,6 +51,7 @@ pub use decoder::{
     UuidText36Decoder,
 };
 pub use error::DecodeError;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 pub(crate) use sealed::Sealed;
 pub use source::{Digestable, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};

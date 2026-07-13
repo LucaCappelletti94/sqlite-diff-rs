@@ -19,7 +19,7 @@ pub trait Decoder<Src: WireSource, S, B> {
     ///
     /// Returns a [`DecodeError`] variant describing the failure. Every
     /// variant carries the offending column name so the outer
-    /// [`WireAdapter`] impl does not have to wrap.
+    /// [`WireAdapter`](super::adapter::WireAdapter) impl does not have to wrap.
     fn decode(&self, payload: Src::Payload<'_>) -> Result<Value<S, B>, DecodeError>;
 }
 

@@ -2,7 +2,7 @@
 //!
 //! [pg_walstream](https://github.com/isdaniel/pg-walstream) parses PostgreSQL
 //! logical replication into `EventType` values. This module implements
-//! [`Digestable`](crate::Digestable) on those events so callers fold them
+//! [`Digestable`] on those events so callers fold them
 //! into a builder via `DiffSetBuilder::digest(&event, &schema, &adapter)`.
 
 use alloc::string::String;
@@ -86,7 +86,7 @@ impl WireSource for PgWalstream {
 /// Per-column payload for the `pg_walstream` source.
 ///
 /// The format wrapper populates this once per column before invoking
-/// [`WireAdapter::decode`](crate::wire::WireAdapter::decode).
+/// [`WireAdapter::decode`].
 #[derive(Debug, Clone, Copy)]
 pub struct PgWalstreamColumn<'a> {
     /// Column name resolved from the relation cache.
@@ -100,7 +100,7 @@ pub struct PgWalstreamColumn<'a> {
 }
 
 impl PgWalstreamColumn<'_> {
-    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// Ergonomic helper for calling a specific [`Decoder`](crate::wire::Decoder) on this
     /// payload without fully-qualified syntax. Fixes the `Src` generic
     /// to [`PgWalstream`] so the compiler can pick the impl.
     ///

@@ -208,7 +208,7 @@ pub struct MaxwellColumn<'a> {
 }
 
 impl MaxwellColumn<'_> {
-    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// Ergonomic helper for calling a specific [`Decoder`](crate::wire::Decoder) on this
     /// payload without fully-qualified syntax. Fixes the `Src` generic
     /// to [`Maxwell`] so the compiler can pick the impl.
     ///
