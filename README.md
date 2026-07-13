@@ -120,10 +120,10 @@ impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Pg, S, B> for MyAdapte
         table: &str,
         column_index: usize,
         value: &'a Value<S, B>,
-    ) -> Box<dyn Binder<Pg> + Send + 'a> {
+    ) -> diesel::result::QueryResult<Box<dyn Binder<Pg> + Send + 'a>> {
         match (table, column_index, value) {
-            ("users", 1, Value::Integer(v)) => Box::new(BoolBinder(*v != 0)),
-            _ => Box::new(DefaultBinder::from(value)),
+            ("users", 1, Value::Integer(v)) => Ok(Box::new(BoolBinder(*v != 0))),
+            _ => Ok(Box::new(DefaultBinder::from(value))),
         }
     }
 }

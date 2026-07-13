@@ -469,12 +469,12 @@ where
         table: &str,
         column_index: usize,
         value: &'a Value<S, B>,
-    ) -> Box<dyn Binder<DB> + Send + 'a> {
+    ) -> diesel::result::QueryResult<Box<dyn Binder<DB> + Send + 'a>> {
         match (table, column_index, value) {
             ("users", 1, Value::Integer(i)) | ("orders_typed", 2, Value::Integer(i)) => {
-                Box::new(BoolBinder(*i != 0))
+                Ok(Box::new(BoolBinder(*i != 0)))
             }
-            _ => Box::new(DefaultBinder::from(value)),
+            _ => Ok(Box::new(DefaultBinder::from(value))),
         }
     }
 }
@@ -738,4 +738,97 @@ fn bound_patchset_ops_survive_thread_scope() {
             });
         }
     });
+}
+
+// Adapter that rejects the mapping ---------------------------------------
+//
+// The trait's fallibility exists specifically so an adapter can say "this
+// source value cannot be represented as the target column type". The
+// canonical case is a SQLite `INTEGER` source paired with a target `UUID`
+// column — no integer parses into a UUID, and the adapter should signal
+// that at bind time.
+
+struct UuidRejectingAdapter;
+
+impl<S, B> Adapter<Pg, S, B> for UuidRejectingAdapter
+where
+    S: AsRef<str> + Sync,
+    B: AsRef<[u8]> + Sync,
+{
+    fn column_name(&self, _table: &str, column_index: usize) -> &str {
+        ["id", "session"][column_index]
+    }
+
+    fn bind<'a>(
+        &self,
+        _table: &str,
+        column_index: usize,
+        value: &'a Value<S, B>,
+    ) -> diesel::result::QueryResult<Box<dyn Binder<Pg> + Send + 'a>> {
+        // Column 1 is a UUID; only text is representable, integers are not.
+        if column_index == 1 && matches!(value, Value::Integer(_)) {
+            return Err(diesel::result::Error::QueryBuilderError(Box::new(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "cannot bind Integer to UUID column",
+                ),
+            )));
+        }
+        Ok(Box::new(DefaultBinder::from(value)))
+    }
+}
+
+#[test]
+fn adapter_bind_error_surfaces_at_walk_time() {
+    let table = SimpleTable::new("accounts", &["id", "session"], &[0]);
+    // Column 1 is `Integer` but the adapter treats it as a UUID column.
+    let insert = Insert::from(table.clone())
+        .set(0, 1_i64)
+        .unwrap()
+        .set(1, 42_i64)
+        .unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
+
+    let op = patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Pg, _>(&UuidRejectingAdapter);
+
+    // `debug_query::to_string()` turns a walk_ast error into `fmt::Error`,
+    // which makes `to_string()` panic. `catch_unwind` confirms the guarded
+    // error path fired.
+    let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        debug_query::<Pg, _>(&op).to_string()
+    }));
+    assert!(
+        rendered.is_err(),
+        "adapter bind error should propagate as a walk_ast failure, got: {rendered:?}"
+    );
+}
+
+#[test]
+fn adapter_bind_ok_still_walks_normally() {
+    // Sanity witness: the same adapter succeeds when column 1 has a
+    // representable value (a Text). No error, no panic on debug rendering.
+    let table = SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let insert = Insert::from(table.clone())
+        .set(0, 1_i64)
+        .unwrap()
+        .set(1, "550e8400-e29b-41d4-a716-446655440000")
+        .unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
+
+    let op = patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Pg, _>(&UuidRejectingAdapter);
+    let sql = debug_query::<Pg, _>(&op).to_string();
+    assert!(
+        sql.starts_with(r#"INSERT INTO "accounts" ("id", "session") VALUES ($1, $2)"#),
+        "{sql}"
+    );
 }

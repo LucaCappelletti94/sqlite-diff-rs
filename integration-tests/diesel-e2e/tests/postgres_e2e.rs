@@ -231,10 +231,10 @@ where
         table: &str,
         column_index: usize,
         value: &'a Value<S, B>,
-    ) -> Box<dyn Binder<DB> + Send + 'a> {
+    ) -> diesel::result::QueryResult<Box<dyn Binder<DB> + Send + 'a>> {
         match (table, column_index, value) {
-            ("users_typed", 1, Value::Integer(i)) => Box::new(BoolBinder(*i != 0)),
-            _ => Box::new(DefaultBinder::from(value)),
+            ("users_typed", 1, Value::Integer(i)) => Ok(Box::new(BoolBinder(*i != 0))),
+            _ => Ok(Box::new(DefaultBinder::from(value))),
         }
     }
 }
