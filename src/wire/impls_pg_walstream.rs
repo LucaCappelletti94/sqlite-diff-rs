@@ -227,6 +227,80 @@ where
     }
 }
 
+/// Postgres `float4` OID (REAL).
+pub const PG_FLOAT4: crate::pg_walstream::Oid = 700;
+/// Postgres `float8` OID (DOUBLE PRECISION).
+pub const PG_FLOAT8: crate::pg_walstream::Oid = 701;
+
+// ------------------------------------------------------------------
+// RealDecoder (Phase 3)
+//
+// Text mode: `str::parse::<f64>` accepts "NaN"/"Infinity"/"-Infinity"
+// and standard decimal / exponential forms. NaN normalizes to Null,
+// -0.0 normalizes to 0.0 (matching the crate's `decode_value`).
+// Binary mode: float4 = 4-byte big-endian IEEE 754, float8 = 8-byte.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for RealDecoder {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                match s.parse::<f64>() {
+                    Ok(f) => Ok(normalize_real(f)),
+                    Err(_) => Err(DecodeError::WrongPayloadKind {
+                        column: payload.column_name.to_string(),
+                        expected: "IEEE 754 float text",
+                        actual: "non-numeric text",
+                    }),
+                }
+            }
+            ColumnValue::Binary(b) => {
+                decode_pg_real_binary(payload.column_name, payload.oid, b.as_ref())
+            }
+        }
+    }
+}
+
+#[inline]
+fn normalize_real<S, B>(f: f64) -> Value<S, B> {
+    if f.is_nan() {
+        Value::Null
+    } else if f == 0.0 {
+        Value::Real(0.0)
+    } else {
+        Value::Real(f)
+    }
+}
+
+fn decode_pg_real_binary<S, B>(
+    column_name: &str,
+    oid: crate::pg_walstream::Oid,
+    bytes: &[u8],
+) -> Result<Value<S, B>, DecodeError> {
+    match (oid, bytes.len()) {
+        (PG_FLOAT4, 4) => {
+            let arr: [u8; 4] = bytes.try_into().unwrap();
+            Ok(normalize_real(f64::from(f32::from_be_bytes(arr))))
+        }
+        (PG_FLOAT8, 8) => {
+            let arr: [u8; 8] = bytes.try_into().unwrap();
+            Ok(normalize_real(f64::from_be_bytes(arr)))
+        }
+        _ => Err(DecodeError::WrongPayloadKind {
+            column: column_name.to_string(),
+            expected: "float4 or float8 binary with matching byte width",
+            actual: "OID and byte width disagreement",
+        }),
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder {
@@ -239,7 +313,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(RealDecoder);
 not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
@@ -265,5 +338,7 @@ where
             .with(PG_INT2, IntDecoder)
             .with(PG_INT4, IntDecoder)
             .with(PG_INT8, IntDecoder)
+            .with(PG_FLOAT4, RealDecoder)
+            .with(PG_FLOAT8, RealDecoder)
     }
 }

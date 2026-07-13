@@ -178,6 +178,57 @@ where
 }
 
 // ------------------------------------------------------------------
+// RealDecoder (Phase 3)
+//
+// NaN normalizes to Null, -0.0 to 0.0. Matches the crate's
+// `decode_value` invariant.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for RealDecoder {
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Number(n) => match n.as_f64() {
+                Some(f) => Ok(normalize_real(f)),
+                None => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "IEEE 754 float number",
+                    actual: "arbitrary-precision JSON number",
+                }),
+            },
+            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "IEEE 754 float number",
+                actual: "JSON boolean",
+            }),
+            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "IEEE 754 float number",
+                actual: "JSON string",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "IEEE 754 float number",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
+#[inline]
+fn normalize_real<S, B>(f: f64) -> Value<S, B> {
+    if f.is_nan() {
+        Value::Null
+    } else if f == 0.0 {
+        Value::Real(0.0)
+    } else {
+        Value::Real(f)
+    }
+}
+
+// ------------------------------------------------------------------
 // Skeleton impls for the schema-aware decoders. Populated per phase.
 // ------------------------------------------------------------------
 
@@ -193,7 +244,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(RealDecoder);
 not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
@@ -220,5 +270,9 @@ impl<S, B> TypeMapDefaults<S, B> for Wal2Json {
             .with(alloc::sync::Arc::from("smallint"), IntDecoder)
             .with(alloc::sync::Arc::from("integer"), IntDecoder)
             .with(alloc::sync::Arc::from("bigint"), IntDecoder)
+            .with(alloc::sync::Arc::from("real"), RealDecoder)
+            .with(alloc::sync::Arc::from("double precision"), RealDecoder)
+            .with(alloc::sync::Arc::from("float4"), RealDecoder)
+            .with(alloc::sync::Arc::from("float8"), RealDecoder)
     }
 }

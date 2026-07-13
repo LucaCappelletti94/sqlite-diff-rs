@@ -173,6 +173,54 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// RealDecoder (Phase 3)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for RealDecoder {
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Number(n) => match n.as_f64() {
+                Some(f) => Ok(normalize_real(f)),
+                None => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "IEEE 754 float number",
+                    actual: "arbitrary-precision JSON number",
+                }),
+            },
+            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "IEEE 754 float number",
+                actual: "JSON boolean",
+            }),
+            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "IEEE 754 float number",
+                actual: "JSON string",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "IEEE 754 float number",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
+#[inline]
+fn normalize_real<S, B>(f: f64) -> Value<S, B> {
+    if f.is_nan() {
+        Value::Null
+    } else if f == 0.0 {
+        Value::Real(0.0)
+    } else {
+        Value::Real(f)
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<Maxwell, S, B> for $decoder {
@@ -185,7 +233,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(RealDecoder);
 not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
@@ -213,6 +260,9 @@ where
             .with(alloc::sync::Arc::from("mediumint"), IntDecoder)
             .with(alloc::sync::Arc::from("int"), IntDecoder)
             .with(alloc::sync::Arc::from("bigint"), IntDecoder)
+            .with(alloc::sync::Arc::from("float"), RealDecoder)
+            .with(alloc::sync::Arc::from("double"), RealDecoder)
+            .with(alloc::sync::Arc::from("real"), RealDecoder)
             .with(
                 alloc::sync::Arc::from("bigint unsigned"),
                 Int64OverflowToTextDecoder,
