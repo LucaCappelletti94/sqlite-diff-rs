@@ -100,6 +100,79 @@ impl<S, B> Decoder<Maxwell, S, B> for BoolDecoder {
     }
 }
 
+// ------------------------------------------------------------------
+// IntDecoder (Phase 2)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for IntDecoder {
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => Ok(Value::Integer(i)),
+                None => Err(DecodeError::IntegerOverflow {
+                    column: payload.column_name.to_string(),
+                    digits: n.to_string(),
+                }),
+            },
+            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON integer number",
+                actual: "JSON boolean",
+            }),
+            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON integer number",
+                actual: "JSON string",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON integer number",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------
+// Int64OverflowToTextDecoder (Phase 2)
+//
+// Load-bearing for MySQL `bigint unsigned` columns whose wire values
+// can exceed `i64::MAX`.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for Int64OverflowToTextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => Ok(Value::Integer(i)),
+                None => Ok(Value::Text(S::from(n.to_string()))),
+            },
+            serde_json::Value::String(s)
+                if s.trim_start_matches('-')
+                    .chars()
+                    .all(|c| c.is_ascii_digit()) =>
+            {
+                match s.parse::<i64>() {
+                    Ok(i) => Ok(Value::Integer(i)),
+                    Err(_) => Ok(Value::Text(S::from(s.clone()))),
+                }
+            }
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON integer number or numeric string",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<Maxwell, S, B> for $decoder {
@@ -112,8 +185,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(IntDecoder);
-not_yet_impl!(Int64OverflowToTextDecoder);
 not_yet_impl!(RealDecoder);
 not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
@@ -130,8 +201,21 @@ not_yet_impl!(IntervalVerbatimDecoder);
 not_yet_impl!(JsonVerbatimDecoder);
 not_yet_impl!(JsonCanonicalDecoder);
 
-impl<S, B> TypeMapDefaults<S, B> for Maxwell {
+impl<S, B> TypeMapDefaults<S, B> for Maxwell
+where
+    S: From<alloc::string::String>,
+{
     fn defaults() -> TypeMap<Self, S, B> {
-        TypeMap::new().with(alloc::sync::Arc::from("tinyint(1)"), BoolDecoder)
+        TypeMap::new()
+            .with(alloc::sync::Arc::from("tinyint(1)"), BoolDecoder)
+            .with(alloc::sync::Arc::from("tinyint"), IntDecoder)
+            .with(alloc::sync::Arc::from("smallint"), IntDecoder)
+            .with(alloc::sync::Arc::from("mediumint"), IntDecoder)
+            .with(alloc::sync::Arc::from("int"), IntDecoder)
+            .with(alloc::sync::Arc::from("bigint"), IntDecoder)
+            .with(
+                alloc::sync::Arc::from("bigint unsigned"),
+                Int64OverflowToTextDecoder,
+            )
     }
 }

@@ -101,6 +101,132 @@ impl<S, B> Decoder<PgWalstream, S, B> for BoolDecoder {
     }
 }
 
+/// Postgres `int2` OID (SMALLINT).
+pub const PG_INT2: crate::pg_walstream::Oid = 21;
+/// Postgres `int4` OID (INTEGER).
+pub const PG_INT4: crate::pg_walstream::Oid = 23;
+/// Postgres `int8` OID (BIGINT).
+pub const PG_INT8: crate::pg_walstream::Oid = 20;
+
+// ------------------------------------------------------------------
+// IntDecoder (Phase 2)
+//
+// Text mode: base-10 parse via `str::parse::<i64>`. Overflow raises
+// `IntegerOverflow`. Binary mode: width inferred from OID (int2 = 2
+// bytes, int4 = 4, int8 = 8), big-endian. Null pass-through.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for IntDecoder {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                match s.parse::<i64>() {
+                    Ok(i) => Ok(Value::Integer(i)),
+                    Err(_)
+                        if s.trim_start_matches('-')
+                            .chars()
+                            .all(|c| c.is_ascii_digit()) =>
+                    {
+                        Err(DecodeError::IntegerOverflow {
+                            column: payload.column_name.to_string(),
+                            digits: s.to_string(),
+                        })
+                    }
+                    Err(_) => Err(DecodeError::WrongPayloadKind {
+                        column: payload.column_name.to_string(),
+                        expected: "base-10 signed integer",
+                        actual: "non-numeric text",
+                    }),
+                }
+            }
+            ColumnValue::Binary(b) => {
+                decode_pg_int_binary(payload.column_name, payload.oid, b.as_ref())
+            }
+        }
+    }
+}
+
+fn decode_pg_int_binary<S, B>(
+    column_name: &str,
+    oid: crate::pg_walstream::Oid,
+    bytes: &[u8],
+) -> Result<Value<S, B>, DecodeError> {
+    match (oid, bytes.len()) {
+        (PG_INT2, 2) => {
+            let arr: [u8; 2] = bytes.try_into().unwrap();
+            Ok(Value::Integer(i16::from_be_bytes(arr).into()))
+        }
+        (PG_INT4, 4) => {
+            let arr: [u8; 4] = bytes.try_into().unwrap();
+            Ok(Value::Integer(i32::from_be_bytes(arr).into()))
+        }
+        (PG_INT8, 8) => {
+            let arr: [u8; 8] = bytes.try_into().unwrap();
+            Ok(Value::Integer(i64::from_be_bytes(arr)))
+        }
+        _ => Err(DecodeError::WrongPayloadKind {
+            column: column_name.to_string(),
+            expected: "int2, int4, or int8 binary with matching byte width",
+            actual: "OID and byte width disagreement",
+        }),
+    }
+}
+
+// ------------------------------------------------------------------
+// Int64OverflowToTextDecoder (Phase 2)
+//
+// pg_walstream rarely surfaces true bigint-unsigned overflow (Postgres
+// has no such type), but this decoder tolerates the shape for
+// symmetry with the Maxwell path. Wire text that does not fit i64
+// stays as base-10 digits in Value::Text.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for Int64OverflowToTextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                match s.parse::<i64>() {
+                    Ok(i) => Ok(Value::Integer(i)),
+                    Err(_)
+                        if s.trim_start_matches('-')
+                            .chars()
+                            .all(|c| c.is_ascii_digit()) =>
+                    {
+                        Ok(Value::Text(S::from(s.to_string())))
+                    }
+                    Err(_) => Err(DecodeError::WrongPayloadKind {
+                        column: payload.column_name.to_string(),
+                        expected: "base-10 integer text",
+                        actual: "non-numeric text",
+                    }),
+                }
+            }
+            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "text-mode integer",
+                actual: "binary payload",
+            }),
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder {
@@ -113,8 +239,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(IntDecoder);
-not_yet_impl!(Int64OverflowToTextDecoder);
 not_yet_impl!(RealDecoder);
 not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
@@ -131,8 +255,15 @@ not_yet_impl!(IntervalVerbatimDecoder);
 not_yet_impl!(JsonVerbatimDecoder);
 not_yet_impl!(JsonCanonicalDecoder);
 
-impl<S, B> TypeMapDefaults<S, B> for PgWalstream {
+impl<S, B> TypeMapDefaults<S, B> for PgWalstream
+where
+    S: From<alloc::string::String>,
+{
     fn defaults() -> TypeMap<Self, S, B> {
-        TypeMap::new().with(PG_BOOL, BoolDecoder)
+        TypeMap::new()
+            .with(PG_BOOL, BoolDecoder)
+            .with(PG_INT2, IntDecoder)
+            .with(PG_INT4, IntDecoder)
+            .with(PG_INT8, IntDecoder)
     }
 }
