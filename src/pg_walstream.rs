@@ -132,6 +132,25 @@ pub struct PgWalstreamColumn<'a> {
     pub data: &'a ColumnValue,
 }
 
+impl PgWalstreamColumn<'_> {
+    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// payload without fully-qualified syntax. Fixes the `Src` generic
+    /// to [`PgWalstream`] so the compiler can pick the impl.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoder's [`DecodeError`](crate::wire::DecodeError).
+    pub fn decoded_by<D, S, B>(
+        self,
+        decoder: &D,
+    ) -> Result<crate::encoding::Value<S, B>, crate::wire::DecodeError>
+    where
+        D: crate::wire::Decoder<PgWalstream, S, B>,
+    {
+        decoder.decode(self)
+    }
+}
+
 /// Convert a `ColumnValue` to our `Value` type.
 ///
 /// Text values from PostgreSQL are best-effort coerced into integers, floats,

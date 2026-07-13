@@ -192,6 +192,25 @@ pub struct MaxwellColumn<'a> {
     pub value: &'a serde_json::Value,
 }
 
+impl MaxwellColumn<'_> {
+    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// payload without fully-qualified syntax. Fixes the `Src` generic
+    /// to [`Maxwell`] so the compiler can pick the impl.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoder's [`DecodeError`](crate::wire::DecodeError).
+    pub fn decoded_by<D, S, B>(
+        self,
+        decoder: &D,
+    ) -> Result<crate::encoding::Value<S, B>, crate::wire::DecodeError>
+    where
+        D: crate::wire::Decoder<Maxwell, S, B>,
+    {
+        decoder.decode(self)
+    }
+}
+
 /// Convert a `serde_json` Value to our Value type.
 fn json_to_value(
     json: &serde_json::Value,

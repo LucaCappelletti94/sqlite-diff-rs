@@ -62,6 +62,44 @@ impl Decoder<Maxwell, alloc::string::String, Vec<u8>> for SnifferDecoder {
     }
 }
 
+// ------------------------------------------------------------------
+// BoolDecoder (Phase 1)
+//
+// Maxwell delivers MySQL `tinyint(1)` bool values as either JSON
+// `true`/`false` or as integer 0/1 (config-dependent). Both are
+// accepted. Null pass-through. Anything else -> WrongPayloadKind.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for BoolDecoder {
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Bool(b) => Ok(Value::Integer(i64::from(*b))),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(0) => Ok(Value::Integer(0)),
+                Some(1) => Ok(Value::Integer(1)),
+                _ => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON bool or number 0/1",
+                    actual: "number outside {0, 1}",
+                }),
+            },
+            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON bool or number 0/1",
+                actual: "JSON string",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON bool or number 0/1",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<Maxwell, S, B> for $decoder {
@@ -74,7 +112,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(BoolDecoder);
 not_yet_impl!(IntDecoder);
 not_yet_impl!(Int64OverflowToTextDecoder);
 not_yet_impl!(RealDecoder);
@@ -95,6 +132,6 @@ not_yet_impl!(JsonCanonicalDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for Maxwell {
     fn defaults() -> TypeMap<Self, S, B> {
-        TypeMap::new()
+        TypeMap::new().with(alloc::sync::Arc::from("tinyint(1)"), BoolDecoder)
     }
 }

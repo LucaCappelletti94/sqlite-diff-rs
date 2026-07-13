@@ -220,6 +220,22 @@ pub struct Wal2JsonColumn<'a> {
     pub value: &'a serde_json::Value,
 }
 
+impl Wal2JsonColumn<'_> {
+    /// Ergonomic helper for calling a specific [`Decoder`] on this
+    /// payload without fully-qualified syntax. Fixes the `Src` generic
+    /// to [`Wal2Json`] so the compiler can pick the impl.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoder's [`DecodeError`](crate::wire::DecodeError).
+    pub fn decoded_by<D, S, B>(self, decoder: &D) -> Result<Value<S, B>, crate::wire::DecodeError>
+    where
+        D: crate::wire::Decoder<Wal2Json, S, B>,
+    {
+        decoder.decode(self)
+    }
+}
+
 use crate::ChangesetFormat;
 use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
 use crate::encoding::Value;

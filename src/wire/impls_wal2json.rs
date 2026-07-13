@@ -75,6 +75,39 @@ impl Decoder<Wal2Json, alloc::string::String, Vec<u8>> for SnifferDecoder {
 }
 
 // ------------------------------------------------------------------
+// BoolDecoder (Phase 1)
+//
+// wal2json v2 delivers PG booleans as JSON `true`/`false`. `null` maps
+// to Value::Null. Anything else -> WrongPayloadKind.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for BoolDecoder {
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::Bool(b) => Ok(Value::Integer(i64::from(*b))),
+            serde_json::Value::Number(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON boolean",
+                actual: "JSON number",
+            }),
+            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON boolean",
+                actual: "JSON string",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON boolean",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------
 // Skeleton impls for the schema-aware decoders. Populated per phase.
 // ------------------------------------------------------------------
 
@@ -90,7 +123,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(BoolDecoder);
 not_yet_impl!(IntDecoder);
 not_yet_impl!(Int64OverflowToTextDecoder);
 not_yet_impl!(RealDecoder);
@@ -115,6 +147,6 @@ not_yet_impl!(JsonCanonicalDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for Wal2Json {
     fn defaults() -> TypeMap<Self, S, B> {
-        TypeMap::new()
+        TypeMap::new().with(alloc::sync::Arc::from("boolean"), BoolDecoder)
     }
 }

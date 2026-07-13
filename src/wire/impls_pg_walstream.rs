@@ -59,6 +59,48 @@ impl Decoder<PgWalstream, alloc::string::String, Vec<u8>> for SnifferDecoder {
     }
 }
 
+/// Postgres bool OID. Registered under this key by
+/// [`TypeMapDefaults::defaults`].
+pub const PG_BOOL: crate::pg_walstream::Oid = 16;
+
+// ------------------------------------------------------------------
+// BoolDecoder (Phase 1)
+//
+// pg_walstream text mode: `"t"` -> 1, `"f"` -> 0.
+// pg_walstream binary mode: single byte 0x01 -> 1, 0x00 -> 0.
+// Null pass-through.
+// Anything else -> WrongPayloadKind.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for BoolDecoder {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => match payload.data.as_str() {
+                Some("t") => Ok(Value::Integer(1)),
+                Some("f") => Ok(Value::Integer(0)),
+                other => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "\"t\" or \"f\"",
+                    actual: match other {
+                        Some(_) => "arbitrary text",
+                        None => "non-utf8 bytes",
+                    },
+                }),
+            },
+            ColumnValue::Binary(b) => match b.as_ref() {
+                [0x01] => Ok(Value::Integer(1)),
+                [0x00] => Ok(Value::Integer(0)),
+                _ => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "single byte 0x00 or 0x01",
+                    actual: "other binary contents",
+                }),
+            },
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder {
@@ -71,7 +113,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(BoolDecoder);
 not_yet_impl!(IntDecoder);
 not_yet_impl!(Int64OverflowToTextDecoder);
 not_yet_impl!(RealDecoder);
@@ -92,6 +133,6 @@ not_yet_impl!(JsonCanonicalDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for PgWalstream {
     fn defaults() -> TypeMap<Self, S, B> {
-        TypeMap::new()
+        TypeMap::new().with(PG_BOOL, BoolDecoder)
     }
 }

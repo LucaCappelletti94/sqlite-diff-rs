@@ -24,19 +24,29 @@ fn wire_adapter_is_object_safe_for_every_source() {
     fn _assert_maxwell(_: &dyn WireAdapter<Maxwell, String, Vec<u8>>) {}
 }
 
-/// `TypeMap<Src, S, B>::defaults()` is callable for every source.
+/// `TypeMap<Src, S, B>::defaults()` is callable for every source and
+/// grows monotonically as later phases populate more decoders.
 #[test]
 fn type_map_defaults_are_callable_for_every_source() {
     let pg: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let wal2json: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
     let maxwell: TypeMap<Maxwell, String, Vec<u8>> = TypeMap::defaults();
 
-    // Phase 0 ships empty defaults across the board. Phases 1..9 populate
-    // one payload family per phase. This test lands its first non-zero
-    // assertion in Phase 1 once bool is registered.
-    assert_eq!(pg.len(), 0);
-    assert_eq!(wal2json.len(), 0);
-    assert_eq!(maxwell.len(), 0);
+    // Each phase from 1 onwards adds entries per source. Assert only
+    // that the map is non-empty once at least one phase has landed.
+    // The exact counts move as new payload families ship.
+    assert!(
+        !pg.is_empty(),
+        "pg_walstream defaults should carry Phase 1 bool"
+    );
+    assert!(
+        !wal2json.is_empty(),
+        "wal2json defaults should carry Phase 1 bool"
+    );
+    assert!(
+        !maxwell.is_empty(),
+        "maxwell defaults should carry Phase 1 bool"
+    );
 }
 
 /// Empty `TypeMap` returns `NoDecoderForType` for any lookup, using the
