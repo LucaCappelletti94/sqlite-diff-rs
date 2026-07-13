@@ -36,7 +36,16 @@ pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub(crate) use schema::IndexableValues;
 pub use schema::{DynTable, NamedColumns, SchemaWithPK, SimpleTable};
-pub use wire::{DecodeError, Decoder, TypeMap, TypeMapDefaults, WireAdapter, WireSource};
+pub use wire::{
+    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, DecodeError, Decoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder,
+    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
+    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
+    TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, TypeMap, TypeMapDefaults,
+    UuidBlob16Decoder, UuidText36Decoder, WireAdapter, WireSource,
+};
+#[allow(deprecated)]
+pub use wire::{SnifferAdapter, SnifferDecoder};
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.

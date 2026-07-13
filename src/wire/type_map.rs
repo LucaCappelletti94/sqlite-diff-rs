@@ -63,6 +63,19 @@ impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
     }
 }
 
+impl<Src, S, B> TypeMap<Src, S, B>
+where
+    Src: TypeMapDefaults<S, B>,
+{
+    /// Pre-populated registry with every self-evident mapping the crate
+    /// ships for this source, sugared for
+    /// `<Src as TypeMapDefaults<S, B>>::defaults()`.
+    #[must_use]
+    pub fn defaults() -> Self {
+        <Src as TypeMapDefaults<S, B>>::defaults()
+    }
+}
+
 impl<Src: WireSource, S, B> Default for TypeMap<Src, S, B> {
     fn default() -> Self {
         Self::new()

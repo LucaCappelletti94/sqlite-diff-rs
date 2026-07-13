@@ -48,10 +48,14 @@ pub use pg_walstream::Oid;
 pub use pg_walstream::{ChangeEvent, ColumnValue, EventType, Lsn, ReplicaIdentity, RowData};
 
 use crate::ChangesetFormat;
-use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
+use crate::builders::{
+    ChangeDelete, DiffOps, DiffSetBuilder, Insert, PatchDelete, PatchsetFormat, Update,
+};
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
-use crate::wire::{Sealed, WireSource};
+use crate::wire::{Sealed, WireAdapter, WireSource};
+use core::fmt::Debug;
+use core::hash::Hash;
 
 /// Errors during `pg_walstream` to changeset conversion.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -372,6 +376,354 @@ impl<T: NamedColumns> TryFrom<(ChangeEvent, T)> for PatchDelete<T, String, Vec<u
     fn try_from((event, table): (ChangeEvent, T)) -> Result<Self, Self::Error> {
         (event.event_type, table).try_into()
     }
+}
+
+// ============================================================================
+// Schema-aware digest fns (0.2.0+).
+// ============================================================================
+
+fn pg_walstream_table_mismatch(expected: &str, actual: &str) -> Option<ConversionError> {
+    if actual == expected {
+        None
+    } else {
+        Some(ConversionError::TableMismatch {
+            expected: expected.into(),
+            actual: actual.into(),
+        })
+    }
+}
+
+impl<T, S, B> DiffSetBuilder<ChangesetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Digest a `pg_walstream` event into a changeset via the supplied
+    /// `adapter`.
+    ///
+    /// The `relation` argument provides column type metadata (OID and type
+    /// modifier) for each column in the table. The `adapter` decodes raw
+    /// `ColumnValue` payloads into [`Value`] instances using that metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversionError::TableMismatch`] if the event table name
+    /// does not match `table.name()`, [`ConversionError::MissingData`] if
+    /// the event is missing required column data, and
+    /// [`ConversionError::ColumnNotFound`] for column names absent from
+    /// the schema. Adapter failures surface as [`ConversionError::Decode`].
+    pub fn digest_pg_walstream<A>(
+        self,
+        event: &EventType,
+        relation: &pg_walstream::RelationInfo,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<PgWalstream, S, B>,
+    {
+        match event {
+            EventType::Insert {
+                table: event_table,
+                data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let insert = build_insert_from_pg(data, relation, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            EventType::Update {
+                table: event_table,
+                old_data,
+                new_data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let update = build_changeset_update_from_pg(
+                    old_data.as_ref(),
+                    new_data,
+                    relation,
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::update(self, update))
+            }
+            EventType::Delete {
+                table: event_table,
+                old_data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let delete = build_changeset_delete_from_pg(old_data, relation, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            _ => Ok(self),
+        }
+    }
+}
+
+impl<T, S, B> DiffSetBuilder<PatchsetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Patchset counterpart of
+    /// [`digest_pg_walstream`](DiffSetBuilder::digest_pg_walstream).
+    ///
+    /// # Errors
+    ///
+    /// See the changeset variant.
+    pub fn digest_pg_walstream<A>(
+        self,
+        event: &EventType,
+        relation: &pg_walstream::RelationInfo,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<PgWalstream, S, B>,
+    {
+        match event {
+            EventType::Insert {
+                table: event_table,
+                data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let insert = build_insert_from_pg(data, relation, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            EventType::Update {
+                table: event_table,
+                new_data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let update = build_patchset_update_from_pg(new_data, relation, table, adapter)?;
+                Ok(DiffOps::update(self, update))
+            }
+            EventType::Delete {
+                table: event_table,
+                old_data,
+                ..
+            } => {
+                if let Some(err) = pg_walstream_table_mismatch(table.name(), event_table.as_ref()) {
+                    return Err(err);
+                }
+                let delete = build_patch_delete_from_pg(old_data, relation, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            _ => Ok(self),
+        }
+    }
+}
+
+fn lookup_column_info<'a>(
+    relation: &'a pg_walstream::RelationInfo,
+    name: &str,
+) -> Result<&'a pg_walstream::ColumnInfo, ConversionError> {
+    relation
+        .get_column_by_name(name)
+        .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))
+}
+
+fn build_insert_from_pg<T, S, B, A>(
+    data: &RowData,
+    relation: &pg_walstream::RelationInfo,
+    table: &T,
+    adapter: &A,
+) -> Result<Insert<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<PgWalstream, S, B>,
+{
+    let mut insert = Insert::from(table.clone());
+    for (name, value) in data.iter() {
+        let col_idx = table
+            .column_index(name.as_ref())
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        let col_info = lookup_column_info(relation, name.as_ref())?;
+        let payload = PgWalstreamColumn {
+            column_name: name.as_ref(),
+            oid: col_info.type_id,
+            type_modifier: col_info.type_modifier,
+            data: value,
+        };
+        let decoded = adapter.decode(payload)?;
+        insert = insert
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+    }
+    Ok(insert)
+}
+
+fn build_changeset_update_from_pg<T, S, B, A>(
+    old_data: Option<&RowData>,
+    new_data: &RowData,
+    relation: &pg_walstream::RelationInfo,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + AsRef<str>,
+    B: Clone + Debug + AsRef<[u8]>,
+    A: WireAdapter<PgWalstream, S, B>,
+{
+    let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
+    for (name, new_value) in new_data.iter() {
+        let col_idx = table
+            .column_index(name.as_ref())
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        let col_info = lookup_column_info(relation, name.as_ref())?;
+        let new_payload = PgWalstreamColumn {
+            column_name: name.as_ref(),
+            oid: col_info.type_id,
+            type_modifier: col_info.type_modifier,
+            data: new_value,
+        };
+        let new_decoded = adapter.decode(new_payload)?;
+
+        if let Some(old) = old_data
+            && let Some(old_value) = old.get(name.as_ref())
+        {
+            let old_col_info = lookup_column_info(relation, name.as_ref())?;
+            let old_payload = PgWalstreamColumn {
+                column_name: name.as_ref(),
+                oid: old_col_info.type_id,
+                type_modifier: old_col_info.type_modifier,
+                data: old_value,
+            };
+            let old_decoded = adapter.decode(old_payload)?;
+            update = update
+                .set(col_idx, old_decoded, new_decoded)
+                .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+            continue;
+        }
+
+        update = update
+            .set_new(col_idx, new_decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+    }
+    Ok(update)
+}
+
+fn build_patchset_update_from_pg<T, S, B, A>(
+    new_data: &RowData,
+    relation: &pg_walstream::RelationInfo,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<PgWalstream, S, B>,
+{
+    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
+    for (name, value) in new_data.iter() {
+        let col_idx = table
+            .column_index(name.as_ref())
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        let col_info = lookup_column_info(relation, name.as_ref())?;
+        let payload = PgWalstreamColumn {
+            column_name: name.as_ref(),
+            oid: col_info.type_id,
+            type_modifier: col_info.type_modifier,
+            data: value,
+        };
+        let decoded = adapter.decode(payload)?;
+        update = update
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+    }
+    Ok(update)
+}
+
+fn build_changeset_delete_from_pg<T, S, B, A>(
+    old_data: &RowData,
+    relation: &pg_walstream::RelationInfo,
+    table: &T,
+    adapter: &A,
+) -> Result<ChangeDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Default + AsRef<str>,
+    B: Clone + Default + AsRef<[u8]>,
+    A: WireAdapter<PgWalstream, S, B>,
+{
+    let mut delete = ChangeDelete::from(table.clone());
+    for (name, value) in old_data.iter() {
+        let col_idx = table
+            .column_index(name.as_ref())
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        let col_info = lookup_column_info(relation, name.as_ref())?;
+        let payload = PgWalstreamColumn {
+            column_name: name.as_ref(),
+            oid: col_info.type_id,
+            type_modifier: col_info.type_modifier,
+            data: value,
+        };
+        let decoded = adapter.decode(payload)?;
+        delete = delete
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+    }
+    Ok(delete)
+}
+
+fn build_patch_delete_from_pg<T, S, B, A>(
+    old_data: &RowData,
+    relation: &pg_walstream::RelationInfo,
+    table: &T,
+    adapter: &A,
+) -> Result<PatchDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<PgWalstream, S, B>,
+{
+    let num_pks = table.number_of_primary_keys();
+    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
+
+    for (name, value) in old_data.iter() {
+        let col_idx = table
+            .column_index(name.as_ref())
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        if let Some(pk_idx) = table.primary_key_index(col_idx) {
+            let col_info = lookup_column_info(relation, name.as_ref())?;
+            let payload = PgWalstreamColumn {
+                column_name: name.as_ref(),
+                oid: col_info.type_id,
+                type_modifier: col_info.type_modifier,
+                data: value,
+            };
+            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
+        }
+    }
+
+    let pk: Vec<Value<S, B>> = pk_slots
+        .iter()
+        .cloned()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ConversionError::MissingData)?;
+
+    Ok(PatchDelete::new(table.clone(), pk))
 }
 
 #[cfg(test)]

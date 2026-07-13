@@ -150,6 +150,11 @@ use alloc::format;
 
 use crate::wire::{Sealed, WireSource};
 
+use crate::builders::{DiffOps, DiffSetBuilder, PatchsetFormat};
+use crate::wire::WireAdapter;
+use core::fmt::Debug;
+use core::hash::Hash;
+
 /// Marker type for the `maxwell` source.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Maxwell;
@@ -387,6 +392,306 @@ impl<T: NamedColumns + Clone> TryFrom<(&Message, &T)> for PatchDelete<T, String,
 
         Ok(PatchDelete::new(table.clone(), pk))
     }
+}
+
+// ============================================================================
+// Schema-aware digest fns (0.2.0+).
+// ============================================================================
+
+impl<T, S, B> DiffSetBuilder<ChangesetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Digest a Maxwell message into a changeset via the supplied `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversionError::TableMismatch`] if `message.table` does not
+    /// match `table.name()`, and [`ConversionError::ColumnNotFound`] for
+    /// column names absent from the schema. Adapter failures surface as
+    /// [`ConversionError::Decode`].
+    pub fn digest_maxwell<A>(
+        self,
+        message: &Message,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Maxwell, S, B>,
+    {
+        if table.name() != message.table {
+            return Err(ConversionError::TableMismatch {
+                expected: table.name().into(),
+                actual: message.table.clone(),
+            });
+        }
+
+        match message.op_type {
+            OpType::Insert => {
+                let insert = build_insert_from_maxwell(
+                    &message.data,
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            OpType::Update => {
+                let update = build_changeset_update_from_maxwell(
+                    &message.data,
+                    message.old.as_ref(),
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::update(self, update))
+            }
+            OpType::Delete => {
+                let delete = build_changeset_delete_from_maxwell(
+                    &message.data,
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::delete(self, delete))
+            }
+        }
+    }
+}
+
+impl<T, S, B> DiffSetBuilder<PatchsetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Digest a Maxwell message into a patchset via the supplied `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// See the changeset variant.
+    pub fn digest_maxwell<A>(
+        self,
+        message: &Message,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Maxwell, S, B>,
+    {
+        if table.name() != message.table {
+            return Err(ConversionError::TableMismatch {
+                expected: table.name().into(),
+                actual: message.table.clone(),
+            });
+        }
+
+        match message.op_type {
+            OpType::Insert => {
+                let insert = build_insert_from_maxwell(
+                    &message.data,
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            OpType::Update => {
+                let update = build_patchset_update_from_maxwell(
+                    &message.data,
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::update(self, update))
+            }
+            OpType::Delete => {
+                let delete = build_patch_delete_from_maxwell(
+                    &message.data,
+                    message.columns_types.as_ref(),
+                    table,
+                    adapter,
+                )?;
+                Ok(DiffOps::delete(self, delete))
+            }
+        }
+    }
+}
+
+fn build_insert_from_maxwell<T, S, B, A>(
+    data: &BTreeMap<String, serde_json::Value>,
+    columns_types: Option<&BTreeMap<String, String>>,
+    table: &T,
+    adapter: &A,
+) -> Result<Insert<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Maxwell, S, B>,
+{
+    let mut insert = Insert::from(table.clone());
+    for (name, value) in data {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
+        let payload = MaxwellColumn {
+            column_name: name.as_str(),
+            mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+            value,
+        };
+        let decoded = adapter.decode(payload)?;
+        insert = insert
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
+    }
+    Ok(insert)
+}
+
+fn build_changeset_update_from_maxwell<T, S, B, A>(
+    data: &BTreeMap<String, serde_json::Value>,
+    old: Option<&BTreeMap<String, serde_json::Value>>,
+    columns_types: Option<&BTreeMap<String, String>>,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + AsRef<str>,
+    B: Clone + Debug + AsRef<[u8]>,
+    A: WireAdapter<Maxwell, S, B>,
+{
+    let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
+    for (name, new_value) in data {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
+
+        let new_payload = MaxwellColumn {
+            column_name: name.as_str(),
+            mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+            value: new_value,
+        };
+        let new = adapter.decode(new_payload)?;
+
+        if let Some(old_map) = old {
+            if let Some(old_value) = old_map.get(name) {
+                let old_payload = MaxwellColumn {
+                    column_name: name.as_str(),
+                    mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+                    value: old_value,
+                };
+                let old = adapter.decode(old_payload)?;
+                update = update
+                    .set(col_idx, old, new)
+                    .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
+                continue;
+            }
+        }
+
+        update = update
+            .set_new(col_idx, new)
+            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
+    }
+    Ok(update)
+}
+
+fn build_patchset_update_from_maxwell<T, S, B, A>(
+    data: &BTreeMap<String, serde_json::Value>,
+    columns_types: Option<&BTreeMap<String, String>>,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Maxwell, S, B>,
+{
+    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
+    for (name, value) in data {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
+        let payload = MaxwellColumn {
+            column_name: name.as_str(),
+            mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+            value,
+        };
+        let decoded = adapter.decode(payload)?;
+        update = update
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
+    }
+    Ok(update)
+}
+
+fn build_changeset_delete_from_maxwell<T, S, B, A>(
+    data: &BTreeMap<String, serde_json::Value>,
+    columns_types: Option<&BTreeMap<String, String>>,
+    table: &T,
+    adapter: &A,
+) -> Result<ChangeDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Default + AsRef<str>,
+    B: Clone + Default + AsRef<[u8]>,
+    A: WireAdapter<Maxwell, S, B>,
+{
+    let mut delete = ChangeDelete::from(table.clone());
+    for (name, value) in data {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
+        let payload = MaxwellColumn {
+            column_name: name.as_str(),
+            mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+            value,
+        };
+        let decoded = adapter.decode(payload)?;
+        delete = delete
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
+    }
+    Ok(delete)
+}
+
+fn build_patch_delete_from_maxwell<T, S, B, A>(
+    data: &BTreeMap<String, serde_json::Value>,
+    columns_types: Option<&BTreeMap<String, String>>,
+    table: &T,
+    adapter: &A,
+) -> Result<PatchDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Maxwell, S, B>,
+{
+    let num_pks = table.number_of_primary_keys();
+    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
+
+    for (name, value) in data {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
+        if let Some(pk_idx) = table.primary_key_index(col_idx) {
+            let payload = MaxwellColumn {
+                column_name: name.as_str(),
+                mysql_type: columns_types.and_then(|m| m.get(name)).map(String::as_str),
+                value,
+            };
+            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
+        }
+    }
+
+    let pk = pk_slots
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ConversionError::MissingData("pk", "DELETE"))?;
+    Ok(PatchDelete::new(table.clone(), pk))
 }
 
 // ============================================================================
