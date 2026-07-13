@@ -229,6 +229,39 @@ fn normalize_real<S, B>(f: f64) -> Value<S, B> {
 }
 
 // ------------------------------------------------------------------
+// TextDecoder (Phase 4)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for TextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string",
+                actual: "JSON boolean",
+            }),
+            serde_json::Value::Number(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string",
+                actual: "JSON number",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON string",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------
 // Skeleton impls for the schema-aware decoders. Populated per phase.
 // ------------------------------------------------------------------
 
@@ -244,7 +277,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
@@ -263,7 +295,10 @@ not_yet_impl!(JsonCanonicalDecoder);
 // TypeMapDefaults: empty at Phase 0.
 // ------------------------------------------------------------------
 
-impl<S, B> TypeMapDefaults<S, B> for Wal2Json {
+impl<S, B> TypeMapDefaults<S, B> for Wal2Json
+where
+    S: From<alloc::string::String>,
+{
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
             .with(alloc::sync::Arc::from("boolean"), BoolDecoder)
@@ -273,6 +308,12 @@ impl<S, B> TypeMapDefaults<S, B> for Wal2Json {
             .with(alloc::sync::Arc::from("real"), RealDecoder)
             .with(alloc::sync::Arc::from("double precision"), RealDecoder)
             .with(alloc::sync::Arc::from("float4"), RealDecoder)
+            .with(alloc::sync::Arc::from("text"), TextDecoder)
+            .with(alloc::sync::Arc::from("varchar"), TextDecoder)
+            .with(alloc::sync::Arc::from("character varying"), TextDecoder)
+            .with(alloc::sync::Arc::from("character"), TextDecoder)
+            .with(alloc::sync::Arc::from("char"), TextDecoder)
+            .with(alloc::sync::Arc::from("name"), TextDecoder)
             .with(alloc::sync::Arc::from("float8"), RealDecoder)
     }
 }

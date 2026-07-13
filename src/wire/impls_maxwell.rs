@@ -221,6 +221,39 @@ fn normalize_real<S, B>(f: f64) -> Value<S, B> {
     }
 }
 
+// ------------------------------------------------------------------
+// TextDecoder (Phase 4)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for TextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string",
+                actual: "JSON boolean",
+            }),
+            serde_json::Value::Number(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string",
+                actual: "JSON number",
+            }),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "JSON string",
+                    actual: "JSON array or object",
+                })
+            }
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<Maxwell, S, B> for $decoder {
@@ -233,7 +266,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
@@ -263,6 +295,12 @@ where
             .with(alloc::sync::Arc::from("float"), RealDecoder)
             .with(alloc::sync::Arc::from("double"), RealDecoder)
             .with(alloc::sync::Arc::from("real"), RealDecoder)
+            .with(alloc::sync::Arc::from("char"), TextDecoder)
+            .with(alloc::sync::Arc::from("varchar"), TextDecoder)
+            .with(alloc::sync::Arc::from("tinytext"), TextDecoder)
+            .with(alloc::sync::Arc::from("text"), TextDecoder)
+            .with(alloc::sync::Arc::from("mediumtext"), TextDecoder)
+            .with(alloc::sync::Arc::from("longtext"), TextDecoder)
             .with(
                 alloc::sync::Arc::from("bigint unsigned"),
                 Int64OverflowToTextDecoder,

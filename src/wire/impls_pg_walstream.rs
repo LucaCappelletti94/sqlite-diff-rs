@@ -301,6 +301,48 @@ fn decode_pg_real_binary<S, B>(
     }
 }
 
+/// Postgres `text` OID.
+pub const PG_TEXT: crate::pg_walstream::Oid = 25;
+/// Postgres `varchar` OID.
+pub const PG_VARCHAR: crate::pg_walstream::Oid = 1043;
+/// Postgres `bpchar` (character) OID.
+pub const PG_BPCHAR: crate::pg_walstream::Oid = 1042;
+/// Postgres `name` OID.
+pub const PG_NAME: crate::pg_walstream::Oid = 19;
+
+// ------------------------------------------------------------------
+// TextDecoder (Phase 4)
+//
+// Text mode: UTF-8 validate, pass through as Value::Text. Invalid
+// UTF-8 raises `InvalidUtf8` rather than silently coercing to a Blob.
+// Binary mode is rejected for text columns.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for TextDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                Ok(Value::Text(S::from(s.to_string())))
+            }
+            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "UTF-8 text",
+                actual: "binary payload",
+            }),
+        }
+    }
+}
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder {
@@ -313,7 +355,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(TextDecoder);
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
@@ -340,5 +381,9 @@ where
             .with(PG_INT8, IntDecoder)
             .with(PG_FLOAT4, RealDecoder)
             .with(PG_FLOAT8, RealDecoder)
+            .with(PG_TEXT, TextDecoder)
+            .with(PG_VARCHAR, TextDecoder)
+            .with(PG_BPCHAR, TextDecoder)
+            .with(PG_NAME, TextDecoder)
     }
 }
