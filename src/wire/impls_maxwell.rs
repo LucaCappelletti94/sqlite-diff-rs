@@ -414,10 +414,53 @@ verbatim_impl!(DateVerbatimDecoder);
 verbatim_impl!(TimeVerbatimDecoder);
 verbatim_impl!(IntervalVerbatimDecoder);
 
+// ------------------------------------------------------------------
+// JsonVerbatimDecoder / JsonCanonicalDecoder (Phase 9)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for JsonVerbatimDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+            other => match crate::wire::json_helpers::serialize_verbatim(other) {
+                Ok(text) => Ok(Value::Text(S::from(text))),
+                Err(error) => Err(DecodeError::JsonNotSerializable {
+                    column: payload.column_name.to_string(),
+                    error,
+                }),
+            },
+        }
+    }
+}
+
+impl<S, B> Decoder<Maxwell, S, B> for JsonCanonicalDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => {
+                let canon = crate::wire::json_helpers::canonicalize_string(s);
+                Ok(Value::Text(S::from(canon)))
+            }
+            other => match crate::wire::json_helpers::canonicalize_to_string(other) {
+                Ok(text) => Ok(Value::Text(S::from(text))),
+                Err(error) => Err(DecodeError::JsonNotSerializable {
+                    column: payload.column_name.to_string(),
+                    error,
+                }),
+            },
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
-not_yet_impl!(JsonVerbatimDecoder);
-not_yet_impl!(JsonCanonicalDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for Maxwell
 where
@@ -457,6 +500,7 @@ where
             .with(alloc::sync::Arc::from("date"), DateVerbatimDecoder)
             .with(alloc::sync::Arc::from("time"), TimeVerbatimDecoder)
             .with(alloc::sync::Arc::from("year"), TimeVerbatimDecoder)
+            .with(alloc::sync::Arc::from("json"), JsonVerbatimDecoder)
             .with(
                 alloc::sync::Arc::from("bigint unsigned"),
                 Int64OverflowToTextDecoder,

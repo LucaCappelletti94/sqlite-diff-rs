@@ -423,10 +423,57 @@ verbatim_impl!(DateVerbatimDecoder);
 verbatim_impl!(TimeVerbatimDecoder);
 verbatim_impl!(IntervalVerbatimDecoder);
 
+// ------------------------------------------------------------------
+// JsonVerbatimDecoder / JsonCanonicalDecoder (Phase 9)
+//
+// Verbatim: serialize Object/Array via serde_json::to_string (compact)
+// or pass string sources through unchanged. Canonical: sort keys
+// recursively, then serialize compactly.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for JsonVerbatimDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+            other => match crate::wire::json_helpers::serialize_verbatim(other) {
+                Ok(text) => Ok(Value::Text(S::from(text))),
+                Err(error) => Err(DecodeError::JsonNotSerializable {
+                    column: payload.column_name.to_string(),
+                    error,
+                }),
+            },
+        }
+    }
+}
+
+impl<S, B> Decoder<Wal2Json, S, B> for JsonCanonicalDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => {
+                let canon = crate::wire::json_helpers::canonicalize_string(s);
+                Ok(Value::Text(S::from(canon)))
+            }
+            other => match crate::wire::json_helpers::canonicalize_to_string(other) {
+                Ok(text) => Ok(Value::Text(S::from(text))),
+                Err(error) => Err(DecodeError::JsonNotSerializable {
+                    column: payload.column_name.to_string(),
+                    error,
+                }),
+            },
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(JsonVerbatimDecoder);
-not_yet_impl!(JsonCanonicalDecoder);
 
 // ------------------------------------------------------------------
 // TypeMapDefaults: empty at Phase 0.
@@ -479,5 +526,7 @@ where
             )
             .with(alloc::sync::Arc::from("interval"), IntervalVerbatimDecoder)
             .with(alloc::sync::Arc::from("float8"), RealDecoder)
+            .with(alloc::sync::Arc::from("json"), JsonVerbatimDecoder)
+            .with(alloc::sync::Arc::from("jsonb"), JsonVerbatimDecoder)
     }
 }

@@ -35,6 +35,8 @@ mod adapter;
 mod bytes_helpers;
 mod decoder;
 mod error;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+mod json_helpers;
 mod sealed;
 mod source;
 mod type_map;

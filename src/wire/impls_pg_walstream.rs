@@ -579,10 +579,45 @@ verbatim_impl!(DateVerbatimDecoder);
 verbatim_impl!(TimeVerbatimDecoder);
 verbatim_impl!(IntervalVerbatimDecoder);
 
+verbatim_impl!(JsonVerbatimDecoder);
+
+// For pg_walstream, JSON canonical is the same as verbatim because
+// the wire carries JSON as opaque text; canonicalization requires
+// re-parsing which lives in the JSON helpers on the wal2json /
+// maxwell paths.
+impl<S, B> Decoder<PgWalstream, S, B> for JsonCanonicalDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                let canon = crate::wire::json_helpers::canonicalize_string(s);
+                Ok(Value::Text(S::from(canon)))
+            }
+            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "text-mode JSON",
+                actual: "binary payload",
+            }),
+        }
+    }
+}
+
+/// Postgres `json` OID.
+pub const PG_JSON: crate::pg_walstream::Oid = 114;
+/// Postgres `jsonb` OID.
+pub const PG_JSONB: crate::pg_walstream::Oid = 3802;
+
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(JsonVerbatimDecoder);
-not_yet_impl!(JsonCanonicalDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for PgWalstream
 where
@@ -608,5 +643,7 @@ where
             .with(PG_DATE, DateVerbatimDecoder)
             .with(PG_TIME, TimeVerbatimDecoder)
             .with(PG_INTERVAL, IntervalVerbatimDecoder)
+            .with(PG_JSON, JsonVerbatimDecoder)
+            .with(PG_JSONB, JsonVerbatimDecoder)
     }
 }
