@@ -1183,3 +1183,158 @@ pub fn test_maxwell(input: &[u8]) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Wire adapter fuzz helpers (0.2.0+)
+// ---------------------------------------------------------------------------
+
+/// Feed arbitrary bytes into every built-in decoder for the
+/// `pg_walstream` source via [`TypeMap::defaults`]. Asserts nothing
+/// panics.
+#[cfg(feature = "pg-walstream")]
+pub fn test_wire_pg_walstream(input: &[u8]) {
+    use crate::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
+
+    // Text-mode ColumnValue is the more common production wire shape
+    // and covers every decoder path that touches vendored code
+    // (hex-escape, base64, UUID parse, int/real parse, JSON canon).
+    let Ok(text) = core::str::from_utf8(input) else {
+        return;
+    };
+    let text_cv = ColumnValue::text(text);
+
+    let types: TypeMap<PgWalstream, alloc::string::String, Vec<u8>> = TypeMap::defaults();
+
+    for oid in [
+        16u32, 21, 23, 20, 700, 701, 25, 1043, 1042, 19, 17, 1700, 1114, 1184, 1082, 1083, 1186,
+        114, 3802,
+    ] {
+        let _ = types.decode(PgWalstreamColumn {
+            column_name: "c",
+            oid,
+            type_modifier: -1,
+            data: &text_cv,
+        });
+    }
+}
+
+/// Feed arbitrary bytes as a JSON string into every wal2json type-key
+/// via [`TypeMap::defaults`]. Also tries the input as raw JSON.
+#[cfg(feature = "wal2json")]
+pub fn test_wire_wal2json(input: &[u8]) {
+    use crate::wal2json::{Wal2Json, Wal2JsonColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
+
+    let Ok(text) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    // Two payload flavors: raw string (many decoders accept this) and
+    // parsed-JSON (bool/int/real/json flavors need this).
+    let string_val = serde_json::Value::String(text.into());
+    let parsed_val =
+        serde_json::from_str::<serde_json::Value>(text).unwrap_or(serde_json::Value::Null);
+
+    let types: TypeMap<Wal2Json, alloc::string::String, Vec<u8>> = TypeMap::defaults();
+
+    for key in [
+        "boolean",
+        "smallint",
+        "integer",
+        "bigint",
+        "real",
+        "double precision",
+        "float4",
+        "float8",
+        "text",
+        "varchar",
+        "character varying",
+        "character",
+        "char",
+        "name",
+        "bytea",
+        "numeric",
+        "decimal",
+        "timestamp",
+        "timestamp without time zone",
+        "timestamp with time zone",
+        "date",
+        "time",
+        "time without time zone",
+        "time with time zone",
+        "interval",
+        "json",
+        "jsonb",
+    ] {
+        for value in [&string_val, &parsed_val] {
+            let _ = types.decode(Wal2JsonColumn {
+                column_name: "c",
+                pg_type_name: key,
+                value,
+            });
+        }
+    }
+}
+
+/// Feed arbitrary bytes as a JSON string into every maxwell type-key
+/// via [`TypeMap::defaults`].
+#[cfg(feature = "maxwell")]
+pub fn test_wire_maxwell(input: &[u8]) {
+    use crate::maxwell::{Maxwell, MaxwellColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
+
+    let Ok(text) = core::str::from_utf8(input) else {
+        return;
+    };
+
+    let string_val = serde_json::Value::String(text.into());
+    let parsed_val =
+        serde_json::from_str::<serde_json::Value>(text).unwrap_or(serde_json::Value::Null);
+
+    let types: TypeMap<Maxwell, alloc::string::String, Vec<u8>> = TypeMap::defaults();
+
+    for key in [
+        "tinyint(1)",
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "int",
+        "bigint",
+        "bigint unsigned",
+        "float",
+        "double",
+        "real",
+        "char",
+        "varchar",
+        "tinytext",
+        "text",
+        "mediumtext",
+        "longtext",
+        "binary",
+        "varbinary",
+        "tinyblob",
+        "blob",
+        "mediumblob",
+        "longblob",
+        "decimal",
+        "numeric",
+        "datetime",
+        "timestamp",
+        "date",
+        "time",
+        "year",
+        "json",
+    ] {
+        for value in [&string_val, &parsed_val] {
+            let _ = types.decode(MaxwellColumn {
+                column_name: "c",
+                mysql_type: Some(key),
+                value,
+            });
+        }
+    }
+}

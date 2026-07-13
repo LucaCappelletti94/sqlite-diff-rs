@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = "0.1"
+sqlite-diff-rs = "0.2"
 ```
 
 ## Quick Start
@@ -46,6 +46,26 @@ let bytes: Vec<u8> = patchset.into();
 // Apply with sqlite3_changeset_apply() or sqlite3session_patchset_apply()
 ```
 
+### Schema-aware CDC ingest (0.2.0+)
+
+Convert `pg_walstream`, `wal2json`, or `maxwell` wire events into a `PatchSet` via a shared decoder registry.
+
+```rust,ignore
+use sqlite_diff_rs::{PatchSet, SimpleTable, TypeMap, UuidBlob16Decoder};
+use sqlite_diff_rs::wal2json::Wal2Json;
+
+let schema = SimpleTable::new("users", &["id", "handle"], &[0]);
+
+let mut types = TypeMap::<Wal2Json, String, Vec<u8>>::defaults();
+types.register(alloc::sync::Arc::from("uuid"), UuidBlob16Decoder);
+
+let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+    .digest_wal2json_v2(&msg, &schema, &types)?;
+let bytes: Vec<u8> = patchset.build();
+```
+
+`TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, decimals, temporals, and JSON. Users register UUID and custom types explicitly. See `docs/schema-aware-forward-conversion.md` for the full design.
+
 ## Features
 
 | Feature | Description |
@@ -60,7 +80,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = { version = "0.1", features = ["wal2json"] }
+sqlite-diff-rs = { version = "0.2", features = ["wal2json"] }
 ```
 
 ## Binary Format Reference

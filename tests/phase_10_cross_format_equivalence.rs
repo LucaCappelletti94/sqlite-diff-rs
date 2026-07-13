@@ -229,3 +229,135 @@ fn cross_format_delete_produces_byte_equal_patchset() {
         "pg_walstream and wal2json delete digests diverge"
     );
 }
+
+#[test]
+fn cross_format_update_produces_byte_equal_patchset() {
+    let (schema, cols, mut vals) = scenario_scalar_row();
+    let relation = build_relation(
+        "users",
+        &cols
+            .iter()
+            .map(|(n, o, f)| (*n, *o, *f))
+            .collect::<Vec<_>>(),
+    );
+
+    // Old values: current vals. New values: change handle "alice" -> "alicia".
+    let old_vals: Vec<(&str, ColumnValue, &str, serde_json::Value)> = vals.clone();
+    for (name, cv, _, json) in &mut vals {
+        if *name == "handle" {
+            *cv = ColumnValue::text("alicia");
+            *json = serde_json::Value::String("alicia".into());
+        }
+    }
+
+    let pg_event = EventType::Update {
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
+        relation_oid: 1,
+        old_data: Some(row_data(
+            &old_vals
+                .iter()
+                .map(|(n, cv, _, _)| (*n, cv.clone()))
+                .collect::<Vec<_>>(),
+        )),
+        new_data: row_data(
+            &vals
+                .iter()
+                .map(|(n, cv, _, _)| (*n, cv.clone()))
+                .collect::<Vec<_>>(),
+        ),
+        replica_identity: pg_walstream::ReplicaIdentity::Default,
+        key_columns: alloc::vec![Arc::from("id")],
+    };
+
+    let w2j_msg = MessageV2 {
+        action: Action::U,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(
+            vals.iter()
+                .map(|(name, _, type_name, value)| Column {
+                    name: (*name).to_string(),
+                    type_name: (*type_name).to_string(),
+                    value: value.clone(),
+                })
+                .collect(),
+        ),
+        identity: Some(
+            old_vals
+                .iter()
+                .map(|(name, _, type_name, value)| Column {
+                    name: (*name).to_string(),
+                    type_name: (*type_name).to_string(),
+                    value: value.clone(),
+                })
+                .collect(),
+        ),
+    };
+
+    let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
+    let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
+
+    let pg_patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .digest_pg_walstream(&pg_event, &relation, &schema, &pg_types)
+        .unwrap();
+    let w2j_patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .digest_wal2json_v2(&w2j_msg, &schema, &w2j_types)
+        .unwrap();
+
+    let pg_bytes: Vec<u8> = pg_patchset.build();
+    let w2j_bytes: Vec<u8> = w2j_patchset.build();
+    assert_eq!(
+        pg_bytes, w2j_bytes,
+        "pg_walstream and wal2json update digests diverge"
+    );
+}
+
+#[test]
+fn wal2json_v1_and_v2_insert_produce_byte_equal_patchset() {
+    use sqlite_diff_rs::wal2json::ChangeV1;
+
+    let (schema, _cols, vals) = scenario_scalar_row();
+
+    let v2_msg = MessageV2 {
+        action: Action::I,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(
+            vals.iter()
+                .map(|(name, _, type_name, value)| Column {
+                    name: (*name).to_string(),
+                    type_name: (*type_name).to_string(),
+                    value: value.clone(),
+                })
+                .collect(),
+        ),
+        identity: None,
+    };
+
+    let v1_change = ChangeV1 {
+        kind: "insert".to_string(),
+        schema: "public".to_string(),
+        table: "users".to_string(),
+        columnnames: vals.iter().map(|(n, _, _, _)| (*n).to_string()).collect(),
+        columntypes: vals.iter().map(|(_, _, t, _)| (*t).to_string()).collect(),
+        columnvalues: vals.iter().map(|(_, _, _, v)| v.clone()).collect(),
+        oldkeys: None,
+    };
+
+    let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
+
+    let v2_patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .digest_wal2json_v2(&v2_msg, &schema, &w2j_types)
+        .unwrap();
+    let v1_patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .digest_wal2json_v1_change(&v1_change, &schema, &w2j_types)
+        .unwrap();
+
+    let v2_bytes: Vec<u8> = v2_patchset.build();
+    let v1_bytes: Vec<u8> = v1_patchset.build();
+    assert_eq!(
+        v2_bytes, v1_bytes,
+        "wal2json v1 and v2 digests diverge on the same insert"
+    );
+}

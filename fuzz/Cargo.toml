@@ -64,3 +64,21 @@ name = "maxwell"
 path = "fuzz_targets/maxwell.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "wire_pg_walstream"
+path = "fuzz_targets/wire_pg_walstream.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "wire_wal2json"
+path = "fuzz_targets/wire_wal2json.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "wire_maxwell"
+path = "fuzz_targets/wire_maxwell.rs"
+test = false
+doc = false
