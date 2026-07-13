@@ -44,12 +44,14 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 // Re-export key types from pg_walstream for convenience
+pub use pg_walstream::Oid;
 pub use pg_walstream::{ChangeEvent, ColumnValue, EventType, Lsn, ReplicaIdentity, RowData};
 
 use crate::ChangesetFormat;
 use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
+use crate::wire::{Sealed, WireSource};
 
 /// Errors during `pg_walstream` to changeset conversion.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -82,6 +84,48 @@ pub enum ConversionError {
     /// Old data is required but not available (replica identity issue).
     #[error("Old data not available (check replica identity setting)")]
     MissingOldData,
+
+    /// A schema-aware decoder rejected a column payload. Populated by
+    /// `DiffSetBuilder::digest_pg_walstream` when the user's registered
+    /// decoder returns [`crate::wire::DecodeError`].
+    #[error("Decoder failed: {0}")]
+    Decode(#[from] crate::wire::DecodeError),
+}
+
+/// Marker type for the `pg_walstream` source. Passed as the `Src`
+/// generic parameter to `TypeMap`, `WireAdapter`, and `Decoder`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PgWalstream;
+
+impl Sealed for PgWalstream {}
+
+impl WireSource for PgWalstream {
+    type Payload<'a> = PgWalstreamColumn<'a>;
+    type TypeKey = Oid;
+
+    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
+        payload.oid
+    }
+
+    fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
+        payload.column_name
+    }
+}
+
+/// Per-column payload for the `pg_walstream` source.
+///
+/// The format wrapper populates this once per column before invoking
+/// [`WireAdapter::decode`](crate::wire::WireAdapter::decode).
+#[derive(Debug, Clone, Copy)]
+pub struct PgWalstreamColumn<'a> {
+    /// Column name resolved from the relation cache.
+    pub column_name: &'a str,
+    /// Postgres type OID (from `ColumnInfo::type_id`).
+    pub oid: Oid,
+    /// Postgres type modifier (from `ColumnInfo::type_modifier`).
+    pub type_modifier: i32,
+    /// Raw wire payload.
+    pub data: &'a ColumnValue,
 }
 
 /// Convert a `ColumnValue` to our `Value` type.

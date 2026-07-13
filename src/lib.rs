@@ -6,8 +6,6 @@
 extern crate alloc;
 
 pub mod builders;
-#[cfg(feature = "debezium")]
-pub mod debezium;
 #[cfg(any(test, feature = "testing"))]
 pub mod differential_testing;
 pub(crate) mod encoding;
@@ -24,6 +22,7 @@ pub mod schema;
 pub mod testing;
 #[cfg(feature = "wal2json")]
 pub mod wal2json;
+pub mod wire;
 
 // Re-export main types
 #[cfg(feature = "diesel")]
@@ -37,6 +36,7 @@ pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub(crate) use schema::IndexableValues;
 pub use schema::{DynTable, NamedColumns, SchemaWithPK, SimpleTable};
+pub use wire::{DecodeError, Decoder, TypeMap, TypeMapDefaults, WireAdapter, WireSource};
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.

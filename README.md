@@ -11,7 +11,7 @@ A Rust library for building SQLite [changeset and patchset](https://www.sqlite.o
 
 ## Overview
 
-SQLite's [session extension](https://www.sqlite.org/session.html) defines a binary format for tracking and applying database changes. This crate constructs that binary data without linking SQLite, which is useful for offline sync (build a changeset on a server and apply it on a SQLite client), CDC pipelines (produce the input expected by `sqlite3_changeset_apply()` from your own change events), cross-database sync (convert PostgreSQL change streams from wal2json, Debezium, or Maxwell into the SQLite format), and generating test fixtures for changeset processing code.
+SQLite's [session extension](https://www.sqlite.org/session.html) defines a binary format for tracking and applying database changes. This crate constructs that binary data without linking SQLite, which is useful for offline sync (build a changeset on a server and apply it on a SQLite client), CDC pipelines (produce the input expected by `sqlite3_changeset_apply()` from your own change events), cross-database sync (convert PostgreSQL change streams from wal2json or Maxwell into the SQLite format), and generating test fixtures for changeset processing code.
 
 This crate is not the SQLite [`sqldiff`](https://sqlite.org/sqldiff.html) tool, which compares two existing database files. This library constructs the changeset and patchset binary format programmatically from your own change data.
 
@@ -53,7 +53,6 @@ let bytes: Vec<u8> = patchset.into();
 | `testing` | Enables `rusqlite` integration for differential testing |
 | `wal2json` | Parse PostgreSQL wal2json output into changesets |
 | `pg-walstream` | Integration with `pg_walstream` crate |
-| `debezium` | Parse Debezium CDC JSON events |
 | `maxwell` | Parse Maxwell CDC JSON events |
 | `diesel` | Execute patchsets as backend-generic Diesel queries via a downstream [`Adapter`] |
 

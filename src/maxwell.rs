@@ -23,6 +23,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +82,10 @@ pub struct Message {
     /// Previous values for changed columns (update only).
     #[serde(default)]
     pub old: Option<BTreeMap<String, serde_json::Value>>,
+    /// Per-column MySQL type names emitted when the Maxwell daemon
+    /// runs with `--include_types`. Absent otherwise.
+    #[serde(default)]
+    pub columns_types: Option<BTreeMap<String, String>>,
 }
 
 /// Parse a Maxwell message from JSON.
@@ -129,6 +134,12 @@ pub enum ConversionError {
     /// The operation type is not applicable for the requested conversion.
     #[error("Operation '{0}' cannot be converted to the requested type")]
     InvalidOperation(String),
+
+    /// A schema-aware decoder rejected a column payload. Populated by
+    /// `DiffSetBuilder::digest_maxwell` when the user's registered
+    /// decoder returns [`crate::wire::DecodeError`].
+    #[error("Decoder failed: {0}")]
+    Decode(#[from] crate::wire::DecodeError),
 }
 
 use crate::ChangesetFormat;
@@ -136,6 +147,45 @@ use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
 use alloc::format;
+
+use crate::wire::{Sealed, WireSource};
+
+/// Marker type for the `maxwell` source.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Maxwell;
+
+impl Sealed for Maxwell {}
+
+impl WireSource for Maxwell {
+    type Payload<'a> = MaxwellColumn<'a>;
+    type TypeKey = Arc<str>;
+
+    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
+        Arc::from(payload.mysql_type.unwrap_or(""))
+    }
+
+    fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
+        payload.column_name
+    }
+}
+
+/// Per-column payload for the `maxwell` source.
+///
+/// `mysql_type` is `Some` when the Maxwell daemon runs with
+/// `--include_types`. When `None`, the empty-string key is used and
+/// [`TypeMap`](crate::wire::TypeMap) lookups will fail with
+/// [`DecodeError::NoDecoderForType`](crate::wire::DecodeError::NoDecoderForType)
+/// unless the user registers a `""` mapping explicitly.
+#[derive(Debug, Clone, Copy)]
+pub struct MaxwellColumn<'a> {
+    /// Column name.
+    pub column_name: &'a str,
+    /// MySQL type name (e.g. "int", "varchar", "datetime"). `None`
+    /// when the daemon runs without `--include_types`.
+    pub mysql_type: Option<&'a str>,
+    /// Column value as a JSON value.
+    pub value: &'a serde_json::Value,
+}
 
 /// Convert a `serde_json` Value to our Value type.
 fn json_to_value(
@@ -397,6 +447,7 @@ mod arbitrary_impl {
                 primary_key_columns: None,
                 data,
                 old,
+                columns_types: None,
             })
         }
     }

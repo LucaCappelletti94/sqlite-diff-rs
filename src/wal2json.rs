@@ -25,6 +25,7 @@
 //! ```
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +174,50 @@ pub enum ConversionError {
     /// A JSON value type is not supported for conversion.
     #[error("Unsupported JSON value type for column '{0}'")]
     UnsupportedType(String),
+
+    /// A schema-aware decoder rejected a column payload. Populated by
+    /// `DiffSetBuilder::digest_wal2json_v2` and
+    /// `DiffSetBuilder::digest_wal2json_v1_change` when the user's
+    /// registered decoder returns [`crate::wire::DecodeError`].
+    #[error("Decoder failed: {0}")]
+    Decode(#[from] crate::wire::DecodeError),
+}
+
+use crate::wire::{Sealed, WireSource};
+
+/// Marker type for the `wal2json` source.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Wal2Json;
+
+impl Sealed for Wal2Json {}
+
+impl WireSource for Wal2Json {
+    type Payload<'a> = Wal2JsonColumn<'a>;
+    type TypeKey = Arc<str>;
+
+    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
+        Arc::from(payload.pg_type_name)
+    }
+
+    fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
+        payload.column_name
+    }
+}
+
+/// Per-column payload for the `wal2json` source.
+///
+/// v2 populates from [`Column`] fields directly. v1 populates from the
+/// parallel `columnnames`/`columntypes`/`columnvalues` arrays on
+/// [`ChangeV1`].
+#[derive(Debug, Clone, Copy)]
+pub struct Wal2JsonColumn<'a> {
+    /// Column name.
+    pub column_name: &'a str,
+    /// Postgres type name as emitted by wal2json (e.g. "integer",
+    /// "text", "uuid", "timestamp with time zone").
+    pub pg_type_name: &'a str,
+    /// Column value as a JSON value.
+    pub value: &'a serde_json::Value,
 }
 
 use crate::ChangesetFormat;
@@ -507,6 +552,564 @@ impl<T: NamedColumns + Clone> TryFrom<(&MessageV2, &T)> for PatchDelete<T, Strin
 
         Ok(PatchDelete::new(table.clone(), pk))
     }
+}
+
+// ============================================================================
+// Schema-aware digest fns (0.2.0+).
+//
+// These are the intended entry points. Users construct a
+// `wire::TypeMap<Wal2Json, S, B>` (or any other `WireAdapter`) and hand
+// it to the digest fn, which iterates the wire message, populates
+// per-column `Wal2JsonColumn` payloads, and dispatches through the
+// adapter into `Value<S, B>` before feeding operations into the
+// consolidation pipeline via `DiffOps`.
+//
+// The `TryFrom` impls above are the 0.1.x sniffer path; they remain in
+// place during 0.2.0 development and are deleted in Phase 11 as the
+// release step.
+// ============================================================================
+
+use crate::builders::{DiffOps, DiffSetBuilder, PatchsetFormat};
+use crate::wire::WireAdapter;
+use alloc::boxed::Box;
+use core::fmt::Debug;
+use core::hash::Hash;
+
+#[inline]
+fn wal2json_table_mismatch(expected: &str, actual_opt: Option<&str>) -> Option<ConversionError> {
+    match actual_opt {
+        Some(actual) if actual != expected => Some(ConversionError::TableMismatch {
+            expected: expected.into(),
+            actual: actual.into(),
+        }),
+        _ => None,
+    }
+}
+
+impl<T, S, B> DiffSetBuilder<ChangesetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Digest a wal2json v2 message (one row per JSON object) into a
+    /// changeset via the supplied `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversionError::TableMismatch`] if `msg.table` is set
+    /// and does not match `table.name()`, [`ConversionError::MissingColumns`]
+    /// if the operation is missing required column data, and
+    /// [`ConversionError::ColumnNotFound`] for column names absent from
+    /// the schema. Adapter failures surface as
+    /// [`ConversionError::Decode`].
+    pub fn digest_wal2json_v2<A>(
+        self,
+        msg: &MessageV2,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Wal2Json, S, B>,
+    {
+        if let Some(err) = wal2json_table_mismatch(table.name(), msg.table.as_deref()) {
+            return Err(err);
+        }
+
+        match msg.action {
+            Action::I => {
+                let columns = msg
+                    .columns
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let insert = build_insert_from_v2(columns, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            Action::U => {
+                let columns = msg
+                    .columns
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let update = build_changeset_update_from_v2(columns, table, adapter)?;
+                Ok(DiffOps::update(self, update))
+            }
+            Action::D => {
+                let identity = msg
+                    .identity
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let delete = build_changeset_delete_from_columns(identity, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            Action::B | Action::C | Action::T | Action::M => Ok(self),
+        }
+    }
+
+    /// Digest one wal2json v1 change (one row) into a changeset via the
+    /// supplied `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::digest_wal2json_v2`].
+    pub fn digest_wal2json_v1_change<A>(
+        self,
+        change: &ChangeV1,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Wal2Json, S, B>,
+    {
+        if let Some(err) = wal2json_table_mismatch(table.name(), Some(change.table.as_str())) {
+            return Err(err);
+        }
+
+        match change.kind.as_str() {
+            "insert" => {
+                let insert = build_insert_from_v1(change, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            "update" => {
+                let update = build_changeset_update_from_v1(change, table, adapter)?;
+                Ok(DiffOps::update(self, update))
+            }
+            "delete" => {
+                let delete = build_changeset_delete_from_v1(change, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            _ => Ok(self),
+        }
+    }
+}
+
+impl<T, S, B> DiffSetBuilder<PatchsetFormat, T, S, B>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Patchset counterpart of
+    /// [`digest_wal2json_v2`](DiffSetBuilder::digest_wal2json_v2).
+    ///
+    /// # Errors
+    ///
+    /// See the changeset variant.
+    pub fn digest_wal2json_v2<A>(
+        self,
+        msg: &MessageV2,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Wal2Json, S, B>,
+    {
+        if let Some(err) = wal2json_table_mismatch(table.name(), msg.table.as_deref()) {
+            return Err(err);
+        }
+
+        match msg.action {
+            Action::I => {
+                let columns = msg
+                    .columns
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let insert = build_insert_from_v2(columns, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            Action::U => {
+                let columns = msg
+                    .columns
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let update = build_patchset_update_from_v2(columns, table, adapter)?;
+                Ok(DiffOps::update(self, update))
+            }
+            Action::D => {
+                let identity = msg
+                    .identity
+                    .as_ref()
+                    .ok_or(ConversionError::MissingColumns)?;
+                let delete = build_patch_delete_from_columns(identity, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            Action::B | Action::C | Action::T | Action::M => Ok(self),
+        }
+    }
+
+    /// Patchset counterpart of
+    /// [`digest_wal2json_v1_change`](DiffSetBuilder::digest_wal2json_v1_change).
+    ///
+    /// # Errors
+    ///
+    /// See the changeset variant.
+    pub fn digest_wal2json_v1_change<A>(
+        self,
+        change: &ChangeV1,
+        table: &T,
+        adapter: &A,
+    ) -> Result<Self, ConversionError>
+    where
+        A: WireAdapter<Wal2Json, S, B>,
+    {
+        if let Some(err) = wal2json_table_mismatch(table.name(), Some(change.table.as_str())) {
+            return Err(err);
+        }
+
+        match change.kind.as_str() {
+            "insert" => {
+                let insert = build_insert_from_v1(change, table, adapter)?;
+                Ok(DiffOps::insert(self, insert))
+            }
+            "update" => {
+                let update = build_patchset_update_from_v1(change, table, adapter)?;
+                Ok(DiffOps::update(self, update))
+            }
+            "delete" => {
+                let delete = build_patch_delete_from_v1(change, table, adapter)?;
+                Ok(DiffOps::delete(self, delete))
+            }
+            _ => Ok(self),
+        }
+    }
+}
+
+// -- v2 helpers ---------------------------------------------------------------
+
+fn build_insert_from_v2<T, S, B, A>(
+    columns: &[Column],
+    table: &T,
+    adapter: &A,
+) -> Result<Insert<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut insert = Insert::from(table.clone());
+    for col in columns {
+        let col_idx = table
+            .column_index(&col.name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
+        let payload = Wal2JsonColumn {
+            column_name: col.name.as_str(),
+            pg_type_name: col.type_name.as_str(),
+            value: &col.value,
+        };
+        let value = adapter.decode(payload)?;
+        insert = insert
+            .set(col_idx, value)
+            .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+    }
+    Ok(insert)
+}
+
+fn build_changeset_update_from_v2<T, S, B, A>(
+    columns: &[Column],
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + AsRef<str>,
+    B: Clone + Debug + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
+    for col in columns {
+        let col_idx = table
+            .column_index(&col.name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
+        let payload = Wal2JsonColumn {
+            column_name: col.name.as_str(),
+            pg_type_name: col.type_name.as_str(),
+            value: &col.value,
+        };
+        let new = adapter.decode(payload)?;
+        update = update
+            .set_new(col_idx, new)
+            .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+    }
+    Ok(update)
+}
+
+fn build_patchset_update_from_v2<T, S, B, A>(
+    columns: &[Column],
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
+    for col in columns {
+        let col_idx = table
+            .column_index(&col.name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
+        let payload = Wal2JsonColumn {
+            column_name: col.name.as_str(),
+            pg_type_name: col.type_name.as_str(),
+            value: &col.value,
+        };
+        let new = adapter.decode(payload)?;
+        update = update
+            .set(col_idx, new)
+            .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+    }
+    Ok(update)
+}
+
+fn build_changeset_delete_from_columns<T, S, B, A>(
+    identity: &[Column],
+    table: &T,
+    adapter: &A,
+) -> Result<ChangeDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Default + AsRef<str>,
+    B: Clone + Default + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut delete = ChangeDelete::from(table.clone());
+    for col in identity {
+        let col_idx = table
+            .column_index(&col.name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
+        let payload = Wal2JsonColumn {
+            column_name: col.name.as_str(),
+            pg_type_name: col.type_name.as_str(),
+            value: &col.value,
+        };
+        let value = adapter.decode(payload)?;
+        delete = delete
+            .set(col_idx, value)
+            .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+    }
+    Ok(delete)
+}
+
+fn build_patch_delete_from_columns<T, S, B, A>(
+    identity: &[Column],
+    table: &T,
+    adapter: &A,
+) -> Result<PatchDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let num_pks = table.number_of_primary_keys();
+    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
+
+    for col in identity {
+        let col_idx = table
+            .column_index(&col.name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
+        if let Some(pk_idx) = table.primary_key_index(col_idx) {
+            let payload = Wal2JsonColumn {
+                column_name: col.name.as_str(),
+                pg_type_name: col.type_name.as_str(),
+                value: &col.value,
+            };
+            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
+        }
+    }
+
+    let pk = pk_slots
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ConversionError::MissingColumns)?;
+    Ok(PatchDelete::new(table.clone(), pk))
+}
+
+// -- v1 helpers ---------------------------------------------------------------
+
+fn iter_v1_columns(
+    change: &ChangeV1,
+) -> impl Iterator<Item = (&str, &str, &serde_json::Value)> + '_ {
+    change
+        .columnnames
+        .iter()
+        .zip(change.columntypes.iter())
+        .zip(change.columnvalues.iter())
+        .map(|((n, t), v)| (n.as_str(), t.as_str(), v))
+}
+
+fn iter_v1_oldkeys(
+    oldkeys: &OldKeys,
+) -> impl Iterator<Item = (&str, &str, &serde_json::Value)> + '_ {
+    oldkeys
+        .keynames
+        .iter()
+        .zip(oldkeys.keytypes.iter())
+        .zip(oldkeys.keyvalues.iter())
+        .map(|((n, t), v)| (n.as_str(), t.as_str(), v))
+}
+
+fn build_insert_from_v1<T, S, B, A>(
+    change: &ChangeV1,
+    table: &T,
+    adapter: &A,
+) -> Result<Insert<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut insert = Insert::from(table.clone());
+    for (name, type_name, value) in iter_v1_columns(change) {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
+        let payload = Wal2JsonColumn {
+            column_name: name,
+            pg_type_name: type_name,
+            value,
+        };
+        let decoded = adapter.decode(payload)?;
+        insert = insert
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+    }
+    Ok(insert)
+}
+
+fn build_changeset_update_from_v1<T, S, B, A>(
+    change: &ChangeV1,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Debug + AsRef<str>,
+    B: Clone + Debug + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
+    for (name, type_name, value) in iter_v1_columns(change) {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
+        let payload = Wal2JsonColumn {
+            column_name: name,
+            pg_type_name: type_name,
+            value,
+        };
+        let new = adapter.decode(payload)?;
+        update = update
+            .set_new(col_idx, new)
+            .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+    }
+    Ok(update)
+}
+
+fn build_patchset_update_from_v1<T, S, B, A>(
+    change: &ChangeV1,
+    table: &T,
+    adapter: &A,
+) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
+    for (name, type_name, value) in iter_v1_columns(change) {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
+        let payload = Wal2JsonColumn {
+            column_name: name,
+            pg_type_name: type_name,
+            value,
+        };
+        let new = adapter.decode(payload)?;
+        update = update
+            .set(col_idx, new)
+            .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+    }
+    Ok(update)
+}
+
+fn build_changeset_delete_from_v1<T, S, B, A>(
+    change: &ChangeV1,
+    table: &T,
+    adapter: &A,
+) -> Result<ChangeDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + Default + AsRef<str>,
+    B: Clone + Default + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let mut delete = ChangeDelete::from(table.clone());
+    let key_iter: Box<dyn Iterator<Item = (&str, &str, &serde_json::Value)>> =
+        if let Some(oldkeys) = &change.oldkeys {
+            Box::new(iter_v1_oldkeys(oldkeys))
+        } else {
+            Box::new(iter_v1_columns(change))
+        };
+    for (name, type_name, value) in key_iter {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
+        let payload = Wal2JsonColumn {
+            column_name: name,
+            pg_type_name: type_name,
+            value,
+        };
+        let decoded = adapter.decode(payload)?;
+        delete = delete
+            .set(col_idx, decoded)
+            .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+    }
+    Ok(delete)
+}
+
+fn build_patch_delete_from_v1<T, S, B, A>(
+    change: &ChangeV1,
+    table: &T,
+    adapter: &A,
+) -> Result<PatchDelete<T, S, B>, ConversionError>
+where
+    T: NamedColumns + Clone,
+    S: Clone + AsRef<str>,
+    B: Clone + AsRef<[u8]>,
+    A: WireAdapter<Wal2Json, S, B>,
+{
+    let oldkeys = change
+        .oldkeys
+        .as_ref()
+        .ok_or(ConversionError::MissingColumns)?;
+
+    let num_pks = table.number_of_primary_keys();
+    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
+
+    for (name, type_name, value) in iter_v1_oldkeys(oldkeys) {
+        let col_idx = table
+            .column_index(name)
+            .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
+        if let Some(pk_idx) = table.primary_key_index(col_idx) {
+            let payload = Wal2JsonColumn {
+                column_name: name,
+                pg_type_name: type_name,
+                value,
+            };
+            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
+        }
+    }
+
+    let pk = pk_slots
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ConversionError::MissingColumns)?;
+    Ok(PatchDelete::new(table.clone(), pk))
 }
 
 // Arbitrary implementations for testing

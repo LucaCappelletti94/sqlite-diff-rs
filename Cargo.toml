@@ -81,7 +81,6 @@ default = []
 testing = ["dep:rusqlite", "dep:arbitrary"]
 wal2json = ["dep:serde", "dep:serde_json"]
 pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
-debezium = ["dep:serde", "dep:serde_json"]
 maxwell = ["dep:serde", "dep:serde_json"]
 diesel = ["dep:diesel"]
 
@@ -107,11 +106,6 @@ required-features = ["wal2json"]
 name = "pg_walstream_benchmark"
 harness = false
 required-features = ["pg-walstream"]
-
-[[bench]]
-name = "debezium_benchmark"
-harness = false
-required-features = ["debezium"]
 
 [[bench]]
 name = "maxwell_benchmark"
