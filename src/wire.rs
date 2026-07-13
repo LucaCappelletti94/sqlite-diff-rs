@@ -38,6 +38,7 @@ mod error;
 mod sealed;
 mod source;
 mod type_map;
+mod uuid_helpers;
 
 #[cfg(feature = "maxwell")]
 mod impls_maxwell;

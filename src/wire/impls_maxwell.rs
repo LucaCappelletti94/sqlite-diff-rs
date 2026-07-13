@@ -298,10 +298,60 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// UuidBlob16Decoder and UuidText36Decoder (Phase 6)
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for UuidBlob16Decoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => match super::uuid_helpers::parse_uuid(s) {
+                Ok(bytes) => Ok(Value::Blob(B::from(bytes.to_vec()))),
+                Err(source_len) => Err(DecodeError::InvalidUuid {
+                    column: payload.column_name.to_string(),
+                    source_len,
+                }),
+            },
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON UUID string",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
+impl<S, B> Decoder<Maxwell, S, B> for UuidText36Decoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => {
+                match super::uuid_helpers::preserve_or_canonicalize_uuid_text(s) {
+                    Ok(canonical) => Ok(Value::Text(S::from(canonical))),
+                    Err(source_len) => Err(DecodeError::InvalidUuid {
+                        column: payload.column_name.to_string(),
+                        source_len,
+                    }),
+                }
+            }
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON UUID string",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
-not_yet_impl!(UuidBlob16Decoder);
-not_yet_impl!(UuidText36Decoder);
 not_yet_impl!(DecimalTextDecoder);
 not_yet_impl!(TimestampVerbatimDecoder);
 not_yet_impl!(TimestampTzVerbatimDecoder);

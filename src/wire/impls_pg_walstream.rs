@@ -382,6 +382,91 @@ where
     }
 }
 
+// ------------------------------------------------------------------
+// UuidBlob16Decoder and UuidText36Decoder (Phase 6)
+//
+// Both accept 36-character hyphenated and braced forms of a UUID
+// wire text and produce `Value::Blob([u8; 16])` or `Value::Text(36)`
+// respectively. Neither is registered in `defaults()`. Users pick
+// per column.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for UuidBlob16Decoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        decode_pg_uuid_to_blob(payload)
+    }
+}
+
+impl<S, B> Decoder<PgWalstream, S, B> for UuidText36Decoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        decode_pg_uuid_to_text(payload)
+    }
+}
+
+fn decode_pg_uuid_to_blob<S, B>(payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError>
+where
+    B: From<Vec<u8>>,
+{
+    match payload.data {
+        ColumnValue::Null => Ok(Value::Null),
+        ColumnValue::Text(_) => {
+            let s = payload
+                .data
+                .as_str()
+                .ok_or_else(|| DecodeError::InvalidUtf8 {
+                    column: payload.column_name.to_string(),
+                })?;
+            match super::uuid_helpers::parse_uuid(s) {
+                Ok(bytes) => Ok(Value::Blob(B::from(bytes.to_vec()))),
+                Err(source_len) => Err(DecodeError::InvalidUuid {
+                    column: payload.column_name.to_string(),
+                    source_len,
+                }),
+            }
+        }
+        ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name.to_string(),
+            expected: "UUID text form",
+            actual: "binary payload",
+        }),
+    }
+}
+
+fn decode_pg_uuid_to_text<S, B>(payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError>
+where
+    S: From<alloc::string::String>,
+{
+    match payload.data {
+        ColumnValue::Null => Ok(Value::Null),
+        ColumnValue::Text(_) => {
+            let s = payload
+                .data
+                .as_str()
+                .ok_or_else(|| DecodeError::InvalidUtf8 {
+                    column: payload.column_name.to_string(),
+                })?;
+            match super::uuid_helpers::preserve_or_canonicalize_uuid_text(s) {
+                Ok(canonical) => Ok(Value::Text(S::from(canonical))),
+                Err(source_len) => Err(DecodeError::InvalidUuid {
+                    column: payload.column_name.to_string(),
+                    source_len,
+                }),
+            }
+        }
+        ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name.to_string(),
+            expected: "UUID text form",
+            actual: "binary payload",
+        }),
+    }
+}
+
 // PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
 // specific to wal2json / maxwell respectively; on pg_walstream they
 // stay NotYetImplemented.
@@ -400,8 +485,6 @@ macro_rules! not_yet_impl {
 
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
-not_yet_impl!(UuidBlob16Decoder);
-not_yet_impl!(UuidText36Decoder);
 not_yet_impl!(DecimalTextDecoder);
 not_yet_impl!(TimestampVerbatimDecoder);
 not_yet_impl!(TimestampTzVerbatimDecoder);
