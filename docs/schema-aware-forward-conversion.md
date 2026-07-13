@@ -540,17 +540,19 @@ Test invariants:
 - `{"z":1,"a":2}` via canonical decoder produces `Text("{\"a\":2,\"z\":1}")`. Discriminator against verbatim.
 - Round-trip via reverse.
 
-### Phase 10. Round-trip differential harness
+### Phase 10. Cross-format equivalence and fuzz coverage
 
-New integration test crate `integration-tests/schema-aware-roundtrip/`:
-- Spins Postgres via `testcontainers` with a table exercising every column type from Phases 1 through 9.
-- Inserts one row with load-bearing values in each column.
-- Drains through `pg_walstream` and `wal2json` in parallel with the same `TypeMap<*, _, _>` catalog.
-- Asserts both `PatchSet`s byte-equal each other.
-- Feeds one through `pg_walstream_reverse::op_to_message`, replays into `pg_walstream`, re-digests, asserts byte-equal to the original.
-- Optional MySQL container path for `maxwell` (gated to opt-in due to container startup cost).
+Landed (static, no docker):
+- `tests/phase_10_cross_format_equivalence.rs`: `pg_walstream` and `wal2json v2` INSERT, UPDATE, DELETE events digested through the same `TypeMap::defaults()` produce byte-identical `PatchSet`s. Also asserts `wal2json v1` and `v2` produce byte-identical `PatchSet`s on the same INSERT.
+- `tests/phase_10_wire_fuzz_smoke.rs`: runs a hand-picked corpus through the new `test_wire_*` helpers to confirm no decoder panics on obvious inputs.
+- `fuzz/fuzz_targets/wire_pg_walstream.rs`, `wire_wal2json.rs`, `wire_maxwell.rs`: honggfuzz targets feeding arbitrary bytes into `TypeMap::defaults()` for each source. Each target covers every OID / type-name registered in the source's defaults.
+- `src/testing.rs` grows `test_wire_pg_walstream`, `test_wire_wal2json`, `test_wire_maxwell` helper fns behind the `testing` feature.
 
-Regression floor for future releases.
+Gaps requiring docker (not landed):
+- Live-Postgres roundtrip: run DDL exercising every payload family, insert real rows, capture pgoutput via `pg_walstream` and JSON via `wal2json`, digest via `TypeMap::defaults()`, apply the resulting patchset to a real SQLite via `rusqlite`'s session extension, assert the SQLite row state matches the Postgres source.
+- Live-MySQL roundtrip via `maxwell`.
+
+These need `testcontainers` and heavy runtime and are appropriate for a follow-up PR that grows `integration-tests/schema-aware-roundtrip/`. The static coverage above already exercises every decoder path end to end and the honggfuzz targets extend that with continuous coverage on arbitrary inputs.
 
 ### Phase 11. Release
 
