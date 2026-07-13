@@ -266,9 +266,40 @@ macro_rules! not_yet_impl {
     };
 }
 
+// ------------------------------------------------------------------
+// MySqlBinaryDecoder (Phase 5)
+//
+// Maxwell delivers MySQL binary-family columns as base64-encoded
+// JSON strings. Base64 decode via the vendored helper.
+// Null pass-through.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Maxwell, S, B> for MySqlBinaryDecoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => match super::bytes_helpers::decode_base64(s) {
+                Ok(bytes) => Ok(Value::Blob(B::from(bytes))),
+                Err(()) => Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "base64 string",
+                    actual: "malformed base64",
+                }),
+            },
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON base64 string",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
-not_yet_impl!(MySqlBinaryDecoder);
 not_yet_impl!(UuidBlob16Decoder);
 not_yet_impl!(UuidText36Decoder);
 not_yet_impl!(DecimalTextDecoder);
@@ -283,6 +314,7 @@ not_yet_impl!(JsonCanonicalDecoder);
 impl<S, B> TypeMapDefaults<S, B> for Maxwell
 where
     S: From<alloc::string::String>,
+    B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
@@ -301,6 +333,12 @@ where
             .with(alloc::sync::Arc::from("text"), TextDecoder)
             .with(alloc::sync::Arc::from("mediumtext"), TextDecoder)
             .with(alloc::sync::Arc::from("longtext"), TextDecoder)
+            .with(alloc::sync::Arc::from("binary"), MySqlBinaryDecoder)
+            .with(alloc::sync::Arc::from("varbinary"), MySqlBinaryDecoder)
+            .with(alloc::sync::Arc::from("tinyblob"), MySqlBinaryDecoder)
+            .with(alloc::sync::Arc::from("blob"), MySqlBinaryDecoder)
+            .with(alloc::sync::Arc::from("mediumblob"), MySqlBinaryDecoder)
+            .with(alloc::sync::Arc::from("longblob"), MySqlBinaryDecoder)
             .with(
                 alloc::sync::Arc::from("bigint unsigned"),
                 Int64OverflowToTextDecoder,

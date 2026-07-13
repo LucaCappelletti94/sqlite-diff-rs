@@ -32,6 +32,7 @@
 //! one line: `patchset.digest_pg_walstream(&event, &relation, &SnifferAdapter)`.
 //! Slated for removal in 0.3.0.
 mod adapter;
+mod bytes_helpers;
 mod decoder;
 mod error;
 mod sealed;

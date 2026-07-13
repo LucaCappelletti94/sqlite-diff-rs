@@ -1,0 +1,207 @@
+//! Phase 5 tests for BYTEA / blob decoders.
+//!
+//! - `PgByteaBinaryDecoder` (pg_walstream): handles both `ColumnValue::Binary`
+//!   (pass-through) and `ColumnValue::Text` with `\xHEX` prefix.
+//! - `PgByteaTextModeDecoder` (wal2json): decodes `\xHEX`-prefixed JSON
+//!   strings into `Value::Blob`.
+//! - `MySqlBinaryDecoder` (maxwell): base64-decodes JSON strings.
+
+#![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
+
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use bytes::Bytes;
+use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
+use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
+use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
+use sqlite_diff_rs::{
+    DecodeError, MySqlBinaryDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, TypeMap, Value,
+    WireAdapter,
+};
+
+// -- PgByteaBinaryDecoder: pg_walstream --------------------------------------
+
+#[test]
+fn pg_bytea_binary_decoder_pass_through_binary() {
+    let cv = ColumnValue::binary_bytes(Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]));
+    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
+        column_name: "b",
+        oid: 17,
+        type_modifier: -1,
+        data: &cv,
+    }
+    .decoded_by(&PgByteaBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0xDE, 0xAD, 0xBE, 0xEF]));
+}
+
+#[test]
+fn pg_bytea_binary_decoder_hex_escape_text_mode() {
+    let cv = ColumnValue::text("\\xdeadbeef");
+    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
+        column_name: "b",
+        oid: 17,
+        type_modifier: -1,
+        data: &cv,
+    }
+    .decoded_by(&PgByteaBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0xDE, 0xAD, 0xBE, 0xEF]));
+}
+
+#[test]
+fn pg_bytea_binary_decoder_null() {
+    let cv = ColumnValue::Null;
+    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
+        column_name: "b",
+        oid: 17,
+        type_modifier: -1,
+        data: &cv,
+    }
+    .decoded_by(&PgByteaBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Null);
+}
+
+#[test]
+fn pg_bytea_binary_decoder_rejects_malformed_hex() {
+    let cv = ColumnValue::text("\\xzz");
+    let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
+        column_name: "b",
+        oid: 17,
+        type_modifier: -1,
+        data: &cv,
+    }
+    .decoded_by(&PgByteaBinaryDecoder);
+    assert!(matches!(
+        result.unwrap_err(),
+        DecodeError::InvalidHexEscape { .. }
+    ));
+}
+
+// -- PgByteaTextModeDecoder: wal2json ---------------------------------------
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_hex() {
+    let s = serde_json::Value::String("\\xcafef00d".into());
+    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
+        column_name: "b",
+        pg_type_name: "bytea",
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0xCA, 0xFE, 0xF0, 0x0D]));
+}
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_null() {
+    let s = serde_json::Value::Null;
+    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
+        column_name: "b",
+        pg_type_name: "bytea",
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Null);
+}
+
+// -- MySqlBinaryDecoder: maxwell --------------------------------------------
+
+#[test]
+fn mysql_binary_decoder_maxwell_base64() {
+    // "deadbeef" as base64 (raw bytes 0xDE 0xAD 0xBE 0xEF).
+    let s = serde_json::Value::String("3q2+7w==".into());
+    let got: Value<String, Vec<u8>> = MaxwellColumn {
+        column_name: "b",
+        mysql_type: Some("blob"),
+        value: &s,
+    }
+    .decoded_by(&MySqlBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0xDE, 0xAD, 0xBE, 0xEF]));
+}
+
+#[test]
+fn mysql_binary_decoder_maxwell_empty_string() {
+    let s = serde_json::Value::String(String::new());
+    let got: Value<String, Vec<u8>> = MaxwellColumn {
+        column_name: "b",
+        mysql_type: Some("blob"),
+        value: &s,
+    }
+    .decoded_by(&MySqlBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(Vec::new()));
+}
+
+#[test]
+fn mysql_binary_decoder_maxwell_null() {
+    let s = serde_json::Value::Null;
+    let got: Value<String, Vec<u8>> = MaxwellColumn {
+        column_name: "b",
+        mysql_type: Some("blob"),
+        value: &s,
+    }
+    .decoded_by(&MySqlBinaryDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Null);
+}
+
+// -- Defaults ----------------------------------------------------------------
+
+#[test]
+fn type_map_defaults_route_byte_types() {
+    let pg: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
+    let w2j: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
+    let mx: TypeMap<Maxwell, String, Vec<u8>> = TypeMap::defaults();
+
+    // pg_walstream bytea binary + text modes
+    let cv_bin = ColumnValue::binary_bytes(Bytes::from_static(&[0x01, 0x02, 0x03]));
+    let got = pg
+        .decode(PgWalstreamColumn {
+            column_name: "b",
+            oid: 17,
+            type_modifier: -1,
+            data: &cv_bin,
+        })
+        .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0x01, 0x02, 0x03]));
+
+    let cv_txt = ColumnValue::text("\\x010203");
+    let got = pg
+        .decode(PgWalstreamColumn {
+            column_name: "b",
+            oid: 17,
+            type_modifier: -1,
+            data: &cv_txt,
+        })
+        .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0x01, 0x02, 0x03]));
+
+    // wal2json bytea hex string
+    let s = serde_json::Value::String("\\x010203".into());
+    let got = w2j
+        .decode(Wal2JsonColumn {
+            column_name: "b",
+            pg_type_name: "bytea",
+            value: &s,
+        })
+        .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0x01, 0x02, 0x03]));
+
+    // maxwell blob base64 string
+    let s = serde_json::Value::String("AQID".into()); // base64("\x01\x02\x03")
+    let got = mx
+        .decode(MaxwellColumn {
+            column_name: "b",
+            mysql_type: Some("blob"),
+            value: &s,
+        })
+        .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0x01, 0x02, 0x03]));
+}

@@ -277,8 +277,37 @@ macro_rules! not_yet_impl {
     };
 }
 
+// ------------------------------------------------------------------
+// PgByteaTextModeDecoder (Phase 5)
+//
+// wal2json v2 emits PG BYTEA as a JSON string in `\xHEX` form.
+// Null pass-through.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<Wal2Json, S, B> for PgByteaTextModeDecoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.value {
+            serde_json::Value::Null => Ok(Value::Null),
+            serde_json::Value::String(s) => match super::bytes_helpers::decode_pg_hex_escape(s) {
+                Ok(bytes) => Ok(Value::Blob(B::from(bytes))),
+                Err(at) => Err(DecodeError::InvalidHexEscape {
+                    column: payload.column_name.to_string(),
+                    at,
+                }),
+            },
+            _ => Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name.to_string(),
+                expected: "JSON string with \\xHEX prefix",
+                actual: "other JSON shape",
+            }),
+        }
+    }
+}
+
 not_yet_impl!(PgByteaBinaryDecoder);
-not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
 not_yet_impl!(UuidBlob16Decoder);
 not_yet_impl!(UuidText36Decoder);
@@ -298,6 +327,7 @@ not_yet_impl!(JsonCanonicalDecoder);
 impl<S, B> TypeMapDefaults<S, B> for Wal2Json
 where
     S: From<alloc::string::String>,
+    B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
@@ -314,6 +344,7 @@ where
             .with(alloc::sync::Arc::from("character"), TextDecoder)
             .with(alloc::sync::Arc::from("char"), TextDecoder)
             .with(alloc::sync::Arc::from("name"), TextDecoder)
+            .with(alloc::sync::Arc::from("bytea"), PgByteaTextModeDecoder)
             .with(alloc::sync::Arc::from("float8"), RealDecoder)
     }
 }

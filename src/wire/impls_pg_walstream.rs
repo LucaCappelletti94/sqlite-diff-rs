@@ -343,6 +343,49 @@ where
     }
 }
 
+/// Postgres `bytea` OID.
+pub const PG_BYTEA: crate::pg_walstream::Oid = 17;
+
+// ------------------------------------------------------------------
+// PgByteaBinaryDecoder (Phase 5)
+//
+// Handles both `ColumnValue::Binary` (pass-through) and text-mode
+// `\xHEX` (decoded via the vendored helper). Null pass-through.
+// This is the recommended default for PG_BYTEA columns since it
+// tolerates both transport modes.
+// ------------------------------------------------------------------
+
+impl<S, B> Decoder<PgWalstream, S, B> for PgByteaBinaryDecoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Binary(b) => Ok(Value::Blob(B::from(b.to_vec()))),
+            ColumnValue::Text(_) => {
+                let s = payload
+                    .data
+                    .as_str()
+                    .ok_or_else(|| DecodeError::InvalidUtf8 {
+                        column: payload.column_name.to_string(),
+                    })?;
+                match super::bytes_helpers::decode_pg_hex_escape(s) {
+                    Ok(bytes) => Ok(Value::Blob(B::from(bytes))),
+                    Err(at) => Err(DecodeError::InvalidHexEscape {
+                        column: payload.column_name.to_string(),
+                        at,
+                    }),
+                }
+            }
+        }
+    }
+}
+
+// PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
+// specific to wal2json / maxwell respectively; on pg_walstream they
+// stay NotYetImplemented.
+
 macro_rules! not_yet_impl {
     ($decoder:ty) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder {
@@ -355,7 +398,6 @@ macro_rules! not_yet_impl {
     };
 }
 
-not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
 not_yet_impl!(UuidBlob16Decoder);
@@ -372,6 +414,7 @@ not_yet_impl!(JsonCanonicalDecoder);
 impl<S, B> TypeMapDefaults<S, B> for PgWalstream
 where
     S: From<alloc::string::String>,
+    B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
@@ -385,5 +428,6 @@ where
             .with(PG_VARCHAR, TextDecoder)
             .with(PG_BPCHAR, TextDecoder)
             .with(PG_NAME, TextDecoder)
+            .with(PG_BYTEA, PgByteaBinaryDecoder)
     }
 }
