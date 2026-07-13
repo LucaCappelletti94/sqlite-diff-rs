@@ -45,10 +45,10 @@
 //!         table: &str,
 //!         column_index: usize,
 //!         value: &'a Value<S, B>,
-//!     ) -> Box<dyn Binder<Pg> + Send + 'a> {
+//!     ) -> diesel::result::QueryResult<Box<dyn Binder<Pg> + Send + 'a>> {
 //!         match (table, column_index, value) {
-//!             ("users", 1, Value::Integer(i)) => Box::new(BoolBinder(*i != 0)),
-//!             _ => Box::new(DefaultBinder::from(value)),
+//!             ("users", 1, Value::Integer(i)) => Ok(Box::new(BoolBinder(*i != 0))),
+//!             _ => Ok(Box::new(DefaultBinder::from(value))),
 //!         }
 //!     }
 //! }
@@ -74,6 +74,7 @@
 //! ```
 
 use alloc::boxed::Box;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use diesel::backend::Backend;
@@ -90,7 +91,7 @@ use crate::encoding::Value;
 
 /// Reasons a `PatchsetOp` cannot render into valid SQL. Wrapped in
 /// [`DieselError::QueryBuilderError`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 enum RenderError {
     /// `ColumnNames::column_name(index)` returned `None`.
     #[error("missing column name for index {column_index}")]
@@ -101,6 +102,15 @@ enum RenderError {
     /// UPDATE/DELETE against a table with no primary-key columns.
     #[error("patchset UPDATE/DELETE targets a table with no primary key")]
     EmptyRowPredicate,
+    /// [`Adapter::bind`] returned `Err`. Holds the display of the source
+    /// error the adapter produced; the specific `DieselError` variant is
+    /// collapsed to `QueryBuilderError` here.
+    #[error("adapter rejected column {column_index} of table {table_name:?}: {message}")]
+    AdapterBindFailure {
+        table_name: alloc::string::String,
+        column_index: usize,
+        message: alloc::string::String,
+    },
 }
 
 #[inline]
@@ -383,12 +393,20 @@ pub trait Adapter<DB, S, B> {
     /// `(table_name, column_index)`, parse `value` into any owned
     /// representation the target column needs, and box it. Fall through to
     /// [`DefaultBinder`] for columns that need no custom handling.
+    ///
+    /// # Errors
+    ///
+    /// Return an error when the source value cannot be represented as the
+    /// target column's SQL type — for example, a `Value::Integer` for a
+    /// target `UUID`. The error is captured at resolve time and re-surfaced
+    /// as [`DieselError::QueryBuilderError`] when the resulting
+    /// [`BoundPatchsetOp`] is executed.
     fn bind<'a>(
         &self,
         table_name: &str,
         column_index: usize,
         value: &'a Value<S, B>,
-    ) -> Box<dyn Binder<DB> + Send + 'a>;
+    ) -> QueryResult<Box<dyn Binder<DB> + Send + 'a>>;
 }
 
 /// Executable Diesel query built from one `PatchsetOp` + [`Adapter`].
@@ -400,7 +418,7 @@ where
     DB: Backend,
 {
     op: PatchsetOp<'a, T, S, B>,
-    binders: Vec<Box<dyn Binder<DB> + Send + 'a>>,
+    resolved: Result<Vec<Box<dyn Binder<DB> + Send + 'a>>, RenderError>,
     adapter: &'a A,
 }
 
@@ -420,38 +438,54 @@ where
     fn resolve(op: PatchsetOp<'a, T, S, B>, adapter: &'a A) -> Self {
         let table = op.table();
         let table_name = table.name();
-        let mut binders: Vec<Box<dyn Binder<DB> + Send + 'a>> = Vec::new();
 
-        match op {
-            PatchsetOp::Insert { values, .. } => {
-                for (col_idx, value) in values.iter().enumerate() {
-                    binders.push(adapter.bind(table_name, col_idx, value));
-                }
-            }
-            PatchsetOp::Update { pk, entries, .. } => {
-                // SET clause: non-PK columns with a new value, in column order.
-                for (col_idx, ((), new)) in entries.iter().enumerate() {
-                    if let Some(new_val) = new
-                        && table.primary_key_index(col_idx).is_none()
-                    {
-                        binders.push(adapter.bind(table_name, col_idx, new_val));
+        let resolved = (|| -> Result<Vec<Box<dyn Binder<DB> + Send + 'a>>, RenderError> {
+            let mut binders: Vec<Box<dyn Binder<DB> + Send + 'a>> = Vec::new();
+            let bind = |col_idx: usize,
+                        value: &'a Value<S, B>|
+             -> Result<Box<dyn Binder<DB> + Send + 'a>, RenderError> {
+                adapter.bind(table_name, col_idx, value).map_err(|err| {
+                    RenderError::AdapterBindFailure {
+                        table_name: table_name.into(),
+                        column_index: col_idx,
+                        message: err.to_string(),
+                    }
+                })
+            };
+
+            match op {
+                PatchsetOp::Insert { values, .. } => {
+                    for (col_idx, value) in values.iter().enumerate() {
+                        binders.push(bind(col_idx, value)?);
                     }
                 }
-                // WHERE clause: PK columns, in PK-ordinal order.
-                for (pk_ordinal, col_idx) in pk_indices(table).into_iter().enumerate() {
-                    binders.push(adapter.bind(table_name, col_idx, &pk[pk_ordinal]));
+                PatchsetOp::Update { pk, entries, .. } => {
+                    // SET clause: non-PK columns with a new value, in column order.
+                    for (col_idx, ((), new)) in entries.iter().enumerate() {
+                        if let Some(new_val) = new
+                            && table.primary_key_index(col_idx).is_none()
+                        {
+                            binders.push(bind(col_idx, new_val)?);
+                        }
+                    }
+                    // WHERE clause: PK columns, in PK-ordinal order.
+                    for (pk_ordinal, col_idx) in pk_indices(table).into_iter().enumerate() {
+                        binders.push(bind(col_idx, &pk[pk_ordinal])?);
+                    }
+                }
+                PatchsetOp::Delete { pk, .. } => {
+                    for (pk_ordinal, col_idx) in pk_indices(table).into_iter().enumerate() {
+                        binders.push(bind(col_idx, &pk[pk_ordinal])?);
+                    }
                 }
             }
-            PatchsetOp::Delete { pk, .. } => {
-                for (pk_ordinal, col_idx) in pk_indices(table).into_iter().enumerate() {
-                    binders.push(adapter.bind(table_name, col_idx, &pk[pk_ordinal]));
-                }
-            }
-        }
+
+            Ok(binders)
+        })();
 
         Self {
             op,
-            binders,
+            resolved,
             adapter,
         }
     }
@@ -483,7 +517,11 @@ where
 {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
         out.unsafe_to_cache_prepared();
-        let mut binders = self.binders.iter();
+        let binder_vec = self
+            .resolved
+            .as_ref()
+            .map_err(|err| render_err(err.clone()))?;
+        let mut binders = binder_vec.iter();
         let bind_next = |binders: &mut core::slice::Iter<'b, Box<dyn Binder<DB> + Send + '_>>,
                          out: &mut AstPass<'_, 'b, DB>|
          -> QueryResult<()> {

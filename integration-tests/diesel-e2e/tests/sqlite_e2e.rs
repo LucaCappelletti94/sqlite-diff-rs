@@ -290,3 +290,92 @@ fn apply_transactional_returns_summed_row_count() {
         .unwrap();
     assert_eq!(rows.len(), 3);
 }
+
+// Adapter that rejects the mapping ---------------------------------------
+//
+// A real `.execute()` against a live connection must surface the adapter's
+// bind error rather than silently applying, and the transaction must roll
+// back so nothing lands in the DB.
+
+use diesel::sqlite::Sqlite;
+use sqlite_diff_rs::{Adapter, Binder, DefaultBinder, Value};
+
+struct SessionAdapter;
+
+impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Sqlite, S, B> for SessionAdapter {
+    fn column_name(&self, _table: &str, index: usize) -> &str {
+        ["id", "session"][index]
+    }
+
+    fn bind<'a>(
+        &self,
+        _table: &str,
+        column_index: usize,
+        value: &'a Value<S, B>,
+    ) -> diesel::result::QueryResult<Box<dyn Binder<Sqlite> + Send + 'a>> {
+        if column_index == 1 && matches!(value, Value::Integer(_)) {
+            return Err(diesel::result::Error::QueryBuilderError(Box::new(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "cannot bind Integer to UUID column",
+                ),
+            )));
+        }
+        Ok(Box::new(DefaultBinder::from(value)))
+    }
+}
+
+#[test]
+fn adapter_bind_error_propagates_through_execute() {
+    let mut conn = conn();
+    conn.batch_execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, session TEXT NOT NULL)")
+        .unwrap();
+
+    // Column 1 has Integer value, but the adapter models it as a UUID column
+    // and rejects the mapping.
+    let schema = sqlite_diff_rs::SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let patchset = sqlite_diff_rs::PatchSet::<sqlite_diff_rs::SimpleTable, String, Vec<u8>>::new()
+        .insert(
+            sqlite_diff_rs::Insert::from(schema.clone())
+                .set(0, 1_i64)
+                .unwrap()
+                .set(1, 42_i64)
+                .unwrap(),
+        );
+
+    let op = patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Sqlite, _>(&SessionAdapter);
+
+    let result = op.execute(&mut conn);
+    let err = result.expect_err("execute should fail because the adapter rejected the bind");
+
+    // The error surfaces as a QueryBuilderError wrapping the adapter's
+    // message via Display.
+    match err {
+        diesel::result::Error::QueryBuilderError(inner) => {
+            let msg = inner.to_string();
+            assert!(
+                msg.contains("cannot bind Integer to UUID column")
+                    || msg.contains("adapter rejected"),
+                "unexpected error message: {msg}"
+            );
+        }
+        other => panic!("expected QueryBuilderError, got {other:?}"),
+    }
+
+    // Nothing landed in the DB.
+    let count: One = sql_query("SELECT COUNT(*) AS n FROM accounts")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(count.n, 0, "no rows should have been inserted");
+}
+
+// Reused typed row for the count assertion above.
+#[derive(QueryableByName)]
+struct One {
+    #[diesel(sql_type = BigInt)]
+    n: i64,
+}
