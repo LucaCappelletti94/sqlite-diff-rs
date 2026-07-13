@@ -166,7 +166,21 @@ impl WireSource for Maxwell {
     type TypeKey = Arc<str>;
 
     fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
-        Arc::from(payload.mysql_type.unwrap_or(""))
+        // Maxwell's `--include_types` emits raw MySQL type expressions
+        // with modifiers (e.g. `varchar(255)`, `decimal(10,2)`). Strip
+        // the parenthesized suffix so base names dispatch through
+        // `defaults()`. Two exceptions preserve their modifier: the
+        // `tinyint(1)` bool convention and `bigint unsigned` (which
+        // uses a suffix keyword, not parens).
+        let name = payload.mysql_type.unwrap_or("");
+        if name == "tinyint(1)" {
+            return Arc::from(name);
+        }
+        let base = name
+            .split_once('(')
+            .map_or(name, |(head, _)| head)
+            .trim_end();
+        Arc::from(base)
     }
 
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {

@@ -1,0 +1,38 @@
+[package]
+name = "schema-aware-roundtrip"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "End-to-end tests: Postgres CDC -> sqlite-diff-rs digest -> diesel-sqlite-session apply -> verify"
+
+# Standalone workspace: pulls Diesel git (for `with_raw_connection`)
+# and `libsqlite3-sys` via `diesel-sqlite-session`, conflicting with
+# the main workspace's `rusqlite` dev-dep.
+[workspace]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_panics_doc = "allow"
+missing_errors_doc = "allow"
+unreadable_literal = "allow"
+doc_markdown = "allow"
+
+[dependencies]
+sqlite-diff-rs = { path = "../..", default-features = false, features = [
+	"wal2json",
+	"pg-walstream",
+] }
+diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
+diesel-sqlite-session = { git = "https://github.com/LucaCappelletti94/diesel-sqlite-session" }
+serde_json = "1"
+testcontainers = "0.27"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
+tokio-util = "0.7"
+pg_walstream = "0.7"
+
+[lints]
+workspace = true

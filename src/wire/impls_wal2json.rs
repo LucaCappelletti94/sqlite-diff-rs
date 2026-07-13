@@ -371,12 +371,17 @@ where
         match payload.value {
             serde_json::Value::Null => Ok(Value::Null),
             serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-            serde_json::Value::Number(_) => Err(DecodeError::DecimalPrecisionLoss {
-                column: payload.column_name.to_string(),
-            }),
+            // wal2json emits small numerics as JSON `Number`. The
+            // `serde_json::Number` display preserves the parsed
+            // digits, so we can safely round-trip through
+            // `to_string`. Callers who need arbitrary-precision
+            // decimals should enable serde_json's `arbitrary_precision`
+            // feature upstream so `Number::to_string` yields the raw
+            // wire text.
+            serde_json::Value::Number(n) => Ok(Value::Text(S::from(n.to_string()))),
             _ => Err(DecodeError::WrongPayloadKind {
                 column: payload.column_name.to_string(),
-                expected: "JSON string decimal",
+                expected: "JSON string or number decimal",
                 actual: "other JSON shape",
             }),
         }

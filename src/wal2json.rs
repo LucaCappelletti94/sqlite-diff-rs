@@ -196,7 +196,16 @@ impl WireSource for Wal2Json {
     type TypeKey = Arc<str>;
 
     fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
-        Arc::from(payload.pg_type_name)
+        // wal2json emits parenthesized precision/length on parameterized
+        // types (e.g. `numeric(10,2)`, `varchar(255)`). Strip the paren
+        // suffix so the base type dispatches through `defaults()` and
+        // downstream users don't have to register every precision variant.
+        let name = payload.pg_type_name;
+        let base = name
+            .split_once('(')
+            .map_or(name, |(head, _)| head)
+            .trim_end();
+        Arc::from(base)
     }
 
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {

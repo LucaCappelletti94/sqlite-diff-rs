@@ -362,12 +362,14 @@ where
         match payload.value {
             serde_json::Value::Null => Ok(Value::Null),
             serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-            serde_json::Value::Number(_) => Err(DecodeError::DecimalPrecisionLoss {
-                column: payload.column_name.to_string(),
-            }),
+            // Maxwell emits `decimal` as a JSON number by default.
+            // `serde_json::Number::to_string` preserves parsed
+            // digits; callers who need arbitrary precision should
+            // enable serde_json's `arbitrary_precision` feature.
+            serde_json::Value::Number(n) => Ok(Value::Text(S::from(n.to_string()))),
             _ => Err(DecodeError::WrongPayloadKind {
                 column: payload.column_name.to_string(),
-                expected: "JSON string decimal",
+                expected: "JSON string or number decimal",
                 actual: "other JSON shape",
             }),
         }

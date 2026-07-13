@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecimalTextDecoder, DecodeError, TypeMap, Value, WireAdapter};
+use sqlite_diff_rs::{DecimalTextDecoder, TypeMap, Value, WireAdapter};
 
 // -- pg_walstream ------------------------------------------------------------
 
@@ -73,18 +73,21 @@ fn decimal_wal2json_string_verbatim() {
 }
 
 #[test]
-fn decimal_wal2json_number_rejected() {
-    let n = serde_json::Value::Number(serde_json::Number::from_f64(1234567890.123).unwrap());
-    let result: Result<Value<String, Vec<u8>>, _> = Wal2JsonColumn {
+fn decimal_wal2json_number_serializes_via_display() {
+    // JSON `Number` no longer errors. `serde_json::Number::to_string`
+    // preserves the parsed digit sequence. Callers who need
+    // arbitrary precision above ~15 digits should enable serde_json's
+    // `arbitrary_precision` feature or ensure their producer emits
+    // decimals as JSON strings.
+    let n = serde_json::Value::Number(serde_json::Number::from(1234_i64));
+    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "n",
         pg_type_name: "numeric",
         value: &n,
     }
-    .decoded_by(&DecimalTextDecoder);
-    assert!(matches!(
-        result.unwrap_err(),
-        DecodeError::DecimalPrecisionLoss { .. }
-    ));
+    .decoded_by(&DecimalTextDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Text(String::from("1234")));
 }
 
 // -- maxwell -----------------------------------------------------------------

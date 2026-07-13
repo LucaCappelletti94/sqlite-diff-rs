@@ -21,7 +21,7 @@ members = [
 	"integration-tests/wal2json",
 	"integration-tests/pg-walstream",
 ]
-exclude = ["integration-tests/diesel-e2e"]
+exclude = ["integration-tests/diesel-e2e", "integration-tests/schema-aware-roundtrip"]
 
 [workspace.lints.rust]
 missing_docs = "forbid"
