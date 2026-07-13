@@ -1,15 +1,8 @@
-//! `Decoder` implementations and `TypeMapDefaults` for the `Wal2Json`
-//! source.
-//!
-//! Phase 0: every decoder except `NullDecoder` and `SnifferDecoder`
-//! returns `DecodeError::NotYetImplemented { decoder }`. Later phases
-//! populate the impls one payload family at a time.
+//! `Decoder` implementations and `TypeMapDefaults` for the `Wal2Json` source.
 
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-#[allow(deprecated)]
-use super::decoder::SnifferDecoder;
 use super::decoder::{
     BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder,
     IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder,
@@ -33,49 +26,7 @@ impl<S, B> Decoder<Wal2Json, S, B> for NullDecoder {
 }
 
 // ------------------------------------------------------------------
-// SnifferDecoder: 0.1.4 shape-sniffer behavior, deprecated migration
-// bridge.
-//
-// Restricted to `Value<String, Vec<u8>>` since it reproduces the exact
-// `TryFrom` shape callers already relied on.
-// ------------------------------------------------------------------
-
-#[allow(deprecated)]
-impl Decoder<Wal2Json, alloc::string::String, Vec<u8>> for SnifferDecoder {
-    fn decode(
-        &self,
-        payload: Wal2JsonColumn<'_>,
-    ) -> Result<Value<alloc::string::String, Vec<u8>>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::Bool(b) => Ok(Value::Integer(i64::from(*b))),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Ok(Value::Integer(i))
-                } else if let Some(f) = n.as_f64() {
-                    Ok(Value::Real(f))
-                } else {
-                    Err(DecodeError::WrongPayloadKind {
-                        column: payload.column_name.to_string(),
-                        expected: "i64 or f64 number",
-                        actual: "arbitrary-precision number",
-                    })
-                }
-            }
-            serde_json::Value::String(s) => Ok(Value::Text(s.clone())),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "scalar JSON value",
-                    actual: "array or object",
-                })
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------
-// BoolDecoder (Phase 1)
+// BoolDecoder
 //
 // wal2json v2 delivers PG booleans as JSON `true`/`false`. `null` maps
 // to Value::Null. Anything else -> WrongPayloadKind.
@@ -108,7 +59,7 @@ impl<S, B> Decoder<Wal2Json, S, B> for BoolDecoder {
 }
 
 // ------------------------------------------------------------------
-// IntDecoder (Phase 2)
+// IntDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for IntDecoder {
@@ -144,7 +95,7 @@ impl<S, B> Decoder<Wal2Json, S, B> for IntDecoder {
 }
 
 // ------------------------------------------------------------------
-// Int64OverflowToTextDecoder (Phase 2)
+// Int64OverflowToTextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for Int64OverflowToTextDecoder
@@ -178,7 +129,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// RealDecoder (Phase 3)
+// RealDecoder
 //
 // NaN normalizes to Null, -0.0 to 0.0. Matches the crate's
 // `decode_value` invariant.
@@ -229,7 +180,7 @@ fn normalize_real<S, B>(f: f64) -> Value<S, B> {
 }
 
 // ------------------------------------------------------------------
-// TextDecoder (Phase 4)
+// TextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for TextDecoder
@@ -278,7 +229,7 @@ macro_rules! not_yet_impl {
 }
 
 // ------------------------------------------------------------------
-// PgByteaTextModeDecoder (Phase 5)
+// PgByteaTextModeDecoder
 //
 // wal2json v2 emits PG BYTEA as a JSON string in `\xHEX` form.
 // Null pass-through.
@@ -308,7 +259,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// UuidBlob16Decoder and UuidText36Decoder (Phase 6)
+// UuidBlob16Decoder and UuidText36Decoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for UuidBlob16Decoder
@@ -360,7 +311,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// DecimalTextDecoder (Phase 7)
+// DecimalTextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for DecimalTextDecoder
@@ -389,7 +340,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// Temporal verbatim decoders (Phase 8)
+// Temporal verbatim decoders
 // ------------------------------------------------------------------
 
 fn decode_wal2json_string_verbatim<S, B>(
@@ -429,7 +380,7 @@ verbatim_impl!(TimeVerbatimDecoder);
 verbatim_impl!(IntervalVerbatimDecoder);
 
 // ------------------------------------------------------------------
-// JsonVerbatimDecoder / JsonCanonicalDecoder (Phase 9)
+// JsonVerbatimDecoder / JsonCanonicalDecoder
 //
 // Verbatim: serialize Object/Array via serde_json::to_string (compact)
 // or pass string sources through unchanged. Canonical: sort keys
@@ -481,7 +432,7 @@ not_yet_impl!(PgByteaBinaryDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
 
 // ------------------------------------------------------------------
-// TypeMapDefaults: empty at Phase 0.
+// TypeMapDefaults.
 // ------------------------------------------------------------------
 
 impl<S, B> TypeMapDefaults<S, B> for Wal2Json

@@ -1,4 +1,4 @@
-//! Phase 8 tests for the five temporal verbatim decoders.
+//! Tests for the temporal verbatim decoders.
 //!
 //! All five (`TimestampVerbatimDecoder`, `TimestampTzVerbatimDecoder`,
 //! `DateVerbatimDecoder`, `TimeVerbatimDecoder`, `IntervalVerbatimDecoder`)

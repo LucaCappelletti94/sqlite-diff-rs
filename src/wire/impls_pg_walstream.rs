@@ -1,15 +1,8 @@
-//! `Decoder` implementations and `TypeMapDefaults` for the
-//! `PgWalstream` source.
-//!
-//! Phase 0: every decoder except `NullDecoder` and `SnifferDecoder`
-//! returns `DecodeError::NotYetImplemented { decoder }`. Later phases
-//! populate the impls one payload family at a time.
+//! `Decoder` implementations and `TypeMapDefaults` for the `PgWalstream` source.
 
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-#[allow(deprecated)]
-use super::decoder::SnifferDecoder;
 use super::decoder::{
     BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder,
     IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder,
@@ -28,43 +21,12 @@ impl<S, B> Decoder<PgWalstream, S, B> for NullDecoder {
     }
 }
 
-#[allow(deprecated)]
-impl Decoder<PgWalstream, alloc::string::String, Vec<u8>> for SnifferDecoder {
-    fn decode(
-        &self,
-        payload: PgWalstreamColumn<'_>,
-    ) -> Result<Value<alloc::string::String, Vec<u8>>, DecodeError> {
-        match payload.data {
-            ColumnValue::Null => Ok(Value::Null),
-            ColumnValue::Binary(b) => Ok(Value::Blob(b.to_vec())),
-            ColumnValue::Text(b) => {
-                let Some(s) = payload.data.as_str() else {
-                    return Ok(Value::Blob(b.to_vec()));
-                };
-                if s == "t" {
-                    return Ok(Value::Integer(1));
-                }
-                if s == "f" {
-                    return Ok(Value::Integer(0));
-                }
-                if let Ok(i) = s.parse::<i64>() {
-                    return Ok(Value::Integer(i));
-                }
-                if let Ok(f) = s.parse::<f64>() {
-                    return Ok(Value::Real(f));
-                }
-                Ok(Value::Text(s.to_string()))
-            }
-        }
-    }
-}
-
 /// Postgres bool OID. Registered under this key by
 /// [`TypeMapDefaults::defaults`].
 pub const PG_BOOL: crate::pg_walstream::Oid = 16;
 
 // ------------------------------------------------------------------
-// BoolDecoder (Phase 1)
+// BoolDecoder
 //
 // pg_walstream text mode: `"t"` -> 1, `"f"` -> 0.
 // pg_walstream binary mode: single byte 0x01 -> 1, 0x00 -> 0.
@@ -109,7 +71,7 @@ pub const PG_INT4: crate::pg_walstream::Oid = 23;
 pub const PG_INT8: crate::pg_walstream::Oid = 20;
 
 // ------------------------------------------------------------------
-// IntDecoder (Phase 2)
+// IntDecoder
 //
 // Text mode: base-10 parse via `str::parse::<i64>`. Overflow raises
 // `IntegerOverflow`. Binary mode: width inferred from OID (int2 = 2
@@ -180,7 +142,7 @@ fn decode_pg_int_binary<S, B>(
 }
 
 // ------------------------------------------------------------------
-// Int64OverflowToTextDecoder (Phase 2)
+// Int64OverflowToTextDecoder
 //
 // pg_walstream rarely surfaces true bigint-unsigned overflow (Postgres
 // has no such type), but this decoder tolerates the shape for
@@ -233,7 +195,7 @@ pub const PG_FLOAT4: crate::pg_walstream::Oid = 700;
 pub const PG_FLOAT8: crate::pg_walstream::Oid = 701;
 
 // ------------------------------------------------------------------
-// RealDecoder (Phase 3)
+// RealDecoder
 //
 // Text mode: `str::parse::<f64>` accepts "NaN"/"Infinity"/"-Infinity"
 // and standard decimal / exponential forms. NaN normalizes to Null,
@@ -311,7 +273,7 @@ pub const PG_BPCHAR: crate::pg_walstream::Oid = 1042;
 pub const PG_NAME: crate::pg_walstream::Oid = 19;
 
 // ------------------------------------------------------------------
-// TextDecoder (Phase 4)
+// TextDecoder
 //
 // Text mode: UTF-8 validate, pass through as Value::Text. Invalid
 // UTF-8 raises `InvalidUtf8` rather than silently coercing to a Blob.
@@ -347,7 +309,7 @@ where
 pub const PG_BYTEA: crate::pg_walstream::Oid = 17;
 
 // ------------------------------------------------------------------
-// PgByteaBinaryDecoder (Phase 5)
+// PgByteaBinaryDecoder
 //
 // Handles both `ColumnValue::Binary` (pass-through) and text-mode
 // `\xHEX` (decoded via the vendored helper). Null pass-through.
@@ -383,7 +345,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// UuidBlob16Decoder and UuidText36Decoder (Phase 6)
+// UuidBlob16Decoder and UuidText36Decoder
 //
 // Both accept 36-character hyphenated and braced forms of a UUID
 // wire text and produce `Value::Blob([u8; 16])` or `Value::Text(36)`
@@ -471,11 +433,7 @@ where
 pub const PG_NUMERIC: crate::pg_walstream::Oid = 1700;
 
 // ------------------------------------------------------------------
-// DecimalTextDecoder (Phase 7)
-//
-// Preserve wire text verbatim. Reject binary payload since PG binary
-// numeric is a complex packed form we don't unpack here (Phase 10 or
-// later work).
+// DecimalTextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<PgWalstream, S, B> for DecimalTextDecoder
@@ -531,7 +489,7 @@ pub const PG_TIME: crate::pg_walstream::Oid = 1083;
 pub const PG_INTERVAL: crate::pg_walstream::Oid = 1186;
 
 // ------------------------------------------------------------------
-// Temporal verbatim decoders (Phase 8)
+// Temporal verbatim decoders
 //
 // Preserve wire text form as `Value::Text`. Null pass-through.
 // Reject binary payloads.

@@ -1,4 +1,4 @@
-//! Phase 7 tests for `DecimalTextDecoder`.
+//! Tests for `DecimalTextDecoder`.
 //!
 //! Cross-format contract: `DecimalTextDecoder` preserves the wire
 //! decimal verbatim as `Value::Text`. Numeric JSON sources are

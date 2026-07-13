@@ -3,23 +3,22 @@
 //! Postgres source with a table exercising bool, int, text, numeric,
 //! timestamptz, and jsonb. Drives an INSERT through a real pgoutput
 //! replication stream via `pg_walstream::LogicalReplicationStream`,
-//! extracts the resulting `EventType`, pairs it with a manually built
-//! `RelationInfo` matching the known schema, digests via
+//! extracts the resulting `EventType`, digests via the unified
+//! [`DiffSetBuilder::digest`] entry point with
 //! `sqlite_diff_rs::TypeMap::defaults()`, applies the patchset to a
 //! fresh SQLite via `diesel-sqlite-session`, and verifies the SQLite
 //! row state matches the Postgres source.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Text};
 use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
-use pg_walstream::{ColumnInfo, EventType, RelationInfo};
-use schema_aware_roundtrip::{connect, start_postgres};
+use pg_walstream::EventType;
+use schema_aware_roundtrip::{AppSchema, UsersTable, connect, start_postgres};
 use sqlite_diff_rs::pg_walstream::PgWalstream;
-use sqlite_diff_rs::{PatchSet, SimpleTable, TypeMap};
+use sqlite_diff_rs::{PatchSet, TypeMap};
 use tokio_util::sync::CancellationToken;
 
 #[derive(QueryableByName, Debug)]
@@ -53,33 +52,12 @@ fn make_type_map() -> TypeMap<PgWalstream, String, Vec<u8>> {
 }
 
 fn spin_sqlite() -> SqliteConnection {
-    let mut conn = SqliteConnection::establish(":memory:")
-        .expect("Failed to open in-memory SQLite");
+    let mut conn =
+        SqliteConnection::establish(":memory:").expect("Failed to open in-memory SQLite");
     sql_query(SQLITE_DDL)
         .execute(&mut conn)
         .expect("Failed to apply SQLite DDL");
     conn
-}
-
-/// Build the `RelationInfo` matching the users table so we can feed it
-/// alongside the pgoutput `EventType` into `digest_pg_walstream`. Uses
-/// PG OIDs (int8 = 20, bool = 16, text = 25, numeric = 1700,
-/// timestamptz = 1184, jsonb = 3802). The PK column has flag 1.
-fn users_relation_info(relation_oid: u32) -> RelationInfo {
-    RelationInfo {
-        relation_id: relation_oid,
-        namespace: Arc::from("public"),
-        relation_name: Arc::from("users"),
-        replica_identity: b'f', // REPLICA IDENTITY FULL
-        columns: vec![
-            ColumnInfo::new(1, "id".to_string(), 20, -1),
-            ColumnInfo::new(0, "active".to_string(), 16, -1),
-            ColumnInfo::new(0, "handle".to_string(), 25, -1),
-            ColumnInfo::new(0, "price".to_string(), 1700, -1),
-            ColumnInfo::new(0, "ts".to_string(), 1184, -1),
-            ColumnInfo::new(0, "metadata".to_string(), 3802, -1),
-        ],
-    }
 }
 
 #[tokio::test]
@@ -115,7 +93,7 @@ async fn pg_walstream_insert_roundtrip_e2e() {
         Duration::from_secs(1),
         Duration::from_secs(10),
         Duration::from_secs(5),
-        Default::default(),
+        pg_walstream::RetryConfig::default(),
     );
     let mut stream = pg_walstream::LogicalReplicationStream::new(&conn_str, stream_config)
         .await
@@ -143,28 +121,18 @@ async fn pg_walstream_insert_roundtrip_e2e() {
                 .next_event(&cancel)
                 .await
                 .expect("Failed to read event");
-            match ev.event_type {
-                EventType::Insert { .. } => break ev,
-                _ => continue,
+            if let EventType::Insert { .. } = ev.event_type {
+                break ev;
             }
         }
     })
     .await
     .expect("Timed out waiting for INSERT event");
 
-    let relation = users_relation_info(match &insert_event.event_type {
-        EventType::Insert { relation_oid, .. } => *relation_oid,
-        _ => unreachable!(),
-    });
-
-    let schema = SimpleTable::new(
-        "users",
-        &["id", "active", "handle", "price", "ts", "metadata"],
-        &[0],
-    );
+    let schema = AppSchema::default();
     let types = make_type_map();
-    let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
-        .digest_pg_walstream(&insert_event.event_type, &relation, &schema, &types)
+    let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
+        .digest(&insert_event.event_type, &schema, &types)
         .expect("Failed to digest pg_walstream insert");
     let bytes: Vec<u8> = patchset.build();
 
@@ -173,10 +141,9 @@ async fn pg_walstream_insert_roundtrip_e2e() {
         .apply_patchset(&bytes, |_| ConflictAction::Abort)
         .expect("Failed to apply patchset to SQLite");
 
-    let rows: Vec<UserRow> =
-        sql_query("SELECT id, active, handle, price, ts, metadata FROM users")
-            .load(&mut sqlite)
-            .expect("Failed to query SQLite");
+    let rows: Vec<UserRow> = sql_query("SELECT id, active, handle, price, ts, metadata FROM users")
+        .load(&mut sqlite)
+        .expect("Failed to query SQLite");
 
     assert_eq!(rows.len(), 1);
     let row = &rows[0];

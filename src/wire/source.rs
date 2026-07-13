@@ -32,3 +32,50 @@ pub trait WireSource: Sealed {
     /// Extract the column name from a payload for diagnostic messages.
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str;
 }
+
+/// Schema-side source-native type key for one column of one table.
+pub trait WireColumnTypes<Src: WireSource> {
+    /// Type key for the column at `column_index`.
+    fn column_type_key(&self, column_index: usize) -> Src::TypeKey;
+}
+
+/// Table-name lookup for the [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest) entry point.
+pub trait WireSchema<Src: WireSource> {
+    /// Concrete schema type for one table.
+    type Table: crate::schema::NamedColumns + WireColumnTypes<Src>;
+
+    /// Resolve a table name to its schema entry.
+    fn get(&self, table_name: &str) -> Option<&Self::Table>;
+}
+
+/// One CDC wire event digested via [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest).
+///
+/// Implemented in-crate for `pg_walstream::EventType`, `wal2json::MessageV2`,
+/// `wal2json::ChangeV1`, and `maxwell::Message` (each times both formats).
+pub trait Digestable<F, T, S, B>
+where
+    F: crate::builders::Format<S, B>,
+    T: crate::schema::NamedColumns + WireColumnTypes<Self::Src>,
+{
+    /// Wire source this event came from.
+    type Src: WireSource;
+
+    /// Failure mode raised on schema lookup or decode failure.
+    type Error;
+
+    /// Fold this event into `builder`, resolving affected tables via `schema`
+    /// and decoding column payloads via `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// Any per-source `ConversionError`.
+    fn digest_into<Sch, A>(
+        &self,
+        builder: crate::builders::DiffSetBuilder<F, T, S, B>,
+        schema: &Sch,
+        adapter: &A,
+    ) -> Result<crate::builders::DiffSetBuilder<F, T, S, B>, Self::Error>
+    where
+        Sch: WireSchema<Self::Src, Table = T>,
+        A: super::WireAdapter<Self::Src, S, B>;
+}

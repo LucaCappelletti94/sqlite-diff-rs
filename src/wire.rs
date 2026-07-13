@@ -7,8 +7,6 @@
 //! so users can register a single type-to-decoder mapping and consume
 //! multiple wire formats interchangeably.
 //!
-//! See `docs/schema-aware-forward-conversion.md` for the full design.
-//!
 //! # Shape
 //!
 //! - [`WireSource`] (sealed): per-source marker with an associated
@@ -23,14 +21,6 @@
 //!   keyed by `Src::TypeKey`. The primary user-facing type.
 //! - [`TypeMapDefaults`]: per-source `defaults()` builder for a
 //!   [`TypeMap`] pre-populated with the crate's self-evident mappings.
-//!
-//! # Migration bridge
-//!
-//! [`SnifferAdapter`] and [`SnifferDecoder`] reproduce the 0.1.4 content
-//! sniffer behavior. Both are `#[deprecated]`. Existing callers whose
-//! `try_from(..)` calls disappeared in 0.2.0 can restore behavior with
-//! one line: `patchset.digest_pg_walstream(&event, &relation, &SnifferAdapter)`.
-//! Slated for removal in 0.3.0.
 mod adapter;
 mod bytes_helpers;
 mod decoder;
@@ -58,9 +48,7 @@ pub use decoder::{
     TimeVerbatimDecoder, TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, UuidBlob16Decoder,
     UuidText36Decoder,
 };
-#[allow(deprecated)]
-pub use decoder::{SnifferAdapter, SnifferDecoder};
 pub use error::DecodeError;
 pub(crate) use sealed::Sealed;
-pub use source::WireSource;
+pub use source::{Digestable, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};

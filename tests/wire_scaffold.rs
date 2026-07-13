@@ -1,8 +1,4 @@
-//! Phase 0 smoke tests for the `wire` module scaffold.
-//!
-//! Compile-only assertions that the traits and default types shipped
-//! in Phase 0 are usable and object-safe. Nothing here exercises a
-//! specific decoder semantics: those live in Phase 1 onwards.
+//! Smoke tests for the `wire` module scaffold.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
@@ -32,21 +28,10 @@ fn type_map_defaults_are_callable_for_every_source() {
     let wal2json: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
     let maxwell: TypeMap<Maxwell, String, Vec<u8>> = TypeMap::defaults();
 
-    // Each phase from 1 onwards adds entries per source. Assert only
-    // that the map is non-empty once at least one phase has landed.
-    // The exact counts move as new payload families ship.
-    assert!(
-        !pg.is_empty(),
-        "pg_walstream defaults should carry Phase 1 bool"
-    );
-    assert!(
-        !wal2json.is_empty(),
-        "wal2json defaults should carry Phase 1 bool"
-    );
-    assert!(
-        !maxwell.is_empty(),
-        "maxwell defaults should carry Phase 1 bool"
-    );
+    // Assert only that the map is non-empty.
+    assert!(!pg.is_empty(), "pg_walstream defaults should carry bool");
+    assert!(!wal2json.is_empty(), "wal2json defaults should carry bool");
+    assert!(!maxwell.is_empty(), "maxwell defaults should carry bool");
 }
 
 /// Empty `TypeMap` returns `NoDecoderForType` for any lookup, using the

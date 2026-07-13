@@ -50,7 +50,7 @@ impl<T: DynTable> DynTable for &T {
 }
 
 /// Collection of indexable values.
-pub(crate) trait IndexableValues {
+pub trait IndexableValues {
     /// The string variant.
     type Text: Clone;
     /// The binary variant.

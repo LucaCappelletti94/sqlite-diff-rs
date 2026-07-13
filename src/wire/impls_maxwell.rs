@@ -1,15 +1,8 @@
-//! `Decoder` implementations and `TypeMapDefaults` for the `Maxwell`
-//! source.
-//!
-//! Phase 0: every decoder except `NullDecoder` and `SnifferDecoder`
-//! returns `DecodeError::NotYetImplemented { decoder }`. Later phases
-//! populate the impls one payload family at a time.
+//! `Decoder` implementations and `TypeMapDefaults` for the `Maxwell` source.
 
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-#[allow(deprecated)]
-use super::decoder::SnifferDecoder;
 use super::decoder::{
     BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder,
     IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder,
@@ -28,42 +21,8 @@ impl<S, B> Decoder<Maxwell, S, B> for NullDecoder {
     }
 }
 
-#[allow(deprecated)]
-impl Decoder<Maxwell, alloc::string::String, Vec<u8>> for SnifferDecoder {
-    fn decode(
-        &self,
-        payload: MaxwellColumn<'_>,
-    ) -> Result<Value<alloc::string::String, Vec<u8>>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::Bool(b) => Ok(Value::Integer(i64::from(*b))),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Ok(Value::Integer(i))
-                } else if let Some(f) = n.as_f64() {
-                    Ok(Value::Real(f))
-                } else {
-                    Err(DecodeError::WrongPayloadKind {
-                        column: payload.column_name.to_string(),
-                        expected: "i64 or f64 number",
-                        actual: "arbitrary-precision number",
-                    })
-                }
-            }
-            serde_json::Value::String(s) => Ok(Value::Text(s.clone())),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "scalar JSON value",
-                    actual: "array or object",
-                })
-            }
-        }
-    }
-}
-
 // ------------------------------------------------------------------
-// BoolDecoder (Phase 1)
+// BoolDecoder
 //
 // Maxwell delivers MySQL `tinyint(1)` bool values as either JSON
 // `true`/`false` or as integer 0/1 (config-dependent). Both are
@@ -101,7 +60,7 @@ impl<S, B> Decoder<Maxwell, S, B> for BoolDecoder {
 }
 
 // ------------------------------------------------------------------
-// IntDecoder (Phase 2)
+// IntDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for IntDecoder {
@@ -137,7 +96,7 @@ impl<S, B> Decoder<Maxwell, S, B> for IntDecoder {
 }
 
 // ------------------------------------------------------------------
-// Int64OverflowToTextDecoder (Phase 2)
+// Int64OverflowToTextDecoder
 //
 // Load-bearing for MySQL `bigint unsigned` columns whose wire values
 // can exceed `i64::MAX`.
@@ -174,7 +133,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// RealDecoder (Phase 3)
+// RealDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for RealDecoder {
@@ -222,7 +181,7 @@ fn normalize_real<S, B>(f: f64) -> Value<S, B> {
 }
 
 // ------------------------------------------------------------------
-// TextDecoder (Phase 4)
+// TextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for TextDecoder
@@ -267,7 +226,7 @@ macro_rules! not_yet_impl {
 }
 
 // ------------------------------------------------------------------
-// MySqlBinaryDecoder (Phase 5)
+// MySqlBinaryDecoder
 //
 // Maxwell delivers MySQL binary-family columns as base64-encoded
 // JSON strings. Base64 decode via the vendored helper.
@@ -299,7 +258,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// UuidBlob16Decoder and UuidText36Decoder (Phase 6)
+// UuidBlob16Decoder and UuidText36Decoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for UuidBlob16Decoder
@@ -351,7 +310,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// DecimalTextDecoder (Phase 7)
+// DecimalTextDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for DecimalTextDecoder
@@ -377,7 +336,7 @@ where
 }
 
 // ------------------------------------------------------------------
-// Temporal verbatim decoders (Phase 8)
+// Temporal verbatim decoders
 // ------------------------------------------------------------------
 
 fn decode_maxwell_string_verbatim<S, B>(
@@ -417,7 +376,7 @@ verbatim_impl!(TimeVerbatimDecoder);
 verbatim_impl!(IntervalVerbatimDecoder);
 
 // ------------------------------------------------------------------
-// JsonVerbatimDecoder / JsonCanonicalDecoder (Phase 9)
+// JsonVerbatimDecoder / JsonCanonicalDecoder
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Maxwell, S, B> for JsonVerbatimDecoder

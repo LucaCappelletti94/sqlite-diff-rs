@@ -1,4 +1,4 @@
-//! Phase 9 tests for `JsonVerbatimDecoder` and `JsonCanonicalDecoder`.
+//! Tests for `JsonVerbatimDecoder` and `JsonCanonicalDecoder`.
 //!
 //! Cross-format contract:
 //! - `JsonVerbatimDecoder` preserves the source's JSON serialization as

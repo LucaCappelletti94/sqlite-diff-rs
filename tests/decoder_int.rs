@@ -1,4 +1,4 @@
-//! Phase 2 tests for `IntDecoder` and `Int64OverflowToTextDecoder`.
+//! Tests for `IntDecoder` and `Int64OverflowToTextDecoder`.
 //!
 //! Cross-format contract:
 //! - `IntDecoder` decodes wire integer representations (Postgres text

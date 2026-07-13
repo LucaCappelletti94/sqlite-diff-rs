@@ -2,11 +2,19 @@
 
 ## 0.2.0
 
-Schema-aware forward conversion for CDC wire formats. Downstream users register a type-to-decoder mapping once and consume `pg_walstream`, `wal2json`, or `maxwell` interchangeably. See `docs/schema-aware-forward-conversion.md` for the full design.
+Schema-aware forward conversion for CDC wire formats. Downstream users register a type-to-decoder mapping once and consume `pg_walstream`, `wal2json`, or `maxwell` interchangeably.
 
 ### Removed
 
-`debezium` module and feature. The 0.1.x sniffer-based converter was unsound (dropped the Kafka Connect schema section wholesale) and re-adding Debezium under the new schema-aware design would have required a special-case dispatch shape that no other source needed. Users on Postgres have `pg_walstream` and `wal2json`. Users on MySQL have `maxwell`.
+`debezium` module and feature. Users on Postgres have `pg_walstream` and `wal2json`. Users on MySQL have `maxwell`.
+
+The 0.1.x `TryFrom<..>` impls on `Insert`, `Update`, `ChangeDelete`, and `PatchDelete` for pg_walstream, wal2json, and maxwell events. Use `builder.digest(&event, &schema, &adapter)` instead.
+
+`SnifferDecoder` and `SnifferAdapter` (migration bridge for the deleted `TryFrom` impls).
+
+Legacy `digest_pg_walstream`, `digest_wal2json_v2`, `digest_wal2json_v1_change`, and `digest_maxwell` methods on `DiffSetBuilder`.
+
+Per-source `maxwell`, `pg_walstream`, and `wal2json` Criterion benches. They benched the deleted `TryFrom` path.
 
 ### Added
 
@@ -21,34 +29,25 @@ Schema-aware forward conversion for CDC wire formats. Downstream users register 
 
 Built-in decoders shipping in 0.2.0:
 
-- `BoolDecoder` (Phase 1)
-- `IntDecoder`, `Int64OverflowToTextDecoder` (Phase 2)
-- `RealDecoder` (Phase 3, NaN normalizes to `Null`, `-0.0` to `0.0`)
-- `TextDecoder` (Phase 4, strict UTF-8)
-- `PgByteaBinaryDecoder`, `PgByteaTextModeDecoder`, `MySqlBinaryDecoder` (Phase 5, vendored base64 and PG `\xHEX` decoders, no external deps)
-- `UuidBlob16Decoder`, `UuidText36Decoder` (Phase 6, vendored parser, no `uuid` dep)
-- `DecimalTextDecoder` (Phase 7)
-- `TimestampVerbatimDecoder`, `TimestampTzVerbatimDecoder`, `DateVerbatimDecoder`, `TimeVerbatimDecoder`, `IntervalVerbatimDecoder` (Phase 8)
-- `JsonVerbatimDecoder`, `JsonCanonicalDecoder` (Phase 9, canonical does recursive key sort)
+- `BoolDecoder`
+- `IntDecoder`, `Int64OverflowToTextDecoder`
+- `RealDecoder` (NaN normalizes to `Null`, `-0.0` to `0.0`)
+- `TextDecoder` (strict UTF-8)
+- `PgByteaBinaryDecoder`, `PgByteaTextModeDecoder`, `MySqlBinaryDecoder` (vendored base64 and PG `\xHEX` decoders, no external deps)
+- `UuidBlob16Decoder`, `UuidText36Decoder` (vendored parser, no `uuid` dep)
+- `DecimalTextDecoder`
+- `TimestampVerbatimDecoder`, `TimestampTzVerbatimDecoder`, `DateVerbatimDecoder`, `TimeVerbatimDecoder`, `IntervalVerbatimDecoder`
+- `JsonVerbatimDecoder`, `JsonCanonicalDecoder` (canonical does recursive key sort)
 - `NullDecoder`
-- `SnifferDecoder` and `SnifferAdapter` (deprecated, migration bridge reproducing 0.1.4 behavior)
 
-New methods on `DiffSetBuilder`, symmetric with `digest_sql`:
+New traits `WireColumnTypes<Src>` (schema-side per-column type key), `WireSchema<Src>` (table-name lookup), and `Digestable<F, T, S, B>` (event dispatch, implemented in-crate for `pg_walstream::EventType`, `wal2json::MessageV2`, `wal2json::ChangeV1`, `maxwell::Message` times both formats).
 
-- `digest_pg_walstream(&event, &relation, &table, &adapter)`
-- `digest_wal2json_v2(&msg, &table, &adapter)`
-- `digest_wal2json_v1_change(&change, &table, &adapter)`
-- `digest_maxwell(&msg, &table, &adapter)`
+One unified digest entry point: `builder.digest(&event, &schema, &adapter)`. Replaces the 0.1.x `digest_pg_walstream` / `digest_wal2json_v2` / `digest_wal2json_v1_change` / `digest_maxwell` methods. `RelationInfo` is no longer a digest argument (OIDs come from the schema).
 
-Per-payload ergonomic helper `PgWalstreamColumn::decoded_by(&decoder)` (same shape on `Wal2JsonColumn` and `MaxwellColumn`) as a shortcut around Rust's GAT method resolution.
+`ConversionError::TableNotFound(String)` added to each format's error type.
 
-New field `maxwell::Message::columns_types: Option<BTreeMap<String, String>>` populated when the Maxwell daemon runs with `--include_types`.
+`IndexableValues` promoted from `pub(crate)` to `pub` so external code can implement `SchemaWithPK`.
 
-`ConversionError::Decode(DecodeError)` added to each format's error type via `#[from]`.
-
-### Legacy API
-
-The 0.1.x `TryFrom<..>` impls on `Insert`, `Update`, `ChangeDelete`, and `PatchDelete` remain in place for pg_walstream, wal2json, and maxwell. They keep the content-sniffing behavior from 0.1.4 and continue to compile against existing callers. New code should use the digest methods above. The `TryFrom` impls are slated for removal in 0.3.0.
 
 ### MSRV
 

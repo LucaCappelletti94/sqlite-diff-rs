@@ -54,8 +54,7 @@ pub async fn start_postgres() -> (ContainerAsync<GenericImage>, u16) {
 
 /// Connect a `tokio_postgres` client to a running container.
 pub async fn connect(host_port: u16) -> Client {
-    let conn_str =
-        format!("host=127.0.0.1 port={host_port} user=test password=test dbname=testdb");
+    let conn_str = format!("host=127.0.0.1 port={host_port} user=test password=test dbname=testdb");
     let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
         .await
         .expect("Failed to connect to PostgreSQL");
@@ -97,4 +96,150 @@ pub async fn get_changes_v2(client: &Client, slot: &str) -> Vec<String> {
         .await
         .expect("Failed to read wal2json changes");
     rows.iter().map(|r| r.get::<_, String>("data")).collect()
+}
+
+// ============================================================================
+// Shared schema types for the roundtrip tests.
+// ============================================================================
+
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+use sqlite_diff_rs::pg_walstream::PgWalstream;
+use sqlite_diff_rs::wal2json::Wal2Json;
+use sqlite_diff_rs::{
+    DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable, Value, WireColumnTypes,
+    WireSchema,
+};
+
+/// The `users` table both roundtrip tests exercise. Columns:
+/// `id BIGINT PK`, `active BOOL`, `handle TEXT`, `price NUMERIC(10,2)`,
+/// `ts TIMESTAMPTZ`, `metadata JSONB`.
+#[derive(Debug, Clone)]
+pub struct UsersTable {
+    inner: SimpleTable,
+    pg_oids: Vec<u32>,
+    pg_type_names: Vec<Arc<str>>,
+}
+
+impl UsersTable {
+    /// Build the fixed users-schema instance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: SimpleTable::new(
+                "users",
+                &["id", "active", "handle", "price", "ts", "metadata"],
+                &[0],
+            ),
+            // int8 = 20, bool = 16, text = 25, numeric = 1700,
+            // timestamptz = 1184, jsonb = 3802.
+            pg_oids: vec![20, 16, 25, 1700, 1184, 3802],
+            pg_type_names: vec![
+                Arc::from("bigint"),
+                Arc::from("boolean"),
+                Arc::from("text"),
+                Arc::from("numeric"),
+                Arc::from("timestamp with time zone"),
+                Arc::from("jsonb"),
+            ],
+        }
+    }
+
+    /// Underlying [`SimpleTable`], for callers that need it verbatim.
+    #[must_use]
+    pub fn simple_table(&self) -> &SimpleTable {
+        &self.inner
+    }
+}
+
+impl Default for UsersTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for UsersTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for UsersTable {}
+
+impl Hash for UsersTable {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.inner.hash(state);
+    }
+}
+
+impl DynTable for UsersTable {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn number_of_columns(&self) -> usize {
+        self.inner.number_of_columns()
+    }
+    fn write_pk_flags(&self, buf: &mut [u8]) {
+        self.inner.write_pk_flags(buf);
+    }
+}
+
+impl SchemaWithPK for UsersTable {
+    fn number_of_primary_keys(&self) -> usize {
+        self.inner.number_of_primary_keys()
+    }
+    fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+        self.inner.primary_key_index(col_idx)
+    }
+    fn extract_pk<S, B>(
+        &self,
+        values: &impl IndexableValues<Text = S, Binary = B>,
+    ) -> Vec<Value<S, B>>
+    where
+        S: Clone,
+        B: Clone,
+    {
+        self.inner.extract_pk(values)
+    }
+}
+
+impl NamedColumns for UsersTable {
+    fn column_index(&self, column_name: &str) -> Option<usize> {
+        NamedColumns::column_index(&self.inner, column_name)
+    }
+}
+
+impl WireColumnTypes<PgWalstream> for UsersTable {
+    fn column_type_key(&self, column_index: usize) -> u32 {
+        self.pg_oids[column_index]
+    }
+}
+
+impl WireColumnTypes<Wal2Json> for UsersTable {
+    fn column_type_key(&self, column_index: usize) -> Arc<str> {
+        Arc::clone(&self.pg_type_names[column_index])
+    }
+}
+
+/// Static schema container. Both roundtrip tests only touch one
+/// table.
+#[derive(Debug, Clone, Default)]
+pub struct AppSchema {
+    /// The users table.
+    pub users: UsersTable,
+}
+
+impl WireSchema<PgWalstream> for AppSchema {
+    type Table = UsersTable;
+    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+        (table_name == self.users.name()).then_some(&self.users)
+    }
+}
+
+impl WireSchema<Wal2Json> for AppSchema {
+    type Table = UsersTable;
+    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+        (table_name == self.users.name()).then_some(&self.users)
+    }
 }

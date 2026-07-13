@@ -3,10 +3,10 @@
 //! Postgres source with a table exercising multiple payload families
 //! (bool, int, text, numeric, timestamp, uuid, jsonb). Drive an INSERT
 //! and an UPDATE through `wal2json`, capture the JSON messages, digest
-//! via `sqlite_diff_rs::TypeMap::defaults()` (with UUID registered
-//! explicitly), apply the patchset to a fresh SQLite via
-//! `diesel-sqlite-session`, and verify SQLite row state matches
-//! Postgres source.
+//! via the unified [`DiffSetBuilder::digest`] entry point with
+//! `sqlite_diff_rs::TypeMap::defaults()` (UUID registered explicitly),
+//! apply the patchset to a fresh SQLite via `diesel-sqlite-session`,
+//! and verify SQLite row state matches Postgres source.
 
 use std::sync::Arc;
 
@@ -15,10 +15,10 @@ use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Text};
 use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
 use schema_aware_roundtrip::{
-    connect, create_slot, drop_slot, get_changes_v2, start_postgres,
+    AppSchema, UsersTable, connect, create_slot, drop_slot, get_changes_v2, start_postgres,
 };
-use sqlite_diff_rs::wal2json::{parse_v2, Action, Wal2Json};
-use sqlite_diff_rs::{PatchSet, SimpleTable, TypeMap, UuidBlob16Decoder};
+use sqlite_diff_rs::wal2json::{Action, Wal2Json, parse_v2};
+use sqlite_diff_rs::{PatchSet, TypeMap, UuidBlob16Decoder};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct UserRow {
@@ -59,8 +59,8 @@ CREATE TABLE users (\
 )";
 
 fn spin_sqlite() -> SqliteConnection {
-    let mut conn = SqliteConnection::establish(":memory:")
-        .expect("Failed to open in-memory SQLite");
+    let mut conn =
+        SqliteConnection::establish(":memory:").expect("Failed to open in-memory SQLite");
     sql_query(SQLITE_DDL)
         .execute(&mut conn)
         .expect("Failed to apply SQLite DDL");
@@ -111,15 +111,11 @@ async fn wal2json_insert_roundtrip_e2e() {
         .find(|msg| msg.action == Action::I)
         .expect("Expected INSERT message from wal2json");
 
-    // Digest via the new schema-aware API.
-    let schema = SimpleTable::new(
-        "users",
-        &["id", "active", "handle", "price", "ts", "metadata"],
-        &[0],
-    );
+    // Digest via the unified schema-aware API.
+    let schema = AppSchema::default();
     let types = make_type_map();
-    let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
-        .digest_wal2json_v2(&insert_msg, &schema, &types)
+    let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
+        .digest(&insert_msg, &schema, &types)
         .expect("Failed to digest wal2json insert");
     let patchset_bytes: Vec<u8> = patchset.build();
 

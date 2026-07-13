@@ -1,4 +1,4 @@
-//! Phase 3 tests for `RealDecoder`.
+//! Tests for `RealDecoder`.
 //!
 //! Cross-format contract: `RealDecoder::decode(payload)` returns
 //! `Value::Real(f)` for floating-point wire values, `Value::Null` for

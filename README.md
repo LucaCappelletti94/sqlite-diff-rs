@@ -48,23 +48,15 @@ let bytes: Vec<u8> = patchset.into();
 
 ### Schema-aware CDC ingest (0.2.0+)
 
-Convert `pg_walstream`, `wal2json`, or `maxwell` wire events into a `PatchSet` via a shared decoder registry.
+`builder.digest(&event, &schema, &adapter)` folds one wire event (from `pg_walstream`, `wal2json`, or `maxwell`) into a builder. Same call site for every source.
 
 ```rust,ignore
-use sqlite_diff_rs::{PatchSet, SimpleTable, TypeMap, UuidBlob16Decoder};
-use sqlite_diff_rs::wal2json::Wal2Json;
-
-let schema = SimpleTable::new("users", &["id", "handle"], &[0]);
-
-let mut types = TypeMap::<Wal2Json, String, Vec<u8>>::defaults();
-types.register(alloc::sync::Arc::from("uuid"), UuidBlob16Decoder);
-
-let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
-    .digest_wal2json_v2(&msg, &schema, &types)?;
+let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
+    .digest(&msg, &schema, &types)?;
 let bytes: Vec<u8> = patchset.build();
 ```
 
-`TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, decimals, temporals, and JSON. Users register UUID and custom types explicitly. See `docs/schema-aware-forward-conversion.md` for the full design.
+The schema type implements `WireSchema<Src>` and its tables implement `WireColumnTypes<Src>`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, decimals, temporals, and JSON.
 
 ## Features
 

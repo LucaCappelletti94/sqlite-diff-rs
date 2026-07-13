@@ -1,4 +1,4 @@
-//! Phase 6 tests for `UuidBlob16Decoder` and `UuidText36Decoder`.
+//! Tests for `UuidBlob16Decoder` and `UuidText36Decoder`.
 //!
 //! Cross-format contract: both decoders accept 36-character hyphenated
 //! and braced `{...}` UUID forms. `UuidBlob16Decoder` produces

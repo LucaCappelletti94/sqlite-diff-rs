@@ -581,6 +581,32 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     }
 }
 
+// Unified digest entry point for wire events (0.2.0+).
+
+impl<F, T, S, B> DiffSetBuilder<F, T, S, B>
+where
+    F: Format<S, B>,
+    T: crate::schema::NamedColumns,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+{
+    /// Digest one CDC wire event, resolving each affected table via
+    /// `schema` and decoding column payloads via `adapter`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `E::Error` reports (per-source `ConversionError`).
+    pub fn digest<E, Sch, A>(self, event: &E, schema: &Sch, adapter: &A) -> Result<Self, E::Error>
+    where
+        E: crate::wire::Digestable<F, T, S, B>,
+        Sch: crate::wire::WireSchema<E::Src, Table = T>,
+        A: crate::wire::WireAdapter<E::Src, S, B>,
+        T: crate::wire::WireColumnTypes<E::Src>,
+    {
+        event.digest_into(self, schema, adapter)
+    }
+}
+
 // ============================================================================
 // DiffOps trait: unified insert / delete / update for DiffSetBuilder & DiffSet
 // ============================================================================

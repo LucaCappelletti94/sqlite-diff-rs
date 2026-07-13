@@ -20,9 +20,7 @@ pub enum DecodeError {
         column: String,
     },
 
-    /// The decoder skeleton exists but its implementation is populated
-    /// in a later phase. Only reachable from the Phase 0 scaffold before
-    /// the phase that owns the decoder has landed.
+    /// The decoder skeleton exists but its implementation is not yet populated.
     #[error("decoder {decoder} is not yet implemented")]
     NotYetImplemented {
         /// The unpopulated decoder's type name.

@@ -1,4 +1,4 @@
-//! Phase 1 tests for `BoolDecoder`.
+//! Tests for `BoolDecoder`.
 //!
 //! Cross-format contract: `BoolDecoder::decode(payload)` returns
 //! `Value::Integer(1)` for boolean-true wire values and

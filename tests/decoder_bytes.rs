@@ -1,4 +1,4 @@
-//! Phase 5 tests for BYTEA / blob decoders.
+//! Tests for BYTEA and blob decoders.
 //!
 //! - `PgByteaBinaryDecoder` (pg_walstream): handles both `ColumnValue::Binary`
 //!   (pass-through) and `ColumnValue::Text` with `\xHEX` prefix.

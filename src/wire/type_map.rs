@@ -99,8 +99,6 @@ impl<Src: WireSource, S, B> WireAdapter<Src, S, B> for TypeMap<Src, S, B> {
 ///
 /// Call as `TypeMap::<PgWalstream, String, Vec<u8>>::defaults()`.
 ///
-/// The Phase 0 impl returns an empty map. Later phases (Bool, Int, ...)
-/// grow the defaults incrementally.
 pub trait TypeMapDefaults<S, B>: WireSource + Sized {
     /// Registry pre-populated with every default mapping for this source.
     fn defaults() -> TypeMap<Self, S, B>;

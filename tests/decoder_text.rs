@@ -1,4 +1,4 @@
-//! Phase 4 tests for `TextDecoder`.
+//! Tests for `TextDecoder`.
 //!
 //! Cross-format contract: `TextDecoder::decode(payload)` preserves the
 //! wire text verbatim as `Value::Text(String)`. Null pass-through.

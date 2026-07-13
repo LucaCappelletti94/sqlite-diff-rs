@@ -47,23 +47,6 @@ path = "fuzz_targets/differential.rs"
 test = false
 doc = false
 
-[[bin]]
-name = "wal2json"
-path = "fuzz_targets/wal2json.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "pg_walstream"
-path = "fuzz_targets/pg_walstream.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "maxwell"
-path = "fuzz_targets/maxwell.rs"
-test = false
-doc = false
 
 [[bin]]
 name = "wire_pg_walstream"

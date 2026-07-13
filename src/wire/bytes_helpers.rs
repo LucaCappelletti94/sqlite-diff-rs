@@ -1,4 +1,4 @@
-//! Byte-decoding helpers shared by the Phase 5 decoders.
+//! Byte-decoding helpers for binary and hex escape payloads.
 //!
 //! Two small `no_std`-clean routines: PG `\xHEX` decode for text-mode
 //! BYTEA, and standard base64 (RFC 4648) decode for MySQL wire values
