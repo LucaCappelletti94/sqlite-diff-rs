@@ -11,7 +11,7 @@ A Rust library for building SQLite [changeset and patchset](https://www.sqlite.o
 
 ## Overview
 
-SQLite's [session extension](https://www.sqlite.org/session.html) defines a binary format for tracking and applying database changes. This crate constructs that binary data without linking SQLite, which is useful for offline sync (build a changeset on a server and apply it on a SQLite client), CDC pipelines (produce the input expected by `sqlite3_changeset_apply()` from your own change events), cross-database sync (convert PostgreSQL change streams from wal2json, Debezium, or Maxwell into the SQLite format), and generating test fixtures for changeset processing code.
+SQLite's [session extension](https://www.sqlite.org/session.html) defines a binary format for tracking and applying database changes. This crate constructs that binary data without linking SQLite, which is useful for offline sync (build a changeset on a server and apply it on a SQLite client), CDC pipelines (produce the input expected by `sqlite3_changeset_apply()` from your own change events), cross-database sync (convert PostgreSQL change streams from wal2json or Maxwell into the SQLite format), and generating test fixtures for changeset processing code.
 
 This crate is not the SQLite [`sqldiff`](https://sqlite.org/sqldiff.html) tool, which compares two existing database files. This library constructs the changeset and patchset binary format programmatically from your own change data.
 
@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = "0.1"
+sqlite-diff-rs = "0.2"
 ```
 
 ## Quick Start
@@ -46,6 +46,18 @@ let bytes: Vec<u8> = patchset.into();
 // Apply with sqlite3_changeset_apply() or sqlite3session_patchset_apply()
 ```
 
+### Schema-aware CDC ingest (0.2.0+)
+
+`builder.digest(&event, &schema, &adapter)` folds one wire event (from `pg_walstream`, `wal2json`, or `maxwell`) into a builder. Same call site for every source.
+
+```rust,ignore
+let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
+    .digest(&msg, &schema, &types)?;
+let bytes: Vec<u8> = patchset.build();
+```
+
+The schema type implements `WireSchema<Src>` and its tables implement `WireColumnTypes<Src>`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, decimals, temporals, and JSON.
+
 ## Features
 
 | Feature | Description |
@@ -53,7 +65,6 @@ let bytes: Vec<u8> = patchset.into();
 | `testing` | Enables `rusqlite` integration for differential testing |
 | `wal2json` | Parse PostgreSQL wal2json output into changesets |
 | `pg-walstream` | Integration with `pg_walstream` crate |
-| `debezium` | Parse Debezium CDC JSON events |
 | `maxwell` | Parse Maxwell CDC JSON events |
 | `diesel` | Execute patchsets as backend-generic Diesel queries via a downstream [`Adapter`] |
 
@@ -61,7 +72,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = { version = "0.1", features = ["wal2json"] }
+sqlite-diff-rs = { version = "0.2", features = ["wal2json"] }
 ```
 
 ## Binary Format Reference

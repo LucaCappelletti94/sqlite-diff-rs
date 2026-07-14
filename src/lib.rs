@@ -6,8 +6,6 @@
 extern crate alloc;
 
 pub mod builders;
-#[cfg(feature = "debezium")]
-pub mod debezium;
 #[cfg(any(test, feature = "testing"))]
 pub mod differential_testing;
 pub(crate) mod encoding;
@@ -24,6 +22,7 @@ pub mod schema;
 pub mod testing;
 #[cfg(feature = "wal2json")]
 pub mod wal2json;
+pub mod wire;
 
 // Re-export main types
 #[cfg(feature = "diesel")]
@@ -35,8 +34,15 @@ pub use builders::{
 };
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
-pub(crate) use schema::IndexableValues;
-pub use schema::{DynTable, NamedColumns, SchemaWithPK, SimpleTable};
+pub use schema::{DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable};
+pub use wire::{
+    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, DecodeError, Decoder, Digestable,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder,
+    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
+    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
+    TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, TypeMap, TypeMapDefaults,
+    UuidBlob16Decoder, UuidText36Decoder, WireAdapter, WireColumnTypes, WireSchema, WireSource,
+};
 
 // Type aliases for common use cases
 /// Type alias for `Update<T, ChangesetFormat, S, B>`.

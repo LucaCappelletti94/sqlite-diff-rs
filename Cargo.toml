@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-diff-rs"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Build SQLite changeset and patchset binary formats programmatically, without SQLite"
@@ -18,10 +18,8 @@ members = [
 	"compile-bench",
 	"integration-tests/payload-size-bench",
 	"integration-tests/apply-bench-report",
-	"integration-tests/wal2json",
-	"integration-tests/pg-walstream",
 ]
-exclude = ["integration-tests/diesel-e2e"]
+exclude = ["integration-tests/diesel-e2e", "integration-tests/schema-aware-roundtrip"]
 
 [workspace.lints.rust]
 missing_docs = "forbid"
@@ -81,7 +79,6 @@ default = []
 testing = ["dep:rusqlite", "dep:arbitrary"]
 wal2json = ["dep:serde", "dep:serde_json"]
 pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
-debezium = ["dep:serde", "dep:serde_json"]
 maxwell = ["dep:serde", "dep:serde_json"]
 diesel = ["dep:diesel"]
 
@@ -97,26 +94,6 @@ required-features = ["testing"]
 name = "apply_benchmark"
 harness = false
 required-features = ["testing"]
-
-[[bench]]
-name = "wal2json_benchmark"
-harness = false
-required-features = ["wal2json"]
-
-[[bench]]
-name = "pg_walstream_benchmark"
-harness = false
-required-features = ["pg-walstream"]
-
-[[bench]]
-name = "debezium_benchmark"
-harness = false
-required-features = ["debezium"]
-
-[[bench]]
-name = "maxwell_benchmark"
-harness = false
-required-features = ["maxwell"]
 
 [profile.release]
 lto = true

@@ -885,368 +885,156 @@ pub fn run_crash_dir_regression(
 }
 
 // ---------------------------------------------------------------------------
-// wal2json fuzzing helpers (requires `wal2json` feature)
+// Wire adapter fuzz helpers (0.2.0+)
 // ---------------------------------------------------------------------------
 
-/// Test wal2json parsing and conversion: parse JSON, convert to changeset operations.
-///
-/// Exercises four properties: parsing arbitrary bytes as JSON does not panic,
-/// parsing valid JSON as a wal2json message does not panic, converting parsed
-/// messages to changeset operations does not panic, and a serde round-trip
-/// produces an equal structure. Returns early (no panic) if the input cannot
-/// be parsed as valid JSON.
-///
-/// # Panics
-///
-/// Panics if serde round-trip produces data that doesn't match the original
-/// parsed structure.
-#[cfg(feature = "wal2json")]
-pub fn test_wal2json(input: &[u8]) {
-    use crate::SimpleTable;
-    use crate::wal2json::{Action, MessageV2, TransactionV1, parse_v1, parse_v2};
-    use crate::{ChangeDelete, Insert};
-
-    // Try to interpret as UTF-8 JSON
-    let Ok(json_str) = core::str::from_utf8(input) else {
-        return;
-    };
-
-    // Try parsing as v2 format (per-tuple JSON)
-    if let Ok(msg) = parse_v2(json_str) {
-        // Round-trip through serde
-        let serialized = serde_json::to_string(&msg);
-        if let Ok(json) = serialized {
-            let reparsed: Result<MessageV2, _> = serde_json::from_str(&json);
-            if let Ok(reparsed) = reparsed {
-                assert_eq!(msg.action, reparsed.action);
-                assert_eq!(msg.table, reparsed.table);
-                assert_eq!(msg.schema, reparsed.schema);
-            }
-        }
-
-        // Try conversion to changeset operations (if it has table info)
-        if let Some(ref table_name) = msg.table {
-            // Build a generic schema for testing conversion
-            let col_names: Vec<&str> = msg.columns.as_ref().map_or_else(
-                || {
-                    msg.identity.as_ref().map_or_else(Vec::new, |cols| {
-                        cols.iter().map(|c| c.name.as_str()).collect()
-                    })
-                },
-                |cols| cols.iter().map(|c| c.name.as_str()).collect(),
-            );
-
-            if !col_names.is_empty() {
-                let table = SimpleTable::new(table_name, &col_names, &[0]);
-
-                match msg.action {
-                    Action::I => {
-                        let _: Result<Insert<_, String, Vec<u8>>, _> = (&msg, &table).try_into();
-                    }
-                    Action::D => {
-                        let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
-                            (&msg, &table).try_into();
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    // Try parsing as v1 format (transaction-level JSON)
-    if let Ok(tx) = parse_v1(json_str) {
-        // Round-trip through serde
-        let serialized = serde_json::to_string(&tx);
-        if let Ok(json) = serialized {
-            let reparsed: Result<TransactionV1, _> = serde_json::from_str(&json);
-            if let Ok(reparsed) = reparsed {
-                assert_eq!(tx.change.len(), reparsed.change.len());
-            }
-        }
-
-        // Try conversion for each change
-        for change in &tx.change {
-            if !change.columnnames.is_empty() {
-                let col_refs: Vec<&str> = change.columnnames.iter().map(String::as_str).collect();
-                let table = SimpleTable::new(&change.table, &col_refs, &[0]);
-
-                match change.kind.as_str() {
-                    "insert" => {
-                        let _: Result<Insert<_, String, Vec<u8>>, _> = (change, &table).try_into();
-                    }
-                    "delete" => {
-                        let _: Result<ChangeDelete<_, String, Vec<u8>>, _> =
-                            (change, &table).try_into();
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-/// Test wal2json with structured arbitrary input.
-///
-/// This tests the wal2json types with their `Arbitrary` implementations,
-/// ensuring serialization and conversion don't panic on any valid structure.
-#[cfg(feature = "wal2json")]
-pub fn test_wal2json_arbitrary(msg: &crate::wal2json::MessageV2) {
-    use crate::SimpleTable;
-    use crate::wal2json::Action;
-    use crate::{ChangeDelete, Insert};
-
-    // Serialize to JSON and back
-    if let Ok(json) = serde_json::to_string(msg) {
-        let _: Result<crate::wal2json::MessageV2, _> = serde_json::from_str(&json);
-    }
-
-    // Try conversion to changeset operations
-    if let Some(ref table_name) = msg.table {
-        let col_names: Vec<&str> = msg.columns.as_ref().map_or_else(
-            || {
-                msg.identity.as_ref().map_or_else(Vec::new, |cols| {
-                    cols.iter().map(|c| c.name.as_str()).collect()
-                })
-            },
-            |cols| cols.iter().map(|c| c.name.as_str()).collect(),
-        );
-
-        if !col_names.is_empty() {
-            let table = SimpleTable::new(table_name, &col_names, &[0]);
-
-            match msg.action {
-                Action::I => {
-                    let _: Result<Insert<_, String, Vec<u8>>, _> = (msg, &table).try_into();
-                }
-                Action::D => {
-                    let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (msg, &table).try_into();
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// pg_walstream fuzz testing
-// ---------------------------------------------------------------------------
-
-/// Test `pg_walstream` event parsing and conversion from arbitrary bytes.
-///
-/// Parses bytes as UTF-8 JSON, deserializes as `EventType`, verifies the
-/// serde round-trip, and attempts conversion to changeset operations.
-/// Returns early on invalid input without panicking.
+/// Feed arbitrary bytes into every built-in decoder for the
+/// `pg_walstream` source via [`TypeMap::defaults`](crate::wire::TypeMap::defaults). Asserts nothing
+/// panics.
 #[cfg(feature = "pg-walstream")]
-pub fn test_pg_walstream(input: &[u8]) {
-    use crate::SimpleTable;
-    use crate::pg_walstream::EventType;
-    use crate::{ChangeDelete, Insert};
+pub fn test_wire_pg_walstream(input: &[u8]) {
+    use crate::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
 
-    // Try to interpret as UTF-8 JSON
-    let Ok(json_str) = core::str::from_utf8(input) else {
+    // Text-mode ColumnValue is the more common production wire shape
+    // and covers every decoder path that touches vendored code
+    // (hex-escape, base64, UUID parse, int/real parse, JSON canon).
+    let Ok(text) = core::str::from_utf8(input) else {
         return;
     };
+    let text_cv = ColumnValue::text(text);
 
-    // Try parsing as EventType
-    let Ok(event) = serde_json::from_str::<EventType>(json_str) else {
-        return;
-    };
+    let types: TypeMap<PgWalstream, alloc::string::String, Vec<u8>> = TypeMap::defaults();
 
-    // Try conversion to changeset operations based on event type
-    match event {
-        EventType::Insert {
-            ref table,
-            ref data,
-            ..
-        } => {
-            if !data.is_empty() {
-                let names: alloc::vec::Vec<alloc::string::String> =
-                    data.iter().map(|(k, _)| k.as_ref().to_string()).collect();
-                let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
-                let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
-                // Clone event since we need ownership
-                let event_clone = event.clone();
-                let _: Result<Insert<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
-            }
-        }
-        EventType::Delete {
-            ref table,
-            ref old_data,
-            ..
-        } if !old_data.is_empty() => {
-            let names: alloc::vec::Vec<alloc::string::String> = old_data
-                .iter()
-                .map(|(k, _)| k.as_ref().to_string())
-                .collect();
-            let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
-            let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
-            let event_clone = event.clone();
-            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event_clone, schema).try_into();
-        }
-        _ => {}
+    for oid in [
+        16u32, 21, 23, 20, 700, 701, 25, 1043, 1042, 19, 17, 1700, 1114, 1184, 1082, 1083, 1186,
+        114, 3802,
+    ] {
+        let _ = types.decode(PgWalstreamColumn {
+            column_name: "c",
+            oid,
+            type_modifier: -1,
+            data: &text_cv,
+        });
     }
 }
 
-/// Test `pg_walstream` `ChangeEvent` parsing and conversion from arbitrary bytes.
-#[cfg(feature = "pg-walstream")]
-pub fn test_pg_walstream_change_event(input: &[u8]) {
-    use crate::SimpleTable;
-    use crate::pg_walstream::{ChangeEvent, EventType};
-    use crate::{ChangeDelete, Insert};
+/// Feed arbitrary bytes as a JSON string into every wal2json type-key
+/// via [`TypeMap::defaults`](crate::wire::TypeMap::defaults). Also tries the input as raw JSON.
+#[cfg(feature = "wal2json")]
+pub fn test_wire_wal2json(input: &[u8]) {
+    use crate::wal2json::{Wal2Json, Wal2JsonColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
 
-    // Try to interpret as UTF-8 JSON
-    let Ok(json_str) = core::str::from_utf8(input) else {
+    let Ok(text) = core::str::from_utf8(input) else {
         return;
     };
 
-    // Try parsing as ChangeEvent
-    let Ok(event) = serde_json::from_str::<ChangeEvent>(json_str) else {
-        return;
-    };
+    // Two payload flavors: raw string (many decoders accept this) and
+    // parsed-JSON (bool/int/real/json flavors need this).
+    let string_val = serde_json::Value::String(text.into());
+    let parsed_val =
+        serde_json::from_str::<serde_json::Value>(text).unwrap_or(serde_json::Value::Null);
 
-    // Try conversion to changeset operations based on event type
-    match &event.event_type {
-        EventType::Insert { table, data, .. } => {
-            if !data.is_empty() {
-                let names: alloc::vec::Vec<alloc::string::String> =
-                    data.iter().map(|(k, _)| k.as_ref().to_string()).collect();
-                let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
-                let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
-                let _: Result<Insert<_, String, Vec<u8>>, _> = (event, schema).try_into();
-            }
-        }
-        EventType::Delete {
-            table, old_data, ..
-        } if !old_data.is_empty() => {
-            let names: alloc::vec::Vec<alloc::string::String> = old_data
-                .iter()
-                .map(|(k, _)| k.as_ref().to_string())
-                .collect();
-            let col_refs: alloc::vec::Vec<&str> = names.iter().map(String::as_str).collect();
-            let schema = SimpleTable::new(table.as_ref(), &col_refs, &[0]);
-            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (event, schema).try_into();
-        }
-        _ => {}
-    }
-}
+    let types: TypeMap<Wal2Json, alloc::string::String, Vec<u8>> = TypeMap::defaults();
 
-// ---------------------------------------------------------------------------
-// Debezium fuzz testing
-// ---------------------------------------------------------------------------
-
-/// Test Debezium envelope parsing and conversion from arbitrary bytes.
-///
-/// Parses bytes as UTF-8 JSON, deserializes as `Envelope<serde_json::Value>`,
-/// verifies the serde round-trip, and attempts conversion to changeset
-/// operations based on the operation type. Returns early on invalid input
-/// without panicking.
-#[cfg(feature = "debezium")]
-pub fn test_debezium(input: &[u8]) {
-    use crate::SimpleTable;
-    use crate::debezium::{Envelope, Op, parse};
-    use crate::{ChangeDelete, ChangeUpdate, Insert};
-
-    // Try to interpret as UTF-8 JSON
-    let Ok(json_str) = core::str::from_utf8(input) else {
-        return;
-    };
-
-    // Try parsing as Debezium Envelope
-    let Ok(envelope) = parse::<serde_json::Value>(json_str) else {
-        return;
-    };
-
-    // Round-trip through serde
-    if let Ok(json) = serde_json::to_string(&envelope) {
-        let _: Result<Envelope<serde_json::Value>, _> = serde_json::from_str(&json);
-    }
-
-    // Extract column names from the after or before data for schema building
-    let col_names: Vec<String> = envelope
-        .after
-        .as_ref()
-        .or(envelope.before.as_ref())
-        .and_then(|v| v.as_object())
-        .map(|obj| obj.keys().cloned().collect())
-        .unwrap_or_default();
-
-    if col_names.is_empty() {
-        return;
-    }
-
-    // Get table name from source metadata
-    let table_name = envelope.source.table.as_deref().unwrap_or("test_table");
-
-    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
-    let table = SimpleTable::new(table_name, &col_refs, &[0]);
-
-    // Try conversion based on operation type
-    match envelope.op {
-        Op::Create | Op::Read => {
-            let _: Result<Insert<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
-        }
-        Op::Update => {
-            let _: Result<ChangeUpdate<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
-        }
-        Op::Delete => {
-            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&envelope, &table).try_into();
-        }
-        Op::Truncate | Op::Message => {
-            // These operations don't have direct changeset equivalents
+    for key in [
+        "boolean",
+        "smallint",
+        "integer",
+        "bigint",
+        "real",
+        "double precision",
+        "float4",
+        "float8",
+        "text",
+        "varchar",
+        "character varying",
+        "character",
+        "char",
+        "name",
+        "bytea",
+        "numeric",
+        "decimal",
+        "timestamp",
+        "timestamp without time zone",
+        "timestamp with time zone",
+        "date",
+        "time",
+        "time without time zone",
+        "time with time zone",
+        "interval",
+        "json",
+        "jsonb",
+    ] {
+        for value in [&string_val, &parsed_val] {
+            let _ = types.decode(Wal2JsonColumn {
+                column_name: "c",
+                pg_type_name: key,
+                value,
+            });
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Maxwell fuzz testing
-// ---------------------------------------------------------------------------
-
-/// Test Maxwell message parsing and conversion from arbitrary bytes.
-///
-/// Parses bytes as UTF-8 JSON, deserializes as `Message`, verifies the serde
-/// round-trip, and attempts conversion to changeset operations based on the
-/// operation type. Returns early on invalid input without panicking.
+/// Feed arbitrary bytes as a JSON string into every maxwell type-key
+/// via [`TypeMap::defaults`](crate::wire::TypeMap::defaults).
 #[cfg(feature = "maxwell")]
-pub fn test_maxwell(input: &[u8]) {
-    use crate::SimpleTable;
-    use crate::maxwell::{Message, OpType, parse};
-    use crate::{ChangeDelete, ChangeUpdate, Insert};
+pub fn test_wire_maxwell(input: &[u8]) {
+    use crate::maxwell::{Maxwell, MaxwellColumn};
+    use crate::wire::TypeMap;
+    use crate::wire::WireAdapter;
 
-    // Try to interpret as UTF-8 JSON
-    let Ok(json_str) = core::str::from_utf8(input) else {
+    let Ok(text) = core::str::from_utf8(input) else {
         return;
     };
 
-    // Try parsing as Maxwell Message
-    let Ok(message) = parse(json_str) else {
-        return;
-    };
+    let string_val = serde_json::Value::String(text.into());
+    let parsed_val =
+        serde_json::from_str::<serde_json::Value>(text).unwrap_or(serde_json::Value::Null);
 
-    // Round-trip through serde
-    if let Ok(json) = serde_json::to_string(&message) {
-        let _: Result<Message, _> = serde_json::from_str(&json);
-    }
+    let types: TypeMap<Maxwell, alloc::string::String, Vec<u8>> = TypeMap::defaults();
 
-    // Extract column names from the data
-    let col_names: Vec<String> = message.data.keys().cloned().collect();
-
-    if col_names.is_empty() {
-        return;
-    }
-
-    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
-    let table = SimpleTable::new(&message.table, &col_refs, &[0]);
-
-    // Try conversion based on operation type
-    match message.op_type {
-        OpType::Insert => {
-            let _: Result<Insert<_, String, Vec<u8>>, _> = (&message, &table).try_into();
-        }
-        OpType::Update => {
-            let _: Result<ChangeUpdate<_, String, Vec<u8>>, _> = (&message, &table).try_into();
-        }
-        OpType::Delete => {
-            let _: Result<ChangeDelete<_, String, Vec<u8>>, _> = (&message, &table).try_into();
+    for key in [
+        "tinyint(1)",
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "int",
+        "bigint",
+        "bigint unsigned",
+        "float",
+        "double",
+        "real",
+        "char",
+        "varchar",
+        "tinytext",
+        "text",
+        "mediumtext",
+        "longtext",
+        "binary",
+        "varbinary",
+        "tinyblob",
+        "blob",
+        "mediumblob",
+        "longblob",
+        "decimal",
+        "numeric",
+        "datetime",
+        "timestamp",
+        "date",
+        "time",
+        "year",
+        "json",
+    ] {
+        for value in [&string_val, &parsed_val] {
+            let _ = types.decode(MaxwellColumn {
+                column_name: "c",
+                mysql_type: Some(key),
+                value,
+            });
         }
     }
 }
