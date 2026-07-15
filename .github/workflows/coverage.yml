@@ -34,7 +34,7 @@ jobs:
         run: cargo llvm-cov --manifest-path integration-tests/diesel-e2e/Cargo.toml --branch --test sqlite_e2e --lcov --output-path lcov-diesel-e2e.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: lcov-main.info,lcov-diesel-e2e.info
           fail_ci_if_error: false
