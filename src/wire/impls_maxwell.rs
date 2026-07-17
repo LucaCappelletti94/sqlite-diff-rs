@@ -12,6 +12,7 @@ use super::decoder::{
 };
 use super::error::DecodeError;
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::wire_type::WireType;
 use crate::encoding::Value;
 use crate::maxwell::{Maxwell, MaxwellColumn};
 
@@ -429,42 +430,24 @@ where
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
+        // `Int` routes through `Int64OverflowToTextDecoder` so MySQL
+        // `bigint unsigned` values above `i64::MAX` are preserved as
+        // base-10 text rather than erroring. In-range integers still
+        // produce `Value::Integer`.
         TypeMap::new()
-            .with(alloc::sync::Arc::from("tinyint(1)"), BoolDecoder)
-            .with(alloc::sync::Arc::from("tinyint"), IntDecoder)
-            .with(alloc::sync::Arc::from("smallint"), IntDecoder)
-            .with(alloc::sync::Arc::from("mediumint"), IntDecoder)
-            .with(alloc::sync::Arc::from("int"), IntDecoder)
-            .with(alloc::sync::Arc::from("bigint"), IntDecoder)
-            .with(alloc::sync::Arc::from("float"), RealDecoder)
-            .with(alloc::sync::Arc::from("double"), RealDecoder)
-            .with(alloc::sync::Arc::from("real"), RealDecoder)
-            .with(alloc::sync::Arc::from("char"), TextDecoder)
-            .with(alloc::sync::Arc::from("varchar"), TextDecoder)
-            .with(alloc::sync::Arc::from("tinytext"), TextDecoder)
-            .with(alloc::sync::Arc::from("text"), TextDecoder)
-            .with(alloc::sync::Arc::from("mediumtext"), TextDecoder)
-            .with(alloc::sync::Arc::from("longtext"), TextDecoder)
-            .with(alloc::sync::Arc::from("binary"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("varbinary"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("tinyblob"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("blob"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("mediumblob"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("longblob"), MySqlBinaryDecoder)
-            .with(alloc::sync::Arc::from("decimal"), DecimalTextDecoder)
-            .with(alloc::sync::Arc::from("numeric"), DecimalTextDecoder)
-            .with(alloc::sync::Arc::from("datetime"), TimestampVerbatimDecoder)
-            .with(
-                alloc::sync::Arc::from("timestamp"),
-                TimestampVerbatimDecoder,
-            )
-            .with(alloc::sync::Arc::from("date"), DateVerbatimDecoder)
-            .with(alloc::sync::Arc::from("time"), TimeVerbatimDecoder)
-            .with(alloc::sync::Arc::from("year"), TimeVerbatimDecoder)
-            .with(alloc::sync::Arc::from("json"), JsonVerbatimDecoder)
-            .with(
-                alloc::sync::Arc::from("bigint unsigned"),
-                Int64OverflowToTextDecoder,
-            )
+            .with(WireType::Bool, BoolDecoder)
+            .with(WireType::Int, Int64OverflowToTextDecoder)
+            .with(WireType::Real, RealDecoder)
+            .with(WireType::Text, TextDecoder)
+            .with(WireType::Bytes, MySqlBinaryDecoder)
+            .with(WireType::Uuid, UuidText36Decoder)
+            .with(WireType::Decimal, DecimalTextDecoder)
+            .with(WireType::Timestamp, TimestampVerbatimDecoder)
+            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
+            .with(WireType::Date, DateVerbatimDecoder)
+            .with(WireType::Time, TimeVerbatimDecoder)
+            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Json, JsonVerbatimDecoder)
+            .with(WireType::Jsonb, JsonVerbatimDecoder)
     }
 }

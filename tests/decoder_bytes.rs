@@ -19,7 +19,7 @@ use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
     DecodeError, MySqlBinaryDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, TypeMap, Value,
-    WireAdapter,
+    WireAdapter, WireType,
 };
 
 // -- PgByteaBinaryDecoder: pg_walstream --------------------------------------
@@ -29,8 +29,7 @@ fn pg_bytea_binary_decoder_pass_through_binary() {
     let cv = ColumnValue::binary_bytes(Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "b",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &cv,
     }
     .decoded_by(&PgByteaBinaryDecoder)
@@ -43,8 +42,7 @@ fn pg_bytea_binary_decoder_hex_escape_text_mode() {
     let cv = ColumnValue::text("\\xdeadbeef");
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "b",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &cv,
     }
     .decoded_by(&PgByteaBinaryDecoder)
@@ -57,8 +55,7 @@ fn pg_bytea_binary_decoder_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "b",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &cv,
     }
     .decoded_by(&PgByteaBinaryDecoder)
@@ -71,8 +68,7 @@ fn pg_bytea_binary_decoder_rejects_malformed_hex() {
     let cv = ColumnValue::text("\\xzz");
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "b",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &cv,
     }
     .decoded_by(&PgByteaBinaryDecoder);
@@ -89,7 +85,7 @@ fn pg_bytea_text_mode_decoder_wal2json_hex() {
     let s = serde_json::Value::String("\\xcafef00d".into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "b",
-        pg_type_name: "bytea",
+        wire_type: WireType::Bytes,
         value: &s,
     }
     .decoded_by(&PgByteaTextModeDecoder)
@@ -102,7 +98,7 @@ fn pg_bytea_text_mode_decoder_wal2json_null() {
     let s = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "b",
-        pg_type_name: "bytea",
+        wire_type: WireType::Bytes,
         value: &s,
     }
     .decoded_by(&PgByteaTextModeDecoder)
@@ -118,7 +114,7 @@ fn mysql_binary_decoder_maxwell_base64() {
     let s = serde_json::Value::String("3q2+7w==".into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "b",
-        mysql_type: Some("blob"),
+        wire_type: WireType::Bytes,
         value: &s,
     }
     .decoded_by(&MySqlBinaryDecoder)
@@ -131,7 +127,7 @@ fn mysql_binary_decoder_maxwell_empty_string() {
     let s = serde_json::Value::String(String::new());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "b",
-        mysql_type: Some("blob"),
+        wire_type: WireType::Bytes,
         value: &s,
     }
     .decoded_by(&MySqlBinaryDecoder)
@@ -144,7 +140,7 @@ fn mysql_binary_decoder_maxwell_null() {
     let s = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "b",
-        mysql_type: Some("blob"),
+        wire_type: WireType::Bytes,
         value: &s,
     }
     .decoded_by(&MySqlBinaryDecoder)
@@ -165,8 +161,7 @@ fn type_map_defaults_route_byte_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "b",
-            oid: 17,
-            type_modifier: -1,
+            wire_type: WireType::Bytes,
             data: &cv_bin,
         })
         .unwrap();
@@ -176,8 +171,7 @@ fn type_map_defaults_route_byte_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "b",
-            oid: 17,
-            type_modifier: -1,
+            wire_type: WireType::Bytes,
             data: &cv_txt,
         })
         .unwrap();
@@ -188,7 +182,7 @@ fn type_map_defaults_route_byte_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "b",
-            pg_type_name: "bytea",
+            wire_type: WireType::Bytes,
             value: &s,
         })
         .unwrap();
@@ -199,7 +193,7 @@ fn type_map_defaults_route_byte_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "b",
-            mysql_type: Some("blob"),
+            wire_type: WireType::Bytes,
             value: &s,
         })
         .unwrap();

@@ -23,7 +23,9 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{JsonCanonicalDecoder, JsonVerbatimDecoder, TypeMap, Value, WireAdapter};
+use sqlite_diff_rs::{
+    JsonCanonicalDecoder, JsonVerbatimDecoder, TypeMap, Value, WireAdapter, WireType,
+};
 
 // -- JsonVerbatimDecoder -----------------------------------------------------
 
@@ -33,8 +35,7 @@ fn json_verbatim_pg_walstream_text() {
     let cv = ColumnValue::text(wire);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "data",
-        oid: 114,
-        type_modifier: -1,
+        wire_type: WireType::Json,
         data: &cv,
     }
     .decoded_by(&JsonVerbatimDecoder)
@@ -47,7 +48,7 @@ fn json_verbatim_wal2json_object() {
     let obj: serde_json::Value = serde_json::from_str("{\"k\": 1}").unwrap();
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "json",
+        wire_type: WireType::Json,
         value: &obj,
     }
     .decoded_by(&JsonVerbatimDecoder)
@@ -61,7 +62,7 @@ fn json_verbatim_wal2json_string_pass_through() {
     let s = serde_json::Value::String("{\"k\": 1}".into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "json",
+        wire_type: WireType::Json,
         value: &s,
     }
     .decoded_by(&JsonVerbatimDecoder)
@@ -75,8 +76,7 @@ fn json_verbatim_null_pass_through() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "data",
-        oid: 114,
-        type_modifier: -1,
+        wire_type: WireType::Json,
         data: &cv,
     }
     .decoded_by(&JsonVerbatimDecoder)
@@ -91,7 +91,7 @@ fn json_canonical_sorts_keys() {
     let unsorted: serde_json::Value = serde_json::from_str("{\"z\": 1, \"a\": 2}").unwrap();
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "jsonb",
+        wire_type: WireType::Jsonb,
         value: &unsorted,
     }
     .decoded_by(&JsonCanonicalDecoder)
@@ -105,7 +105,7 @@ fn json_canonical_recurses_into_nested_objects() {
         serde_json::from_str("{\"z\": {\"b\": 1, \"a\": 2}, \"a\": [3, 4]}").unwrap();
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "jsonb",
+        wire_type: WireType::Jsonb,
         value: &src,
     }
     .decoded_by(&JsonCanonicalDecoder)
@@ -121,7 +121,7 @@ fn json_canonical_string_source_reparses_and_sorts() {
     let s = serde_json::Value::String("{\"z\":1,\"a\":2}".into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "jsonb",
+        wire_type: WireType::Jsonb,
         value: &s,
     }
     .decoded_by(&JsonCanonicalDecoder)
@@ -142,14 +142,14 @@ fn json_discriminator_verbatim_vs_canonical_string_source() {
 
     let verbatim: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "jsonb",
+        wire_type: WireType::Jsonb,
         value: &raw,
     }
     .decoded_by(&JsonVerbatimDecoder)
     .unwrap();
     let canonical: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "data",
-        pg_type_name: "jsonb",
+        wire_type: WireType::Jsonb,
         value: &raw,
     }
     .decoded_by(&JsonCanonicalDecoder)
@@ -173,8 +173,7 @@ fn defaults_route_json_types_verbatim() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "data",
-            oid: 114,
-            type_modifier: -1,
+            wire_type: WireType::Json,
             data: &cv,
         })
         .unwrap();
@@ -185,7 +184,7 @@ fn defaults_route_json_types_verbatim() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "data",
-            pg_type_name: "json",
+            wire_type: WireType::Json,
             value: &obj,
         })
         .unwrap();
@@ -196,7 +195,7 @@ fn defaults_route_json_types_verbatim() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "data",
-            mysql_type: Some("json"),
+            wire_type: WireType::Json,
             value: &s,
         })
         .unwrap();

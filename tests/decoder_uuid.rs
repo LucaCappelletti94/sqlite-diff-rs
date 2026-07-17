@@ -6,24 +6,23 @@
 //! verbatim. Null pass-through. Malformed UUIDs raise
 //! `DecodeError::InvalidUuid`.
 //!
-//! UUIDs are deliberately NOT in `TypeMap::defaults()` because there
-//! is no correct default shape. Users register explicitly per column.
-//! The dispatch discriminator test proves per-column trait-generic
-//! selection.
+//! `TypeMap::defaults()` registers `WireType::Uuid` with the verbatim
+//! `UuidText36Decoder`. A user who wants the 16-byte blob shape
+//! registers `UuidBlob16Decoder` under the same key instead: the shape
+//! is a registration-time decoder-policy choice, not a separate key.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::maxwell::MaxwellColumn;
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
-    DecodeError, TypeMap, UuidBlob16Decoder, UuidText36Decoder, Value, WireAdapter,
+    DecodeError, TypeMap, UuidBlob16Decoder, UuidText36Decoder, Value, WireAdapter, WireType,
 };
 
 const UUID_HYPHENATED: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -40,8 +39,7 @@ fn uuid_blob16_pg_walstream_hyphenated() {
     let cv = ColumnValue::text(UUID_HYPHENATED);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     }
     .decoded_by(&UuidBlob16Decoder)
@@ -55,8 +53,7 @@ fn uuid_blob16_pg_walstream_braced_and_uppercase() {
         let cv = ColumnValue::text(form);
         let got: Value<String, Vec<u8>> = PgWalstreamColumn {
             column_name: "id",
-            oid: 2950,
-            type_modifier: -1,
+            wire_type: WireType::Uuid,
             data: &cv,
         }
         .decoded_by(&UuidBlob16Decoder)
@@ -70,8 +67,7 @@ fn uuid_blob16_pg_walstream_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     }
     .decoded_by(&UuidBlob16Decoder)
@@ -84,8 +80,7 @@ fn uuid_blob16_pg_walstream_rejects_bad_input() {
     let cv = ColumnValue::text("not a uuid");
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     }
     .decoded_by(&UuidBlob16Decoder);
@@ -102,8 +97,7 @@ fn uuid_text36_pg_walstream_hyphenated_verbatim() {
     let cv = ColumnValue::text(UUID_HYPHENATED);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     }
     .decoded_by(&UuidText36Decoder)
@@ -118,8 +112,7 @@ fn uuid_text36_pg_walstream_braced_normalized_to_36() {
     let cv = ColumnValue::text(UUID_BRACED);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     }
     .decoded_by(&UuidText36Decoder)
@@ -140,7 +133,7 @@ fn uuid_blob16_wal2json_string() {
     let s = serde_json::Value::String(UUID_HYPHENATED.into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "id",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &s,
     }
     .decoded_by(&UuidBlob16Decoder)
@@ -153,7 +146,7 @@ fn uuid_text36_wal2json_string() {
     let s = serde_json::Value::String(UUID_HYPHENATED.into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "id",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &s,
     }
     .decoded_by(&UuidText36Decoder)
@@ -168,7 +161,7 @@ fn uuid_blob16_maxwell_string() {
     let s = serde_json::Value::String(UUID_HYPHENATED.into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "id",
-        mysql_type: Some("varchar"),
+        wire_type: WireType::Uuid,
         value: &s,
     }
     .decoded_by(&UuidBlob16Decoder)
@@ -176,36 +169,34 @@ fn uuid_blob16_maxwell_string() {
     assert_eq!(got, Value::Blob(UUID_BYTES.to_vec()));
 }
 
-// -- Discriminator (the load-bearing per-column dispatch test) ---------------
+// -- Shape selection at registration under one semantic key ------------------
 
-/// Given the same wire UUID bytes on the same source, a `TypeMap` that
-/// dispatches column A through `UuidBlob16Decoder` and column B
-/// through `UuidText36Decoder` produces different `Value` variants for
-/// the two columns. This proves per-column trait-generic dispatch and
-/// is the load-bearing invariant that killed the "one runtime dial"
-/// alternative during design.
+/// A single semantic key `WireType::Uuid` selects the UUID shape at
+/// registration time: one `TypeMap` registered with `UuidBlob16Decoder`
+/// produces `Value::Blob`, another registered with `UuidText36Decoder`
+/// produces `Value::Text`, from the identical wire payload. This proves
+/// that decoder policy is chosen at registration under one key, the
+/// invariant that killed the "one runtime dial" alternative.
 #[test]
-fn uuid_dispatch_discriminator_per_key() {
-    // Register two type keys: "uuid" -> Blob16, "uuid_text" -> Text36.
-    // A user with two columns declared as different logical types can
-    // route them separately via their PG type names.
-    let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    types.register(Arc::from("uuid"), UuidBlob16Decoder);
-    types.register(Arc::from("uuid_text"), UuidText36Decoder);
+fn uuid_shape_chosen_at_registration() {
+    let mut blob_map: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
+    blob_map.register(WireType::Uuid, UuidBlob16Decoder);
+    let mut text_map: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
+    text_map.register(WireType::Uuid, UuidText36Decoder);
 
     let s = serde_json::Value::String(UUID_HYPHENATED.into());
 
-    let as_blob = types
+    let as_blob = blob_map
         .decode(Wal2JsonColumn {
             column_name: "a",
-            pg_type_name: "uuid",
+            wire_type: WireType::Uuid,
             value: &s,
         })
         .unwrap();
-    let as_text = types
+    let as_text = text_map
         .decode(Wal2JsonColumn {
             column_name: "b",
-            pg_type_name: "uuid_text",
+            wire_type: WireType::Uuid,
             value: &s,
         })
         .unwrap();
@@ -215,21 +206,21 @@ fn uuid_dispatch_discriminator_per_key() {
     assert_ne!(as_blob, as_text);
 }
 
-// -- Defaults deliberately omit UUID -----------------------------------------
+// -- Defaults route UUID to verbatim Text36 ----------------------------------
 
-/// `TypeMap::defaults()` deliberately does not register UUID. Users
-/// pick their preferred shape (Blob16 vs Text36) explicitly.
+/// `TypeMap::defaults()` now registers `WireType::Uuid` with the
+/// verbatim `UuidText36Decoder`, so UUID columns decode without any
+/// explicit registration.
 #[test]
-fn defaults_do_not_carry_uuid_by_default() {
+fn defaults_route_uuid_to_text36() {
     let pg: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let cv = ColumnValue::text(UUID_HYPHENATED);
-    let err = pg
+    let got = pg
         .decode(PgWalstreamColumn {
             column_name: "id",
-            oid: 2950, // uuid OID
-            type_modifier: -1,
+            wire_type: WireType::Uuid,
             data: &cv,
         })
-        .unwrap_err();
-    assert!(matches!(err, DecodeError::NoDecoderForType { .. }));
+        .unwrap();
+    assert_eq!(got, Value::Text(String::from(UUID_HYPHENATED)));
 }

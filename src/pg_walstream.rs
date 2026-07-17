@@ -18,7 +18,7 @@ use crate::builders::{
 };
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
-use crate::wire::{Sealed, WireAdapter, WireSource};
+use crate::wire::{Sealed, WireAdapter, WireSource, WireType};
 use core::fmt::Debug;
 use core::hash::Hash;
 
@@ -72,10 +72,9 @@ impl Sealed for PgWalstream {}
 
 impl WireSource for PgWalstream {
     type Payload<'a> = PgWalstreamColumn<'a>;
-    type TypeKey = Oid;
 
-    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
-        payload.oid
+    fn wire_type(payload: &Self::Payload<'_>) -> WireType {
+        payload.wire_type
     }
 
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
@@ -91,10 +90,8 @@ impl WireSource for PgWalstream {
 pub struct PgWalstreamColumn<'a> {
     /// Column name resolved from the relation cache.
     pub column_name: &'a str,
-    /// Postgres type OID (from `ColumnInfo::type_id`).
-    pub oid: Oid,
-    /// Postgres type modifier (from `ColumnInfo::type_modifier`).
-    pub type_modifier: i32,
+    /// Semantic column type driving decoder dispatch.
+    pub wire_type: WireType,
     /// Raw wire payload.
     pub data: &'a ColumnValue,
 }
@@ -124,7 +121,7 @@ use crate::wire::{Digestable, WireColumnTypes, WireSchema};
 
 impl<T, S, B> Digestable<ChangesetFormat, T, S, B> for EventType
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -138,7 +135,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<ChangesetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<PgWalstream, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<PgWalstream, S, B>,
     {
         match self {
@@ -176,7 +173,7 @@ where
 
 impl<T, S, B> Digestable<PatchsetFormat, T, S, B> for EventType
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -190,7 +187,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<PatchsetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<PgWalstream, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<PgWalstream, S, B>,
     {
         match self {
@@ -226,7 +223,7 @@ where
 
 fn resolve_table<'a, Sch>(schema: &'a Sch, name: &str) -> Result<&'a Sch::Table, ConversionError>
 where
-    Sch: WireSchema<PgWalstream>,
+    Sch: WireSchema,
 {
     schema
         .get(name)
@@ -239,7 +236,7 @@ fn build_insert_from_pg<T, S, B, A>(
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
@@ -251,8 +248,7 @@ where
             .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
         let payload = PgWalstreamColumn {
             column_name: name.as_ref(),
-            oid: table.column_type_key(col_idx),
-            type_modifier: -1,
+            wire_type: table.column_type(col_idx),
             data: value,
         };
         let decoded = adapter.decode(payload)?;
@@ -270,7 +266,7 @@ fn build_changeset_update_from_pg<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + AsRef<str>,
     B: Clone + Debug + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
@@ -280,11 +276,10 @@ where
         let col_idx = table
             .column_index(name.as_ref())
             .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-        let oid = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let new_payload = PgWalstreamColumn {
             column_name: name.as_ref(),
-            oid,
-            type_modifier: -1,
+            wire_type,
             data: new_value,
         };
         let new_decoded = adapter.decode(new_payload)?;
@@ -294,8 +289,7 @@ where
         {
             let old_payload = PgWalstreamColumn {
                 column_name: name.as_ref(),
-                oid,
-                type_modifier: -1,
+                wire_type,
                 data: old_value,
             };
             let old_decoded = adapter.decode(old_payload)?;
@@ -318,7 +312,7 @@ fn build_patchset_update_from_pg<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
@@ -330,8 +324,7 @@ where
             .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
         let payload = PgWalstreamColumn {
             column_name: name.as_ref(),
-            oid: table.column_type_key(col_idx),
-            type_modifier: -1,
+            wire_type: table.column_type(col_idx),
             data: value,
         };
         let decoded = adapter.decode(payload)?;
@@ -348,7 +341,7 @@ fn build_changeset_delete_from_pg<T, S, B, A>(
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Default + AsRef<str>,
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
@@ -360,8 +353,7 @@ where
             .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
         let payload = PgWalstreamColumn {
             column_name: name.as_ref(),
-            oid: table.column_type_key(col_idx),
-            type_modifier: -1,
+            wire_type: table.column_type(col_idx),
             data: value,
         };
         let decoded = adapter.decode(payload)?;
@@ -378,7 +370,7 @@ fn build_patch_delete_from_pg<T, S, B, A>(
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<PgWalstream>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
@@ -393,8 +385,7 @@ where
         if let Some(pk_idx) = table.primary_key_index(col_idx) {
             let payload = PgWalstreamColumn {
                 column_name: name.as_ref(),
-                oid: table.column_type_key(col_idx),
-                type_modifier: -1,
+                wire_type: table.column_type(col_idx),
                 data: value,
             };
             pk_slots[pk_idx] = Some(adapter.decode(payload)?);

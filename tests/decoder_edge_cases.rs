@@ -15,7 +15,7 @@ use sqlite_diff_rs::WireAdapter;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecodeError, Decoder, TypeMap, Value};
+use sqlite_diff_rs::{DecodeError, Decoder, TypeMap, Value, WireType};
 
 /// Shorthand: decode `BoolDecoder` against `PgWalstream` source.
 type PgBoolDec = dyn Decoder<PgWalstream, String, Vec<u8>>;
@@ -51,8 +51,7 @@ fn pg_bool_decoder_binary_01() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 16,
-            type_modifier: -1,
+            wire_type: WireType::Bool,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x01])),
         })
         .unwrap();
@@ -65,8 +64,7 @@ fn pg_bool_decoder_binary_00() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 16,
-            type_modifier: -1,
+            wire_type: WireType::Bool,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00])),
         })
         .unwrap();
@@ -78,8 +76,7 @@ fn pg_bool_decoder_binary_wrong_payload() {
     let dec = sqlite_diff_rs::BoolDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x02])),
     });
     match result {
@@ -93,8 +90,7 @@ fn pg_bool_decoder_text_wrong_payload() {
     let dec = sqlite_diff_rs::BoolDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &ColumnValue::text("xyz"),
     });
     match result {
@@ -109,8 +105,7 @@ fn pg_int_decoder_binary_int2() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 21,
-            type_modifier: -1,
+            wire_type: WireType::Int,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x2a])),
         })
         .unwrap();
@@ -123,8 +118,7 @@ fn pg_int_decoder_binary_int4() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 23,
-            type_modifier: -1,
+            wire_type: WireType::Int,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x00, 0x00, 0x2a])),
         })
         .unwrap();
@@ -137,8 +131,7 @@ fn pg_int_decoder_binary_int8() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 20,
-            type_modifier: -1,
+            wire_type: WireType::Int,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a,
             ])),
@@ -152,8 +145,7 @@ fn pg_int_decoder_binary_wrong_size() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 21,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00])),
     });
     match result {
@@ -168,8 +160,7 @@ fn pg_real_decoder_binary_float4() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 700,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&1.5_f32.to_be_bytes())),
         })
         .unwrap();
@@ -182,8 +173,7 @@ fn pg_real_decoder_binary_float8() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&PI.to_be_bytes())),
         })
         .unwrap();
@@ -195,9 +185,8 @@ fn pg_real_decoder_binary_wrong_size() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 701,
-        type_modifier: -1,
-        data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x00, 0x00, 0x00])),
+        wire_type: WireType::Real,
+        data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x00, 0x00])),
     });
     match result {
         Err(DecodeError::WrongPayloadKind { column, .. }) => assert_eq!(column, "c"),
@@ -211,8 +200,7 @@ fn pg_bytea_binary_decoder_binary_pass_through() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 17,
-            type_modifier: -1,
+            wire_type: WireType::Bytes,
             data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0xde, 0xad])),
         })
         .unwrap();
@@ -228,8 +216,7 @@ fn pg_bytea_binary_decoder_invalid_hex_escape() {
     let dec = sqlite_diff_rs::PgByteaBinaryDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &ColumnValue::text("\\xzz"),
     });
     match result {
@@ -252,8 +239,7 @@ fn pg_int_decoder_invalid_utf8() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &non_utf8_text(),
     });
     match result {
@@ -267,8 +253,7 @@ fn pg_int_decoder_integer_overflow() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &ColumnValue::text("999999999999999999999"),
     });
     match result {
@@ -282,8 +267,7 @@ fn pg_int_decoder_non_numeric_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &ColumnValue::text("not-a-number"),
     });
     match result {
@@ -297,8 +281,7 @@ fn pg_real_decoder_invalid_utf8() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &non_utf8_text(),
     });
     match result {
@@ -312,8 +295,7 @@ fn pg_real_decoder_non_numeric_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &ColumnValue::text("not-a-float"),
     });
     match result {
@@ -327,8 +309,7 @@ fn pg_text_decoder_invalid_utf8() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 25,
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &non_utf8_text(),
     });
     match result {
@@ -342,8 +323,7 @@ fn pg_text_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 25,
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x61])),
     });
     match result {
@@ -357,8 +337,7 @@ fn pg_decimal_text_decoder_invalid_utf8() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 1700,
-        type_modifier: -1,
+        wire_type: WireType::Decimal,
         data: &non_utf8_text(),
     });
     match result {
@@ -372,8 +351,7 @@ fn pg_decimal_text_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 1700,
-        type_modifier: -1,
+        wire_type: WireType::Decimal,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -391,8 +369,7 @@ fn pg_timestamp_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 1114,
-        type_modifier: -1,
+        wire_type: WireType::Timestamp,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -406,8 +383,7 @@ fn pg_timestamptz_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 1184,
-        type_modifier: -1,
+        wire_type: WireType::TimestampTz,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -421,8 +397,7 @@ fn pg_json_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 114,
-        type_modifier: -1,
+        wire_type: WireType::Json,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -436,8 +411,7 @@ fn pg_jsonb_decoder_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 3802,
-        type_modifier: -1,
+        wire_type: WireType::Jsonb,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -456,8 +430,7 @@ fn pg_real_decoder_nan_to_null() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &ColumnValue::text("NaN"),
         })
         .unwrap();
@@ -470,8 +443,7 @@ fn pg_real_decoder_negative_zero_normalized() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &ColumnValue::text("-0.0"),
         })
         .unwrap();
@@ -484,8 +456,7 @@ fn pg_real_decoder_infinity() {
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &ColumnValue::text("Infinity"),
         })
         .unwrap();
@@ -505,8 +476,7 @@ fn pg_int64_overflow_to_text_overflows() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 20,
-            type_modifier: -1,
+            wire_type: WireType::Int,
             data: &ColumnValue::text("9223372036854775808"),
         })
         .unwrap();
@@ -522,8 +492,7 @@ fn pg_int64_overflow_to_text_invalid_utf8() {
     let dec = sqlite_diff_rs::Int64OverflowToTextDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &non_utf8_text(),
     });
     match result {
@@ -537,8 +506,7 @@ fn pg_int64_overflow_to_text_non_numeric() {
     let dec = sqlite_diff_rs::Int64OverflowToTextDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &ColumnValue::text("hello"),
     });
     match result {
@@ -552,8 +520,7 @@ fn pg_int64_overflow_to_text_binary_rejected() {
     let dec = sqlite_diff_rs::Int64OverflowToTextDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x2a])),
     });
     match result {
@@ -572,8 +539,7 @@ fn pg_uuid_blob16_valid() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 2950,
-            type_modifier: -1,
+            wire_type: WireType::Uuid,
             data: &ColumnValue::text("a0eebc99-9c0b-4ef8-bb8d-6bb9efb4e148"),
         })
         .unwrap();
@@ -589,8 +555,7 @@ fn pg_uuid_blob16_invalid_uuid() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &ColumnValue::text("not-a-uuid"),
     });
     match result {
@@ -604,8 +569,7 @@ fn pg_uuid_blob16_invalid_utf8() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &non_utf8_text(),
     });
     match result {
@@ -619,8 +583,7 @@ fn pg_uuid_blob16_binary_rejected() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -635,8 +598,7 @@ fn pg_uuid_text36_valid() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 2950,
-            type_modifier: -1,
+            wire_type: WireType::Uuid,
             data: &ColumnValue::text("A0eEbc99-9c0b-4ef8-bb8d-6bb9efb4e148"),
         })
         .unwrap();
@@ -653,8 +615,7 @@ fn pg_uuid_text36_invalid_uuid() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &ColumnValue::text("not-a-uuid"),
     });
     match result {
@@ -668,8 +629,7 @@ fn pg_uuid_text36_invalid_utf8() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &non_utf8_text(),
     });
     match result {
@@ -683,8 +643,7 @@ fn pg_uuid_text36_binary_rejected() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
     });
     match result {
@@ -702,8 +661,7 @@ fn pg_bytea_text_mode_not_yet_impl() {
     let dec = sqlite_diff_rs::PgByteaTextModeDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &ColumnValue::text("hello"),
     });
     match result {
@@ -719,8 +677,7 @@ fn pg_mysql_binary_not_yet_impl() {
     let dec = sqlite_diff_rs::MySqlBinaryDecoder;
     let result = as_pg_dec!(dec).decode(PgWalstreamColumn {
         column_name: "c",
-        oid: 17,
-        type_modifier: -1,
+        wire_type: WireType::Bytes,
         data: &ColumnValue::text("hello"),
     });
     match result {
@@ -737,8 +694,7 @@ fn pg_null_decoder_always_null() {
     let val = as_pg_dec!(dec)
         .decode(PgWalstreamColumn {
             column_name: "c",
-            oid: 16,
-            type_modifier: -1,
+            wire_type: WireType::Bool,
             data: &ColumnValue::text("anything"),
         })
         .unwrap();
@@ -755,7 +711,7 @@ fn w2j_int64_overflow_normal_integer() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "bigint",
+            wire_type: WireType::Int,
             value: &serde_json::Value::Number(serde_json::Number::from(42)),
         })
         .unwrap();
@@ -768,7 +724,7 @@ fn w2j_int64_overflow_string_overflow() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "bigint",
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("9223372036854775808".into()),
         })
         .unwrap();
@@ -785,7 +741,7 @@ fn w2j_int64_overflow_string_in_range() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "bigint",
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("42".into()),
         })
         .unwrap();
@@ -797,7 +753,7 @@ fn w2j_int64_overflow_wrong_payload() {
     let dec = sqlite_diff_rs::Int64OverflowToTextDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "bigint",
+        wire_type: WireType::Int,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -815,7 +771,7 @@ fn w2j_real_decoder_nan_unreachable() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "double precision",
+            wire_type: WireType::Real,
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
@@ -827,7 +783,7 @@ fn w2j_real_decoder_bool_wrong_payload() {
     let dec = sqlite_diff_rs::RealDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "real",
+        wire_type: WireType::Real,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -842,7 +798,7 @@ fn w2j_uuid_blob16_valid() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "uuid",
+            wire_type: WireType::Uuid,
             value: &serde_json::Value::String("a0eebc99-9c0b-4ef8-bb8d-6bb9efb4e148".into()),
         })
         .unwrap();
@@ -858,7 +814,7 @@ fn w2j_uuid_blob16_invalid() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::String("bad".into()),
     });
     match result {
@@ -872,7 +828,7 @@ fn w2j_uuid_blob16_wrong_payload() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -887,7 +843,7 @@ fn w2j_uuid_text36_valid() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "uuid",
+            wire_type: WireType::Uuid,
             value: &serde_json::Value::String("A0eEbc99-9c0b-4ef8-bb8d-6bb9efb4e148".into()),
         })
         .unwrap();
@@ -903,7 +859,7 @@ fn w2j_uuid_text36_invalid() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::String("bad".into()),
     });
     match result {
@@ -917,7 +873,7 @@ fn w2j_uuid_text36_wrong_payload() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::Bool(false),
     });
     match result {
@@ -933,7 +889,7 @@ fn w2j_json_verbatim_wrong_payload() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "json",
+            wire_type: WireType::Json,
             value: &serde_json::Value::Number(serde_json::Number::from(42)),
         })
         .unwrap();
@@ -946,7 +902,7 @@ fn w2j_json_canonical_string() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "jsonb",
+            wire_type: WireType::Jsonb,
             value: &serde_json::Value::String("{\"b\": 2, \"a\": 1}".into()),
         })
         .unwrap();
@@ -968,7 +924,7 @@ fn w2j_json_canonical_object() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "jsonb",
+            wire_type: WireType::Jsonb,
             value: &serde_json::Value::Object(map),
         })
         .unwrap();
@@ -982,7 +938,7 @@ fn w2j_json_canonical_unsupported_payload() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "jsonb",
+            wire_type: WireType::Jsonb,
             value: &serde_json::Value::Number(serde_json::Number::from_f64(1e300).unwrap()),
         })
         .unwrap();
@@ -998,7 +954,7 @@ fn w2j_pg_bytea_binary_decoder_not_yet_impl() {
     let dec = sqlite_diff_rs::PgByteaBinaryDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "bytea",
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::Null,
     });
     match result {
@@ -1012,7 +968,7 @@ fn w2j_not_yet_impl_decoders() {
     let dec_mysql = sqlite_diff_rs::MySqlBinaryDecoder;
     let result_mysql = as_w2j_dec!(dec_mysql).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "bytea",
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::Null,
     });
     match result_mysql {
@@ -1027,7 +983,7 @@ fn w2j_null_decoder_always_null() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "integer",
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("hello".into()),
         })
         .unwrap();
@@ -1044,7 +1000,7 @@ fn mx_int64_overflow_normal_integer() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("bigint"),
+            wire_type: WireType::Int,
             value: &serde_json::Value::Number(serde_json::Number::from(42)),
         })
         .unwrap();
@@ -1057,7 +1013,7 @@ fn mx_int64_overflow_string_overflow() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("bigint unsigned"),
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("9223372036854775808".into()),
         })
         .unwrap();
@@ -1074,7 +1030,7 @@ fn mx_int64_overflow_string_in_range() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("bigint"),
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("42".into()),
         })
         .unwrap();
@@ -1086,7 +1042,7 @@ fn mx_int64_overflow_wrong_payload() {
     let dec = sqlite_diff_rs::Int64OverflowToTextDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("bigint"),
+        wire_type: WireType::Int,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -1105,7 +1061,7 @@ fn mx_real_decoder_nan_unreachable() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("float"),
+            wire_type: WireType::Real,
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
@@ -1118,7 +1074,7 @@ fn mx_real_decoder_negative_zero_normalized() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("float"),
+            wire_type: WireType::Real,
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
@@ -1130,7 +1086,7 @@ fn mx_real_decoder_bool_wrong_payload() {
     let dec = sqlite_diff_rs::RealDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("float"),
+        wire_type: WireType::Real,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -1145,7 +1101,7 @@ fn mx_uuid_blob16_valid() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("uuid"),
+            wire_type: WireType::Uuid,
             value: &serde_json::Value::String("a0eebc99-9c0b-4ef8-bb8d-6bb9efb4e148".into()),
         })
         .unwrap();
@@ -1161,7 +1117,7 @@ fn mx_uuid_blob16_invalid() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("uuid"),
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::String("bad".into()),
     });
     match result {
@@ -1175,7 +1131,7 @@ fn mx_uuid_blob16_wrong_payload() {
     let dec = sqlite_diff_rs::UuidBlob16Decoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("uuid"),
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -1190,7 +1146,7 @@ fn mx_uuid_text36_valid() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("uuid"),
+            wire_type: WireType::Uuid,
             value: &serde_json::Value::String("A0eEbc99-9c0b-4ef8-bb8d-6bb9efb4e148".into()),
         })
         .unwrap();
@@ -1206,7 +1162,7 @@ fn mx_uuid_text36_invalid() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("uuid"),
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::String("bad".into()),
     });
     match result {
@@ -1220,7 +1176,7 @@ fn mx_uuid_text36_wrong_payload() {
     let dec = sqlite_diff_rs::UuidText36Decoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("uuid"),
+        wire_type: WireType::Uuid,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -1235,7 +1191,7 @@ fn mx_json_canonical_string() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("json"),
+            wire_type: WireType::Json,
             value: &serde_json::Value::String("{\"b\": 2, \"a\": 1}".into()),
         })
         .unwrap();
@@ -1257,7 +1213,7 @@ fn mx_json_canonical_object() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("json"),
+            wire_type: WireType::Json,
             value: &serde_json::Value::Object(map),
         })
         .unwrap();
@@ -1271,7 +1227,7 @@ fn mx_json_canonical_unsupported_payload() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("json"),
+            wire_type: WireType::Json,
             value: &serde_json::Value::Number(serde_json::Number::from_f64(1e300).unwrap()),
         })
         .unwrap();
@@ -1287,7 +1243,7 @@ fn mx_not_yet_impl_decoders() {
     let dec_pg = sqlite_diff_rs::PgByteaTextModeDecoder;
     let result_pg = as_mx_dec!(dec_pg).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("bytea"),
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::Null,
     });
     match result_pg {
@@ -1298,7 +1254,7 @@ fn mx_not_yet_impl_decoders() {
     let dec_pg_bytea = sqlite_diff_rs::PgByteaBinaryDecoder;
     let result_pg_bytea = as_mx_dec!(dec_pg_bytea).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("bytea"),
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::Null,
     });
     match result_pg_bytea {
@@ -1313,7 +1269,7 @@ fn mx_null_decoder_always_null() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("int"),
+            wire_type: WireType::Int,
             value: &serde_json::Value::String("hello".into()),
         })
         .unwrap();
@@ -1330,7 +1286,7 @@ fn w2j_pg_bytea_text_mode_decoder_valid() {
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
-            pg_type_name: "bytea",
+            wire_type: WireType::Bytes,
             value: &serde_json::Value::String("\\xdeadbeef".into()),
         })
         .unwrap();
@@ -1342,7 +1298,7 @@ fn w2j_pg_bytea_text_mode_decoder_invalid_hex() {
     let dec = sqlite_diff_rs::PgByteaTextModeDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "bytea",
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::String("\\xzz".into()),
     });
     match result {
@@ -1356,7 +1312,7 @@ fn w2j_decimal_text_wrong_payload() {
     let dec = sqlite_diff_rs::DecimalTextDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "numeric",
+        wire_type: WireType::Decimal,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -1370,7 +1326,7 @@ fn w2j_text_decoder_wrong_payload() {
     let dec = sqlite_diff_rs::TextDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "text",
+        wire_type: WireType::Text,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -1384,7 +1340,7 @@ fn w2j_bool_decoder_wrong_payload() {
     let dec = sqlite_diff_rs::BoolDecoder;
     let result = as_w2j_dec!(dec).decode(Wal2JsonColumn {
         column_name: "c",
-        pg_type_name: "boolean",
+        wire_type: WireType::Bool,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -1403,7 +1359,7 @@ fn mx_mysql_binary_decoder_valid() {
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
-            mysql_type: Some("blob"),
+            wire_type: WireType::Bytes,
             value: &serde_json::Value::String("3q2+7w==".into()),
         })
         .unwrap();
@@ -1415,7 +1371,7 @@ fn mx_mysql_binary_decoder_invalid_base64() {
     let dec = sqlite_diff_rs::MySqlBinaryDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("blob"),
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::String("not-base64!!!".into()),
     });
     match result {
@@ -1429,7 +1385,7 @@ fn mx_mysql_binary_decoder_wrong_payload() {
     let dec = sqlite_diff_rs::MySqlBinaryDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("blob"),
+        wire_type: WireType::Bytes,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -1443,7 +1399,7 @@ fn mx_decimal_text_wrong_payload() {
     let dec = sqlite_diff_rs::DecimalTextDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("decimal"),
+        wire_type: WireType::Decimal,
         value: &serde_json::Value::Bool(true),
     });
     match result {
@@ -1457,7 +1413,7 @@ fn mx_text_decoder_wrong_payload() {
     let dec = sqlite_diff_rs::TextDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("varchar"),
+        wire_type: WireType::Text,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {
@@ -1471,7 +1427,7 @@ fn mx_bool_decoder_wrong_payload() {
     let dec = sqlite_diff_rs::BoolDecoder;
     let result = as_mx_dec!(dec).decode(MaxwellColumn {
         column_name: "c",
-        mysql_type: Some("tinyint(1)"),
+        wire_type: WireType::Bool,
         value: &serde_json::Value::Number(serde_json::Number::from(42)),
     });
     match result {

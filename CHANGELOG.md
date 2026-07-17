@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0
+
+Source-independent semantic type key for `digest`. A catalog carrying semantic column types now drives `DiffSetBuilder::digest` for every wire source without translating to a source-native key.
+
+### Added
+
+`WireType` enum (`Bool`, `Int`, `Real`, `Text`, `Bytes`, `Uuid`, `Decimal`, `Timestamp`, `TimestampTz`, `Date`, `Time`, `Interval`, `Json`, `Jsonb`), re-exported from the crate root. It is the single decoder-dispatch key shared by `pg_walstream`, `wal2json`, and `maxwell`.
+
+`TypeMap::defaults()` now registers a `WireType::Uuid` decoder for every source (`UuidText36Decoder`), which fixes the previously missing wal2json `uuid` mapping.
+
+### Breaking
+
+`WireSource` drops the associated `TypeKey` and its `type_key` method in favor of `fn wire_type(payload) -> WireType`.
+
+`WireColumnTypes` and `WireSchema` are no longer generic over the source. `WireColumnTypes::column_type_key(idx) -> Src::TypeKey` becomes `WireColumnTypes::column_type(idx) -> WireType`, and `WireSchema<Src>` becomes `WireSchema`. `Digestable` and `DiffSetBuilder::digest` drop `Src` from their schema and column-type bounds.
+
+`TypeMap` is keyed by `WireType` instead of `Src::TypeKey`, so `register` and `with` take a `WireType`.
+
+The per-column payload structs replace their native type field with `wire_type: WireType`: `PgWalstreamColumn` drops `oid` and `type_modifier`, `Wal2JsonColumn` drops `pg_type_name`, and `MaxwellColumn` drops `mysql_type`. Binary integer and float widths on `pg_walstream` are now inferred from the payload byte length. The wal2json paren-stripping and maxwell `tinyint(1)` type-name normalizations are gone because the schema declares the semantic type directly.
+
+Downstreams migrate by implementing the source-independent `WireColumnTypes` and `WireSchema` and registering decoders under `WireType`.
+
 ## 0.3.0
 
 `wal2json::MessageV2` now carries the optional wal2json LSN.

@@ -11,12 +11,10 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use sqlite_diff_rs::pg_walstream::{
-    ColumnValue, ConversionError, EventType, Oid, PgWalstream, RowData,
-};
+use sqlite_diff_rs::pg_walstream::{ColumnValue, ConversionError, EventType, PgWalstream, RowData};
 use sqlite_diff_rs::{
     ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema,
+    Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -66,19 +64,19 @@ impl NamedColumns for TestUsersTable {
     }
 }
 
-impl WireColumnTypes<PgWalstream> for TestUsersTable {
-    fn column_type_key(&self, column_index: usize) -> Oid {
-        // id -> int4 (OID 23), name -> text (OID 25), active -> bool (OID 16)
+impl WireColumnTypes for TestUsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        // id -> Int, name -> Text, active -> Bool
         match column_index {
-            0 => 23,
-            1 => 25,
-            2 => 16,
+            0 => WireType::Int,
+            1 => WireType::Text,
+            2 => WireType::Bool,
             _ => panic!("column {column_index} out of range"),
         }
     }
 }
 
-impl WireSchema<PgWalstream> for TestSchema {
+impl WireSchema for TestSchema {
     type Table = TestUsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         if table_name == "users" {

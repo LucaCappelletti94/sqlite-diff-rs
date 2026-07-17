@@ -2,20 +2,19 @@
 //!
 //! Exercises the `Digestable` impls on `Message` for both
 //! `ChangesetFormat` and `PatchsetFormat`, covering every operation kind,
-//! error paths, and the `--include_types` type-key stripping behavior.
+//! and error paths.
 
 #![cfg(feature = "maxwell")]
 
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, MaxwellColumn, Message, OpType};
+use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, Message, OpType};
 use sqlite_diff_rs::{
     ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema,
+    Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,19 +62,19 @@ impl NamedColumns for TestUsersTable {
     }
 }
 
-impl WireColumnTypes<Maxwell> for TestUsersTable {
-    fn column_type_key(&self, column_index: usize) -> Arc<str> {
-        // id -> int, name -> varchar, active -> tinyint(1)
+impl WireColumnTypes for TestUsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        // id -> Int, name -> Text, active -> Bool
         match column_index {
-            0 => Arc::from("int"),
-            1 => Arc::from("varchar"),
-            2 => Arc::from("tinyint(1)"),
+            0 => WireType::Int,
+            1 => WireType::Text,
+            2 => WireType::Bool,
             _ => panic!("column {column_index} out of range"),
         }
     }
 }
 
-impl WireSchema<Maxwell> for TestSchema {
+impl WireSchema for TestSchema {
     type Table = TestUsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         if table_name == "users" {
@@ -310,62 +309,5 @@ fn maxwell_changeset_update_without_old_is_ok() {
     assert!(
         !bytes.is_empty(),
         "changeset must produce output without old data"
-    );
-}
-
-// -- WireSource type_key stripping -----------------------------------------
-
-#[test]
-fn maxwell_type_key_strips_paren_suffix() {
-    // Verify that `WireSource::type_key` strips parenthesized modifiers
-    // from MySQL type names, except for `tinyint(1)`.
-    use sqlite_diff_rs::WireSource;
-
-    // varchar(255) -> varchar
-    let payload = MaxwellColumn {
-        column_name: "c",
-        mysql_type: Some("varchar(255)"),
-        value: &serde_json::Value::Null,
-    };
-    assert_eq!(
-        Maxwell::type_key(&payload).as_ref(),
-        "varchar",
-        "varchar(255) should strip to varchar"
-    );
-
-    // decimal(10,2) -> decimal
-    let payload = MaxwellColumn {
-        column_name: "c",
-        mysql_type: Some("decimal(10,2)"),
-        value: &serde_json::Value::Null,
-    };
-    assert_eq!(
-        Maxwell::type_key(&payload).as_ref(),
-        "decimal",
-        "decimal(10,2) should strip to decimal"
-    );
-
-    // tinyint(1) -> tinyint(1) (preserved for bool detection)
-    let payload = MaxwellColumn {
-        column_name: "c",
-        mysql_type: Some("tinyint(1)"),
-        value: &serde_json::Value::Null,
-    };
-    assert_eq!(
-        Maxwell::type_key(&payload).as_ref(),
-        "tinyint(1)",
-        "tinyint(1) should be preserved"
-    );
-
-    // Empty mysql_type -> ""
-    let payload = MaxwellColumn {
-        column_name: "c",
-        mysql_type: None,
-        value: &serde_json::Value::Null,
-    };
-    assert_eq!(
-        Maxwell::type_key(&payload).as_ref(),
-        "",
-        "None mysql_type should produce empty string"
     );
 }

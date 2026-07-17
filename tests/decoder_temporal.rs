@@ -17,7 +17,7 @@ use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
     DateVerbatimDecoder, IntervalVerbatimDecoder, TimeVerbatimDecoder, TimestampTzVerbatimDecoder,
-    TimestampVerbatimDecoder, TypeMap, Value, WireAdapter,
+    TimestampVerbatimDecoder, TypeMap, Value, WireAdapter, WireType,
 };
 
 // -- Timestamp ---------------------------------------------------------------
@@ -29,8 +29,7 @@ fn timestamp_verbatim_pg_walstream_and_wal2json() {
     let cv = ColumnValue::text(wire);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "t",
-        oid: 1114,
-        type_modifier: -1,
+        wire_type: WireType::Timestamp,
         data: &cv,
     }
     .decoded_by(&TimestampVerbatimDecoder)
@@ -40,7 +39,7 @@ fn timestamp_verbatim_pg_walstream_and_wal2json() {
     let s = serde_json::Value::String(wire.into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "t",
-        pg_type_name: "timestamp without time zone",
+        wire_type: WireType::Timestamp,
         value: &s,
     }
     .decoded_by(&TimestampVerbatimDecoder)
@@ -54,8 +53,7 @@ fn timestamptz_verbatim_preserves_offset() {
     let cv = ColumnValue::text(wire);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "t",
-        oid: 1184,
-        type_modifier: -1,
+        wire_type: WireType::TimestampTz,
         data: &cv,
     }
     .decoded_by(&TimestampTzVerbatimDecoder)
@@ -75,8 +73,7 @@ fn date_time_interval_verbatim() {
     let cv = ColumnValue::text(wire);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "d",
-        oid: 1082,
-        type_modifier: -1,
+        wire_type: WireType::Date,
         data: &cv,
     }
     .decoded_by(&decoder)
@@ -86,8 +83,7 @@ fn date_time_interval_verbatim() {
     let cv = ColumnValue::text(times.0);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "t",
-        oid: 1083,
-        type_modifier: -1,
+        wire_type: WireType::Time,
         data: &cv,
     }
     .decoded_by(&times.1)
@@ -97,8 +93,7 @@ fn date_time_interval_verbatim() {
     let cv = ColumnValue::text(intervals.0);
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "i",
-        oid: 1186,
-        type_modifier: -1,
+        wire_type: WireType::Interval,
         data: &cv,
     }
     .decoded_by(&intervals.1)
@@ -114,7 +109,7 @@ fn maxwell_datetime_verbatim() {
     let s = serde_json::Value::String(wire.into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "t",
-        mysql_type: Some("datetime"),
+        wire_type: WireType::Timestamp,
         value: &s,
     }
     .decoded_by(&TimestampVerbatimDecoder)
@@ -129,8 +124,7 @@ fn temporal_null_pass_through() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "t",
-        oid: 1114,
-        type_modifier: -1,
+        wire_type: WireType::Timestamp,
         data: &cv,
     }
     .decoded_by(&TimestampVerbatimDecoder)
@@ -153,8 +147,7 @@ fn defaults_route_temporal_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "t",
-            oid: 1114,
-            type_modifier: -1,
+            wire_type: WireType::Timestamp,
             data: &cv,
         })
         .unwrap();
@@ -165,7 +158,7 @@ fn defaults_route_temporal_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "t",
-            pg_type_name: "timestamp without time zone",
+            wire_type: WireType::Timestamp,
             value: &s,
         })
         .unwrap();
@@ -175,7 +168,7 @@ fn defaults_route_temporal_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "t",
-            mysql_type: Some("datetime"),
+            wire_type: WireType::Timestamp,
             value: &s,
         })
         .unwrap();
@@ -187,8 +180,7 @@ fn defaults_route_temporal_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "d",
-            oid: 1082,
-            type_modifier: -1,
+            wire_type: WireType::Date,
             data: &cv,
         })
         .unwrap();

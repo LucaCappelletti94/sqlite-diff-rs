@@ -9,15 +9,15 @@ use super::adapter::WireAdapter;
 use super::decoder::Decoder;
 use super::error::DecodeError;
 use super::source::WireSource;
+use super::wire_type::WireType;
 use crate::encoding::Value;
 
 /// Generic type-to-decoder registry.
 ///
-/// Keyed by `Src::TypeKey` (the wire's native type identity: `Oid` for
-/// pg_walstream, `Arc<str>` for wal2json and maxwell). Implements
-/// [`WireAdapter`] via a single `HashMap::get` per column.
+/// Keyed by [`WireType`], the source-independent semantic column type.
+/// Implements [`WireAdapter`] via a single `HashMap::get` per column.
 pub struct TypeMap<Src: WireSource, S, B> {
-    entries: HashMap<Src::TypeKey, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
+    entries: HashMap<WireType, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
 }
 
 impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
@@ -31,7 +31,7 @@ impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
 
     /// Register (or replace) the decoder for `key`. Returns `&mut self`
     /// for chaining.
-    pub fn register<D>(&mut self, key: Src::TypeKey, decoder: D) -> &mut Self
+    pub fn register<D>(&mut self, key: WireType, decoder: D) -> &mut Self
     where
         D: Decoder<Src, S, B> + Send + Sync + 'static,
     {
@@ -42,7 +42,7 @@ impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
     /// Same as [`register`](Self::register) but consumes `self` for
     /// builder-style chaining: `TypeMap::new().with(k1, d1).with(k2, d2)`.
     #[must_use]
-    pub fn with<D>(mut self, key: Src::TypeKey, decoder: D) -> Self
+    pub fn with<D>(mut self, key: WireType, decoder: D) -> Self
     where
         D: Decoder<Src, S, B> + Send + Sync + 'static,
     {
@@ -84,7 +84,7 @@ impl<Src: WireSource, S, B> Default for TypeMap<Src, S, B> {
 
 impl<Src: WireSource, S, B> WireAdapter<Src, S, B> for TypeMap<Src, S, B> {
     fn decode(&self, payload: Src::Payload<'_>) -> Result<Value<S, B>, DecodeError> {
-        let key = Src::type_key(&payload);
+        let key = Src::wire_type(&payload);
         match self.entries.get(&key) {
             Some(decoder) => decoder.decode(payload),
             None => Err(DecodeError::NoDecoderForType {

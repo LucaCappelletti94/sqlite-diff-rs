@@ -599,9 +599,9 @@ where
     pub fn digest<E, Sch, A>(self, event: &E, schema: &Sch, adapter: &A) -> Result<Self, E::Error>
     where
         E: crate::wire::Digestable<F, T, S, B>,
-        Sch: crate::wire::WireSchema<E::Src, Table = T>,
+        Sch: crate::wire::WireSchema<Table = T>,
         A: crate::wire::WireAdapter<E::Src, S, B>,
-        T: crate::wire::WireColumnTypes<E::Src>,
+        T: crate::wire::WireColumnTypes,
     {
         event.digest_into(self, schema, adapter)
     }

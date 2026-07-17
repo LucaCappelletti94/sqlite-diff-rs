@@ -12,6 +12,7 @@ use super::decoder::{
 };
 use super::error::DecodeError;
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::wire_type::WireType;
 use crate::encoding::Value;
 use crate::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 
@@ -20,10 +21,6 @@ impl<S, B> Decoder<PgWalstream, S, B> for NullDecoder {
         Ok(Value::Null)
     }
 }
-
-/// Postgres bool OID. Registered under this key by
-/// [`TypeMapDefaults::defaults`].
-pub const PG_BOOL: crate::pg_walstream::Oid = 16;
 
 // ------------------------------------------------------------------
 // BoolDecoder
@@ -63,13 +60,6 @@ impl<S, B> Decoder<PgWalstream, S, B> for BoolDecoder {
     }
 }
 
-/// Postgres `int2` OID (SMALLINT).
-pub const PG_INT2: crate::pg_walstream::Oid = 21;
-/// Postgres `int4` OID (INTEGER).
-pub const PG_INT4: crate::pg_walstream::Oid = 23;
-/// Postgres `int8` OID (BIGINT).
-pub const PG_INT8: crate::pg_walstream::Oid = 20;
-
 // ------------------------------------------------------------------
 // IntDecoder
 //
@@ -108,35 +98,29 @@ impl<S, B> Decoder<PgWalstream, S, B> for IntDecoder {
                     }),
                 }
             }
-            ColumnValue::Binary(b) => {
-                decode_pg_int_binary(payload.column_name, payload.oid, b.as_ref())
-            }
+            ColumnValue::Binary(b) => decode_pg_int_binary(payload.column_name, b.as_ref()),
         }
     }
 }
 
-fn decode_pg_int_binary<S, B>(
-    column_name: &str,
-    oid: crate::pg_walstream::Oid,
-    bytes: &[u8],
-) -> Result<Value<S, B>, DecodeError> {
-    match (oid, bytes.len()) {
-        (PG_INT2, 2) => {
+fn decode_pg_int_binary<S, B>(column_name: &str, bytes: &[u8]) -> Result<Value<S, B>, DecodeError> {
+    match bytes.len() {
+        2 => {
             let arr: [u8; 2] = bytes.try_into().unwrap();
             Ok(Value::Integer(i16::from_be_bytes(arr).into()))
         }
-        (PG_INT4, 4) => {
+        4 => {
             let arr: [u8; 4] = bytes.try_into().unwrap();
             Ok(Value::Integer(i32::from_be_bytes(arr).into()))
         }
-        (PG_INT8, 8) => {
+        8 => {
             let arr: [u8; 8] = bytes.try_into().unwrap();
             Ok(Value::Integer(i64::from_be_bytes(arr)))
         }
         _ => Err(DecodeError::WrongPayloadKind {
             column: column_name.to_string(),
-            expected: "int2, int4, or int8 binary with matching byte width",
-            actual: "OID and byte width disagreement",
+            expected: "int2, int4, or int8 binary (2, 4, or 8 bytes)",
+            actual: "unexpected binary integer width",
         }),
     }
 }
@@ -189,11 +173,6 @@ where
     }
 }
 
-/// Postgres `float4` OID (REAL).
-pub const PG_FLOAT4: crate::pg_walstream::Oid = 700;
-/// Postgres `float8` OID (DOUBLE PRECISION).
-pub const PG_FLOAT8: crate::pg_walstream::Oid = 701;
-
 // ------------------------------------------------------------------
 // RealDecoder
 //
@@ -223,9 +202,7 @@ impl<S, B> Decoder<PgWalstream, S, B> for RealDecoder {
                     }),
                 }
             }
-            ColumnValue::Binary(b) => {
-                decode_pg_real_binary(payload.column_name, payload.oid, b.as_ref())
-            }
+            ColumnValue::Binary(b) => decode_pg_real_binary(payload.column_name, b.as_ref()),
         }
     }
 }
@@ -243,34 +220,24 @@ fn normalize_real<S, B>(f: f64) -> Value<S, B> {
 
 fn decode_pg_real_binary<S, B>(
     column_name: &str,
-    oid: crate::pg_walstream::Oid,
     bytes: &[u8],
 ) -> Result<Value<S, B>, DecodeError> {
-    match (oid, bytes.len()) {
-        (PG_FLOAT4, 4) => {
+    match bytes.len() {
+        4 => {
             let arr: [u8; 4] = bytes.try_into().unwrap();
             Ok(normalize_real(f64::from(f32::from_be_bytes(arr))))
         }
-        (PG_FLOAT8, 8) => {
+        8 => {
             let arr: [u8; 8] = bytes.try_into().unwrap();
             Ok(normalize_real(f64::from_be_bytes(arr)))
         }
         _ => Err(DecodeError::WrongPayloadKind {
             column: column_name.to_string(),
-            expected: "float4 or float8 binary with matching byte width",
-            actual: "OID and byte width disagreement",
+            expected: "float4 or float8 binary (4 or 8 bytes)",
+            actual: "unexpected binary float width",
         }),
     }
 }
-
-/// Postgres `text` OID.
-pub const PG_TEXT: crate::pg_walstream::Oid = 25;
-/// Postgres `varchar` OID.
-pub const PG_VARCHAR: crate::pg_walstream::Oid = 1043;
-/// Postgres `bpchar` (character) OID.
-pub const PG_BPCHAR: crate::pg_walstream::Oid = 1042;
-/// Postgres `name` OID.
-pub const PG_NAME: crate::pg_walstream::Oid = 19;
 
 // ------------------------------------------------------------------
 // TextDecoder
@@ -304,9 +271,6 @@ where
         }
     }
 }
-
-/// Postgres `bytea` OID.
-pub const PG_BYTEA: crate::pg_walstream::Oid = 17;
 
 // ------------------------------------------------------------------
 // PgByteaBinaryDecoder
@@ -429,9 +393,6 @@ where
     }
 }
 
-/// Postgres `numeric` OID.
-pub const PG_NUMERIC: crate::pg_walstream::Oid = 1700;
-
 // ------------------------------------------------------------------
 // DecimalTextDecoder
 // ------------------------------------------------------------------
@@ -476,17 +437,6 @@ macro_rules! not_yet_impl {
         }
     };
 }
-
-/// Postgres `timestamp` OID.
-pub const PG_TIMESTAMP: crate::pg_walstream::Oid = 1114;
-/// Postgres `timestamptz` OID.
-pub const PG_TIMESTAMPTZ: crate::pg_walstream::Oid = 1184;
-/// Postgres `date` OID.
-pub const PG_DATE: crate::pg_walstream::Oid = 1082;
-/// Postgres `time` OID.
-pub const PG_TIME: crate::pg_walstream::Oid = 1083;
-/// Postgres `interval` OID.
-pub const PG_INTERVAL: crate::pg_walstream::Oid = 1186;
 
 // ------------------------------------------------------------------
 // Temporal verbatim decoders
@@ -569,11 +519,6 @@ where
     }
 }
 
-/// Postgres `json` OID.
-pub const PG_JSON: crate::pg_walstream::Oid = 114;
-/// Postgres `jsonb` OID.
-pub const PG_JSONB: crate::pg_walstream::Oid = 3802;
-
 not_yet_impl!(PgByteaTextModeDecoder);
 not_yet_impl!(MySqlBinaryDecoder);
 
@@ -584,24 +529,19 @@ where
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
-            .with(PG_BOOL, BoolDecoder)
-            .with(PG_INT2, IntDecoder)
-            .with(PG_INT4, IntDecoder)
-            .with(PG_INT8, IntDecoder)
-            .with(PG_FLOAT4, RealDecoder)
-            .with(PG_FLOAT8, RealDecoder)
-            .with(PG_TEXT, TextDecoder)
-            .with(PG_VARCHAR, TextDecoder)
-            .with(PG_BPCHAR, TextDecoder)
-            .with(PG_NAME, TextDecoder)
-            .with(PG_BYTEA, PgByteaBinaryDecoder)
-            .with(PG_NUMERIC, DecimalTextDecoder)
-            .with(PG_TIMESTAMP, TimestampVerbatimDecoder)
-            .with(PG_TIMESTAMPTZ, TimestampTzVerbatimDecoder)
-            .with(PG_DATE, DateVerbatimDecoder)
-            .with(PG_TIME, TimeVerbatimDecoder)
-            .with(PG_INTERVAL, IntervalVerbatimDecoder)
-            .with(PG_JSON, JsonVerbatimDecoder)
-            .with(PG_JSONB, JsonVerbatimDecoder)
+            .with(WireType::Bool, BoolDecoder)
+            .with(WireType::Int, IntDecoder)
+            .with(WireType::Real, RealDecoder)
+            .with(WireType::Text, TextDecoder)
+            .with(WireType::Bytes, PgByteaBinaryDecoder)
+            .with(WireType::Uuid, UuidText36Decoder)
+            .with(WireType::Decimal, DecimalTextDecoder)
+            .with(WireType::Timestamp, TimestampVerbatimDecoder)
+            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
+            .with(WireType::Date, DateVerbatimDecoder)
+            .with(WireType::Time, TimeVerbatimDecoder)
+            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Json, JsonVerbatimDecoder)
+            .with(WireType::Jsonb, JsonVerbatimDecoder)
     }
 }

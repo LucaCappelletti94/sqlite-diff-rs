@@ -21,7 +21,7 @@ use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
-    BoolDecoder, DecodeError, IntDecoder, TextDecoder, TypeMap, Value, WireAdapter,
+    BoolDecoder, DecodeError, IntDecoder, TextDecoder, TypeMap, Value, WireAdapter, WireType,
 };
 
 // -- TextDecoder: pg_walstream -----------------------------------------------
@@ -33,8 +33,7 @@ fn text_decoder_pg_walstream_text_mode_utf8() {
         let cv = ColumnValue::text(wire);
         let got: Value<String, Vec<u8>> = PgWalstreamColumn {
             column_name: "s",
-            oid: 25, // text
-            type_modifier: -1,
+            wire_type: WireType::Text,
             data: &cv,
         }
         .decoded_by(&TextDecoder)
@@ -48,8 +47,7 @@ fn text_decoder_pg_walstream_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "s",
-        oid: 25,
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &cv,
     }
     .decoded_by(&TextDecoder)
@@ -62,8 +60,7 @@ fn text_decoder_pg_walstream_rejects_non_utf8_text() {
     let cv = ColumnValue::text_bytes(Bytes::from_static(&[0xFF, 0xFE, 0xFD]));
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "s",
-        oid: 25,
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &cv,
     }
     .decoded_by(&TextDecoder);
@@ -78,8 +75,7 @@ fn text_decoder_pg_walstream_rejects_binary_payload() {
     let cv = ColumnValue::binary_bytes(Bytes::from_static(&[0x01, 0x02]));
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "s",
-        oid: 25,
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &cv,
     }
     .decoded_by(&TextDecoder);
@@ -96,7 +92,7 @@ fn text_decoder_wal2json_string() {
     let s = serde_json::Value::String("verbatim".into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "s",
-        pg_type_name: "text",
+        wire_type: WireType::Text,
         value: &s,
     }
     .decoded_by(&TextDecoder)
@@ -109,7 +105,7 @@ fn text_decoder_wal2json_null() {
     let s = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "s",
-        pg_type_name: "text",
+        wire_type: WireType::Text,
         value: &s,
     }
     .decoded_by(&TextDecoder)
@@ -122,7 +118,7 @@ fn text_decoder_wal2json_rejects_non_string() {
     let n = serde_json::Value::Number(42.into());
     let result: Result<Value<String, Vec<u8>>, _> = Wal2JsonColumn {
         column_name: "s",
-        pg_type_name: "text",
+        wire_type: WireType::Text,
         value: &n,
     }
     .decoded_by(&TextDecoder);
@@ -139,7 +135,7 @@ fn text_decoder_maxwell_string() {
     let s = serde_json::Value::String("hi".into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "s",
-        mysql_type: Some("varchar"),
+        wire_type: WireType::Text,
         value: &s,
     }
     .decoded_by(&TextDecoder)
@@ -160,8 +156,7 @@ fn dispatch_discriminator_pg_walstream() {
     let cv_t = ColumnValue::text("t");
     let payload_t = || PgWalstreamColumn {
         column_name: "col",
-        oid: 25, // ignored by these tests: we're dispatching manually
-        type_modifier: -1,
+        wire_type: WireType::Text,
         data: &cv_t,
     };
     let as_text: Value<String, Vec<u8>> = payload_t().decoded_by(&TextDecoder).unwrap();
@@ -172,8 +167,7 @@ fn dispatch_discriminator_pg_walstream() {
     let cv_42 = ColumnValue::text("42");
     let payload_42 = || PgWalstreamColumn {
         column_name: "col",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_42,
     };
     let as_text: Value<String, Vec<u8>> = payload_42().decoded_by(&TextDecoder).unwrap();
@@ -187,7 +181,7 @@ fn dispatch_discriminator_wal2json() {
     let s_42 = serde_json::Value::String("42".into());
     let payload_str = || Wal2JsonColumn {
         column_name: "col",
-        pg_type_name: "text",
+        wire_type: WireType::Text,
         value: &s_42,
     };
     let as_text: Value<String, Vec<u8>> = payload_str().decoded_by(&TextDecoder).unwrap();
@@ -212,8 +206,7 @@ fn type_map_defaults_route_text_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "s",
-            oid: 25, // text
-            type_modifier: -1,
+            wire_type: WireType::Text,
             data: &cv,
         })
         .unwrap();
@@ -224,7 +217,7 @@ fn type_map_defaults_route_text_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "s",
-            pg_type_name: "text",
+            wire_type: WireType::Text,
             value: &s,
         })
         .unwrap();
@@ -234,7 +227,7 @@ fn type_map_defaults_route_text_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "s",
-            mysql_type: Some("varchar"),
+            wire_type: WireType::Text,
             value: &s,
         })
         .unwrap();

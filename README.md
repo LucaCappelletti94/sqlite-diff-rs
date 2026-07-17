@@ -56,7 +56,7 @@ let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
 let bytes: Vec<u8> = patchset.build();
 ```
 
-The schema type implements `WireSchema<Src>` and its tables implement `WireColumnTypes<Src>`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, decimals, temporals, and JSON.
+The schema type implements `WireSchema` and its tables implement `WireColumnTypes`, declaring each column's semantic `WireType`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, UUID, decimals, temporals, and JSON.
 
 ## Features
 
@@ -72,7 +72,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = { version = "0.2", features = ["wal2json"] }
+sqlite-diff-rs = { version = "0.4", features = ["wal2json"] }
 ```
 
 ## Binary Format Reference

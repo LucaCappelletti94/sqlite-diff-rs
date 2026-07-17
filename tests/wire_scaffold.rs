@@ -4,13 +4,12 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireSource};
+use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireSource, WireType};
 
 /// `WireAdapter<Src, S, B>` is object-safe: `dyn WireAdapter<..>` compiles.
 #[test]
@@ -42,7 +41,7 @@ fn empty_type_map_reports_missing_decoder_by_column_name() {
     let value = serde_json::Value::Null;
     let payload = Wal2JsonColumn {
         column_name: "my_column",
-        pg_type_name: "integer",
+        wire_type: WireType::Int,
         value: &value,
     };
     let err = types.decode(payload).unwrap_err();
@@ -52,43 +51,32 @@ fn empty_type_map_reports_missing_decoder_by_column_name() {
     ));
 }
 
-/// `WireSource::type_key` extracts the source's native identity from a
+/// `WireSource::wire_type` extracts the semantic type from a
 /// synthesized payload for each source.
 #[test]
-fn wire_source_type_keys_match_payload_metadata() {
-    // pg_walstream: Oid.
+fn wire_source_wire_type_matches_payload_metadata() {
     let cv = sqlite_diff_rs::pg_walstream::ColumnValue::Null;
     let pg_payload = PgWalstreamColumn {
         column_name: "id",
-        oid: 2950,
-        type_modifier: -1,
+        wire_type: WireType::Uuid,
         data: &cv,
     };
-    assert_eq!(PgWalstream::type_key(&pg_payload), 2950u32);
+    assert_eq!(PgWalstream::wire_type(&pg_payload), WireType::Uuid);
 
-    // wal2json: Arc<str> of the pg type name.
     let val = serde_json::Value::Null;
     let w2j_payload = Wal2JsonColumn {
         column_name: "id",
-        pg_type_name: "uuid",
+        wire_type: WireType::Uuid,
         value: &val,
     };
-    assert_eq!(Wal2Json::type_key(&w2j_payload), Arc::<str>::from("uuid"));
+    assert_eq!(Wal2Json::wire_type(&w2j_payload), WireType::Uuid);
 
-    // maxwell: Arc<str> of the mysql type, empty string when absent.
     let mx_payload = MaxwellColumn {
         column_name: "id",
-        mysql_type: Some("varchar"),
+        wire_type: WireType::Text,
         value: &val,
     };
-    assert_eq!(Maxwell::type_key(&mx_payload), Arc::<str>::from("varchar"));
-
-    let mx_payload_absent = MaxwellColumn {
-        column_name: "id",
-        mysql_type: None,
-        value: &val,
-    };
-    assert_eq!(Maxwell::type_key(&mx_payload_absent), Arc::<str>::from(""));
+    assert_eq!(Maxwell::wire_type(&mx_payload), WireType::Text);
 }
 
 /// `TypeMap::register` accepts any `Decoder<Src, S, B> + Send + Sync +
@@ -98,12 +86,12 @@ fn type_map_register_and_dispatch_via_null_decoder() {
     use sqlite_diff_rs::NullDecoder;
 
     let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    types.register(Arc::from("integer"), NullDecoder);
+    types.register(WireType::Int, NullDecoder);
 
     let value = serde_json::Value::Number(42.into());
     let payload = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "integer",
+        wire_type: WireType::Int,
         value: &value,
     };
     let got = types.decode(payload).unwrap();

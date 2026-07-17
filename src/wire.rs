@@ -10,15 +10,15 @@
 //! # Shape
 //!
 //! - [`WireSource`] (sealed): per-source marker with an associated
-//!   payload struct and type key. Implemented by `PgWalstream`,
-//!   `Wal2Json`, `Maxwell`.
+//!   payload struct. Each payload carries a semantic [`WireType`].
+//!   Implemented by `PgWalstream`, `Wal2Json`, `Maxwell`.
 //! - [`Decoder`]: one implementation per (source, semantic) pair.
 //!   Zero-sized unit types for stateless decoders (`BoolDecoder`,
 //!   `IntDecoder`, ...), state-carrying structs for user config.
 //! - [`WireAdapter`]: single-method dispatcher fed a per-column
 //!   payload, returns a [`Value`](crate::encoding::Value).
 //! - [`TypeMap`]: generic hashmap-backed [`WireAdapter`] implementation
-//!   keyed by `Src::TypeKey`. The primary user-facing type.
+//!   keyed by [`WireType`]. The primary user-facing type.
 //! - [`TypeMapDefaults`]: per-source `defaults()` builder for a
 //!   [`TypeMap`] pre-populated with the crate's self-evident mappings.
 mod adapter;
@@ -33,6 +33,7 @@ mod source;
 mod type_map;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod uuid_helpers;
+mod wire_type;
 
 #[cfg(feature = "maxwell")]
 mod impls_maxwell;
@@ -55,3 +56,4 @@ pub use error::DecodeError;
 pub(crate) use sealed::Sealed;
 pub use source::{Digestable, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};
+pub use wire_type::WireType;

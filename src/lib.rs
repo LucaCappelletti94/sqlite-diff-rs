@@ -42,6 +42,7 @@ pub use wire::{
     PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
     TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, TypeMap, TypeMapDefaults,
     UuidBlob16Decoder, UuidText36Decoder, WireAdapter, WireColumnTypes, WireSchema, WireSource,
+    WireType,
 };
 
 // Type aliases for common use cases

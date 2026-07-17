@@ -6,7 +6,7 @@
 //! `pg_walstream`, `wal2json`, and `maxwell`.
 //!
 //! Also asserts that `TypeMap::<Src, S, B>::defaults()` registers the
-//! canonical boolean-typed OID / type-name for each source so users who
+//! boolean `WireType` for each source so users who
 //! pass `TypeMap::defaults()` get bool decoding without any explicit
 //! registration.
 
@@ -15,14 +15,13 @@
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use bytes::Bytes;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{BoolDecoder, DecodeError, TypeMap, Value, WireAdapter};
+use sqlite_diff_rs::{BoolDecoder, DecodeError, TypeMap, Value, WireAdapter, WireType};
 
 // -- Standalone decoder contract ---------------------------------------------
 
@@ -33,14 +32,12 @@ fn bool_decoder_pg_walstream_text_t_and_f() {
 
     let payload_t = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv_t,
     };
     let payload_f = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv_f,
     };
 
@@ -57,14 +54,12 @@ fn bool_decoder_pg_walstream_binary_one_and_zero() {
 
     let payload_true = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv_true,
     };
     let payload_false = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv_false,
     };
 
@@ -79,8 +74,7 @@ fn bool_decoder_pg_walstream_null() {
     let cv_null = ColumnValue::Null;
     let payload = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv_null,
     };
     let got: Value<String, Vec<u8>> = payload.decoded_by(&BoolDecoder).unwrap();
@@ -92,8 +86,7 @@ fn bool_decoder_pg_walstream_rejects_arbitrary_text() {
     let cv = ColumnValue::text("maybe");
     let payload = PgWalstreamColumn {
         column_name: "active",
-        oid: 16,
-        type_modifier: -1,
+        wire_type: WireType::Bool,
         data: &cv,
     };
     let result: Result<Value<String, Vec<u8>>, _> = payload.decoded_by(&BoolDecoder);
@@ -108,14 +101,14 @@ fn bool_decoder_wal2json_true_and_false() {
 
     let got_true: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "active",
-        pg_type_name: "boolean",
+        wire_type: WireType::Bool,
         value: &true_json,
     }
     .decoded_by(&BoolDecoder)
     .unwrap();
     let got_false: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "active",
-        pg_type_name: "boolean",
+        wire_type: WireType::Bool,
         value: &false_json,
     }
     .decoded_by(&BoolDecoder)
@@ -129,7 +122,7 @@ fn bool_decoder_wal2json_null() {
     let null_json = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "active",
-        pg_type_name: "boolean",
+        wire_type: WireType::Bool,
         value: &null_json,
     }
     .decoded_by(&BoolDecoder)
@@ -145,7 +138,7 @@ fn bool_decoder_wal2json_rejects_non_bool_shapes() {
     for value in [&s, &n] {
         let payload = Wal2JsonColumn {
             column_name: "active",
-            pg_type_name: "boolean",
+            wire_type: WireType::Bool,
             value,
         };
         let result: Result<Value<String, Vec<u8>>, _> = payload.decoded_by(&BoolDecoder);
@@ -161,14 +154,14 @@ fn bool_decoder_maxwell_true_and_false() {
 
     let got_true: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "active",
-        mysql_type: Some("tinyint(1)"),
+        wire_type: WireType::Bool,
         value: &true_json,
     }
     .decoded_by(&BoolDecoder)
     .unwrap();
     let got_false: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "active",
-        mysql_type: Some("tinyint(1)"),
+        wire_type: WireType::Bool,
         value: &false_json,
     }
     .decoded_by(&BoolDecoder)
@@ -186,14 +179,14 @@ fn bool_decoder_maxwell_accepts_int_zero_and_one() {
 
     let got_one: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "active",
-        mysql_type: Some("tinyint(1)"),
+        wire_type: WireType::Bool,
         value: &one,
     }
     .decoded_by(&BoolDecoder)
     .unwrap();
     let got_zero: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "active",
-        mysql_type: Some("tinyint(1)"),
+        wire_type: WireType::Bool,
         value: &zero,
     }
     .decoded_by(&BoolDecoder)
@@ -214,8 +207,7 @@ fn type_map_defaults_route_bool_key_to_bool_decoder() {
     let got_pg = pg
         .decode(PgWalstreamColumn {
             column_name: "active",
-            oid: 16,
-            type_modifier: -1,
+            wire_type: WireType::Bool,
             data: &cv_t,
         })
         .unwrap();
@@ -225,7 +217,7 @@ fn type_map_defaults_route_bool_key_to_bool_decoder() {
     let got_w2j = w2j
         .decode(Wal2JsonColumn {
             column_name: "active",
-            pg_type_name: "boolean",
+            wire_type: WireType::Bool,
             value: &true_json,
         })
         .unwrap();
@@ -234,26 +226,26 @@ fn type_map_defaults_route_bool_key_to_bool_decoder() {
     let got_mx = mx
         .decode(MaxwellColumn {
             column_name: "active",
-            mysql_type: Some("tinyint(1)"),
+            wire_type: WireType::Bool,
             value: &true_json,
         })
         .unwrap();
     assert_eq!(got_mx, Value::Integer(1));
 }
 
-/// A `TypeMap` with only `BoolDecoder` registered under the wal2json
-/// `"boolean"` key still declines unregistered keys with
+/// A `TypeMap` with only `BoolDecoder` registered under
+/// `WireType::Bool` still declines unregistered types with
 /// `NoDecoderForType`.
 #[test]
 fn user_registered_bool_still_declines_unknown_keys() {
     let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    types.register(Arc::from("boolean"), BoolDecoder);
+    types.register(WireType::Bool, BoolDecoder);
 
     let val = serde_json::Value::Bool(true);
     let got_bool = types
         .decode(Wal2JsonColumn {
             column_name: "active",
-            pg_type_name: "boolean",
+            wire_type: WireType::Bool,
             value: &val,
         })
         .unwrap();
@@ -262,7 +254,7 @@ fn user_registered_bool_still_declines_unknown_keys() {
     let err = types
         .decode(Wal2JsonColumn {
             column_name: "other",
-            pg_type_name: "text",
+            wire_type: WireType::Text,
             value: &val,
         })
         .unwrap_err();

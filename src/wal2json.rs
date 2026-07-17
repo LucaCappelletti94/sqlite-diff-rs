@@ -25,7 +25,6 @@
 //! ```
 
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -190,7 +189,7 @@ pub enum ConversionError {
     Decode(#[from] crate::wire::DecodeError),
 }
 
-use crate::wire::{Sealed, WireSource};
+use crate::wire::{Sealed, WireSource, WireType};
 
 /// Marker type for the `wal2json` source.
 #[derive(Debug, Clone, Copy, Default)]
@@ -200,19 +199,9 @@ impl Sealed for Wal2Json {}
 
 impl WireSource for Wal2Json {
     type Payload<'a> = Wal2JsonColumn<'a>;
-    type TypeKey = Arc<str>;
 
-    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
-        // wal2json emits parenthesized precision/length on parameterized
-        // types (e.g. `numeric(10,2)`, `varchar(255)`). Strip the paren
-        // suffix so the base type dispatches through `defaults()` and
-        // downstream users don't have to register every precision variant.
-        let name = payload.pg_type_name;
-        let base = name
-            .split_once('(')
-            .map_or(name, |(head, _)| head)
-            .trim_end();
-        Arc::from(base)
+    fn wire_type(payload: &Self::Payload<'_>) -> WireType {
+        payload.wire_type
     }
 
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
@@ -229,9 +218,8 @@ impl WireSource for Wal2Json {
 pub struct Wal2JsonColumn<'a> {
     /// Column name.
     pub column_name: &'a str,
-    /// Postgres type name as emitted by wal2json (e.g. "integer",
-    /// "text", "uuid", "timestamp with time zone").
-    pub pg_type_name: &'a str,
+    /// Semantic column type driving decoder dispatch.
+    pub wire_type: WireType,
     /// Column value as a JSON value.
     pub value: &'a serde_json::Value,
 }
@@ -265,7 +253,7 @@ use core::hash::Hash;
 
 fn resolve_table<'a, Sch>(schema: &'a Sch, name: &str) -> Result<&'a Sch::Table, ConversionError>
 where
-    Sch: WireSchema<Wal2Json>,
+    Sch: WireSchema,
 {
     schema
         .get(name)
@@ -274,7 +262,7 @@ where
 
 impl<T, S, B> Digestable<ChangesetFormat, T, S, B> for MessageV2
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -288,7 +276,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<ChangesetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Wal2Json, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
         let Some(table_name) = self.table.as_deref() else {
@@ -329,7 +317,7 @@ where
 
 impl<T, S, B> Digestable<PatchsetFormat, T, S, B> for MessageV2
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -343,7 +331,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<PatchsetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Wal2Json, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
         let Some(table_name) = self.table.as_deref() else {
@@ -384,7 +372,7 @@ where
 
 impl<T, S, B> Digestable<ChangesetFormat, T, S, B> for ChangeV1
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -398,7 +386,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<ChangesetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Wal2Json, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
         let table = resolve_table(schema, self.table.as_str())?;
@@ -422,7 +410,7 @@ where
 
 impl<T, S, B> Digestable<PatchsetFormat, T, S, B> for ChangeV1
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -436,7 +424,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<PatchsetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Wal2Json, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
         let table = resolve_table(schema, self.table.as_str())?;
@@ -466,7 +454,7 @@ fn build_insert_from_v2<T, S, B, A>(
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -476,10 +464,10 @@ where
         let col_idx = table
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: col.name.as_str(),
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value: &col.value,
         };
         let value = adapter.decode(payload)?;
@@ -496,7 +484,7 @@ fn build_changeset_update_from_v2<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + AsRef<str>,
     B: Clone + Debug + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -506,10 +494,10 @@ where
         let col_idx = table
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: col.name.as_str(),
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value: &col.value,
         };
         let new = adapter.decode(payload)?;
@@ -526,7 +514,7 @@ fn build_patchset_update_from_v2<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -536,10 +524,10 @@ where
         let col_idx = table
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: col.name.as_str(),
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value: &col.value,
         };
         let new = adapter.decode(payload)?;
@@ -556,7 +544,7 @@ fn build_changeset_delete_from_columns<T, S, B, A>(
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Default + AsRef<str>,
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -566,10 +554,10 @@ where
         let col_idx = table
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: col.name.as_str(),
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value: &col.value,
         };
         let value = adapter.decode(payload)?;
@@ -586,7 +574,7 @@ fn build_patch_delete_from_columns<T, S, B, A>(
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -599,10 +587,10 @@ where
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
         if let Some(pk_idx) = table.primary_key_index(col_idx) {
-            let type_key = table.column_type_key(col_idx);
+            let wire_type = table.column_type(col_idx);
             let payload = Wal2JsonColumn {
                 column_name: col.name.as_str(),
-                pg_type_name: type_key.as_ref(),
+                wire_type,
                 value: &col.value,
             };
             pk_slots[pk_idx] = Some(adapter.decode(payload)?);
@@ -640,7 +628,7 @@ fn build_insert_from_v1<T, S, B, A>(
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -650,10 +638,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: name,
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value,
         };
         let decoded = adapter.decode(payload)?;
@@ -670,7 +658,7 @@ fn build_changeset_update_from_v1<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + AsRef<str>,
     B: Clone + Debug + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -680,10 +668,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: name,
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value,
         };
         let new = adapter.decode(payload)?;
@@ -700,7 +688,7 @@ fn build_patchset_update_from_v1<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -710,10 +698,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: name,
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value,
         };
         let new = adapter.decode(payload)?;
@@ -730,7 +718,7 @@ fn build_changeset_delete_from_v1<T, S, B, A>(
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Default + AsRef<str>,
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -746,10 +734,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = Wal2JsonColumn {
             column_name: name,
-            pg_type_name: type_key.as_ref(),
+            wire_type,
             value,
         };
         let decoded = adapter.decode(payload)?;
@@ -766,7 +754,7 @@ fn build_patch_delete_from_v1<T, S, B, A>(
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Wal2Json>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
@@ -784,10 +772,10 @@ where
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
         if let Some(pk_idx) = table.primary_key_index(col_idx) {
-            let type_key = table.column_type_key(col_idx);
+            let wire_type = table.column_type(col_idx);
             let payload = Wal2JsonColumn {
                 column_name: name,
-                pg_type_name: type_key.as_ref(),
+                wire_type,
                 value,
             };
             pk_slots[pk_idx] = Some(adapter.decode(payload)?);
