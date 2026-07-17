@@ -230,6 +230,7 @@ fn cross_format_insert_produces_byte_equal_patchset() {
         table: Some("users".to_string()),
         columns: Some(columns_from_vals(&schema, &vals)),
         identity: None,
+        lsn: None,
     };
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
@@ -274,6 +275,7 @@ fn cross_format_delete_produces_byte_equal_patchset() {
         table: Some("users".to_string()),
         columns: None,
         identity: Some(columns_from_vals(&schema, &vals)),
+        lsn: None,
     };
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
@@ -333,6 +335,7 @@ fn cross_format_update_produces_byte_equal_patchset() {
         table: Some("users".to_string()),
         columns: Some(columns_from_vals(&schema, &vals)),
         identity: Some(columns_from_vals(&schema, &old_vals)),
+        lsn: None,
     };
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
@@ -365,6 +368,7 @@ fn wal2json_v1_and_v2_insert_produce_byte_equal_patchset() {
         table: Some("users".to_string()),
         columns: Some(columns_from_vals(&schema, &vals)),
         identity: None,
+        lsn: None,
     };
 
     let v1_change = ChangeV1 {
