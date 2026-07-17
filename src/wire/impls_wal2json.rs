@@ -12,6 +12,7 @@ use super::decoder::{
 };
 use super::error::DecodeError;
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::wire_type::WireType;
 use crate::encoding::Value;
 use crate::wal2json::{Wal2Json, Wal2JsonColumn};
 
@@ -442,47 +443,19 @@ where
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
-            .with(alloc::sync::Arc::from("boolean"), BoolDecoder)
-            .with(alloc::sync::Arc::from("smallint"), IntDecoder)
-            .with(alloc::sync::Arc::from("integer"), IntDecoder)
-            .with(alloc::sync::Arc::from("bigint"), IntDecoder)
-            .with(alloc::sync::Arc::from("real"), RealDecoder)
-            .with(alloc::sync::Arc::from("double precision"), RealDecoder)
-            .with(alloc::sync::Arc::from("float4"), RealDecoder)
-            .with(alloc::sync::Arc::from("text"), TextDecoder)
-            .with(alloc::sync::Arc::from("varchar"), TextDecoder)
-            .with(alloc::sync::Arc::from("character varying"), TextDecoder)
-            .with(alloc::sync::Arc::from("character"), TextDecoder)
-            .with(alloc::sync::Arc::from("char"), TextDecoder)
-            .with(alloc::sync::Arc::from("name"), TextDecoder)
-            .with(alloc::sync::Arc::from("bytea"), PgByteaTextModeDecoder)
-            .with(alloc::sync::Arc::from("numeric"), DecimalTextDecoder)
-            .with(alloc::sync::Arc::from("decimal"), DecimalTextDecoder)
-            .with(
-                alloc::sync::Arc::from("timestamp"),
-                TimestampVerbatimDecoder,
-            )
-            .with(
-                alloc::sync::Arc::from("timestamp without time zone"),
-                TimestampVerbatimDecoder,
-            )
-            .with(
-                alloc::sync::Arc::from("timestamp with time zone"),
-                TimestampTzVerbatimDecoder,
-            )
-            .with(alloc::sync::Arc::from("date"), DateVerbatimDecoder)
-            .with(alloc::sync::Arc::from("time"), TimeVerbatimDecoder)
-            .with(
-                alloc::sync::Arc::from("time without time zone"),
-                TimeVerbatimDecoder,
-            )
-            .with(
-                alloc::sync::Arc::from("time with time zone"),
-                TimeVerbatimDecoder,
-            )
-            .with(alloc::sync::Arc::from("interval"), IntervalVerbatimDecoder)
-            .with(alloc::sync::Arc::from("float8"), RealDecoder)
-            .with(alloc::sync::Arc::from("json"), JsonVerbatimDecoder)
-            .with(alloc::sync::Arc::from("jsonb"), JsonVerbatimDecoder)
+            .with(WireType::Bool, BoolDecoder)
+            .with(WireType::Int, IntDecoder)
+            .with(WireType::Real, RealDecoder)
+            .with(WireType::Text, TextDecoder)
+            .with(WireType::Bytes, PgByteaTextModeDecoder)
+            .with(WireType::Uuid, UuidText36Decoder)
+            .with(WireType::Decimal, DecimalTextDecoder)
+            .with(WireType::Timestamp, TimestampVerbatimDecoder)
+            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
+            .with(WireType::Date, DateVerbatimDecoder)
+            .with(WireType::Time, TimeVerbatimDecoder)
+            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Json, JsonVerbatimDecoder)
+            .with(WireType::Jsonb, JsonVerbatimDecoder)
     }
 }

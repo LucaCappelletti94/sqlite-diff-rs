@@ -23,7 +23,6 @@
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -149,7 +148,7 @@ use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
 
-use crate::wire::{Sealed, WireSource};
+use crate::wire::{Sealed, WireSource, WireType};
 
 use crate::builders::{DiffOps, DiffSetBuilder, PatchsetFormat};
 use crate::wire::WireAdapter;
@@ -164,24 +163,9 @@ impl Sealed for Maxwell {}
 
 impl WireSource for Maxwell {
     type Payload<'a> = MaxwellColumn<'a>;
-    type TypeKey = Arc<str>;
 
-    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey {
-        // Maxwell's `--include_types` emits raw MySQL type expressions
-        // with modifiers (e.g. `varchar(255)`, `decimal(10,2)`). Strip
-        // the parenthesized suffix so base names dispatch through
-        // `defaults()`. Two exceptions preserve their modifier: the
-        // `tinyint(1)` bool convention and `bigint unsigned` (which
-        // uses a suffix keyword, not parens).
-        let name = payload.mysql_type.unwrap_or("");
-        if name == "tinyint(1)" {
-            return Arc::from(name);
-        }
-        let base = name
-            .split_once('(')
-            .map_or(name, |(head, _)| head)
-            .trim_end();
-        Arc::from(base)
+    fn wire_type(payload: &Self::Payload<'_>) -> WireType {
+        payload.wire_type
     }
 
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
@@ -191,18 +175,14 @@ impl WireSource for Maxwell {
 
 /// Per-column payload for the `maxwell` source.
 ///
-/// `mysql_type` is `Some` when the Maxwell daemon runs with
-/// `--include_types`. When `None`, the empty-string key is used and
-/// [`TypeMap`](crate::wire::TypeMap) lookups will fail with
-/// [`DecodeError::NoDecoderForType`](crate::wire::DecodeError::NoDecoderForType)
-/// unless the user registers a `""` mapping explicitly.
+/// The schema supplies the semantic [`WireType`] per column, independent
+/// of the MySQL type name Maxwell may emit.
 #[derive(Debug, Clone, Copy)]
 pub struct MaxwellColumn<'a> {
     /// Column name.
     pub column_name: &'a str,
-    /// MySQL type name (e.g. "int", "varchar", "datetime"). `None`
-    /// when the daemon runs without `--include_types`.
-    pub mysql_type: Option<&'a str>,
+    /// Semantic column type driving decoder dispatch.
+    pub wire_type: WireType,
     /// Column value as a JSON value.
     pub value: &'a serde_json::Value,
 }
@@ -230,7 +210,7 @@ use crate::wire::{Digestable, WireColumnTypes, WireSchema};
 
 impl<T, S, B> Digestable<ChangesetFormat, T, S, B> for Message
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -244,7 +224,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<ChangesetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Maxwell, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
         let table = resolve_table(schema, self.table.as_str())?;
@@ -272,7 +252,7 @@ where
 
 impl<T, S, B> Digestable<PatchsetFormat, T, S, B> for Message
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
     B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
 {
@@ -286,7 +266,7 @@ where
         adapter: &A,
     ) -> Result<DiffSetBuilder<PatchsetFormat, T, S, B>, ConversionError>
     where
-        Sch: WireSchema<Maxwell, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
         let table = resolve_table(schema, self.table.as_str())?;
@@ -309,7 +289,7 @@ where
 
 fn resolve_table<'a, Sch>(schema: &'a Sch, name: &str) -> Result<&'a Sch::Table, ConversionError>
 where
-    Sch: WireSchema<Maxwell>,
+    Sch: WireSchema,
 {
     schema
         .get(name)
@@ -322,7 +302,7 @@ fn build_insert_from_maxwell<T, S, B, A>(
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
@@ -332,10 +312,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = MaxwellColumn {
             column_name: name.as_str(),
-            mysql_type: Some(type_key.as_ref()),
+            wire_type,
             value,
         };
         let decoded = adapter.decode(payload)?;
@@ -353,7 +333,7 @@ fn build_changeset_update_from_maxwell<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Debug + AsRef<str>,
     B: Clone + Debug + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
@@ -363,11 +343,11 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
 
         let new_payload = MaxwellColumn {
             column_name: name.as_str(),
-            mysql_type: Some(type_key.as_ref()),
+            wire_type,
             value: new_value,
         };
         let new = adapter.decode(new_payload)?;
@@ -377,7 +357,7 @@ where
         {
             let old_payload = MaxwellColumn {
                 column_name: name.as_str(),
-                mysql_type: Some(type_key.as_ref()),
+                wire_type,
                 value: old_value,
             };
             let old = adapter.decode(old_payload)?;
@@ -400,7 +380,7 @@ fn build_patchset_update_from_maxwell<T, S, B, A>(
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
@@ -410,10 +390,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = MaxwellColumn {
             column_name: name.as_str(),
-            mysql_type: Some(type_key.as_ref()),
+            wire_type,
             value,
         };
         let decoded = adapter.decode(payload)?;
@@ -430,7 +410,7 @@ fn build_changeset_delete_from_maxwell<T, S, B, A>(
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + Default + AsRef<str>,
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
@@ -440,10 +420,10 @@ where
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let type_key = table.column_type_key(col_idx);
+        let wire_type = table.column_type(col_idx);
         let payload = MaxwellColumn {
             column_name: name.as_str(),
-            mysql_type: Some(type_key.as_ref()),
+            wire_type,
             value,
         };
         let decoded = adapter.decode(payload)?;
@@ -460,7 +440,7 @@ fn build_patch_delete_from_maxwell<T, S, B, A>(
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
 where
-    T: NamedColumns + WireColumnTypes<Maxwell>,
+    T: NamedColumns + WireColumnTypes,
     S: Clone + AsRef<str>,
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
@@ -473,10 +453,10 @@ where
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
         if let Some(pk_idx) = table.primary_key_index(col_idx) {
-            let type_key = table.column_type_key(col_idx);
+            let wire_type = table.column_type(col_idx);
             let payload = MaxwellColumn {
                 column_name: name.as_str(),
-                mysql_type: Some(type_key.as_ref()),
+                wire_type,
                 value,
             };
             pk_slots[pk_idx] = Some(adapter.decode(payload)?);

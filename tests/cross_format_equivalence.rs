@@ -23,16 +23,16 @@ use sqlite_diff_rs::pg_walstream::{ColumnValue, EventType, PgWalstream};
 use sqlite_diff_rs::wal2json::{Action, Column, MessageV2, Wal2Json};
 use sqlite_diff_rs::{
     DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap, Value, WireColumnTypes,
-    WireSchema,
+    WireSchema, WireType,
 };
 
-/// Newtype around [`SimpleTable`] that answers per-column wire-type
-/// queries for both supported sources. Delegates every schema method
-/// to the inner `SimpleTable`.
+/// Newtype around [`SimpleTable`] that answers per-column semantic
+/// [`WireType`] queries. Delegates every schema method to the inner
+/// `SimpleTable`.
 #[derive(Debug, Clone)]
 struct UsersTable {
     inner: SimpleTable,
-    pg_oids: Vec<u32>,
+    wire_types: Vec<WireType>,
     pg_type_names: Vec<Arc<str>>,
 }
 
@@ -87,15 +87,9 @@ impl NamedColumns for UsersTable {
     }
 }
 
-impl WireColumnTypes<PgWalstream> for UsersTable {
-    fn column_type_key(&self, column_index: usize) -> u32 {
-        self.pg_oids[column_index]
-    }
-}
-
-impl WireColumnTypes<Wal2Json> for UsersTable {
-    fn column_type_key(&self, column_index: usize) -> Arc<str> {
-        Arc::clone(&self.pg_type_names[column_index])
+impl WireColumnTypes for UsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        self.wire_types[column_index]
     }
 }
 
@@ -107,14 +101,7 @@ struct AppSchema {
     users: UsersTable,
 }
 
-impl WireSchema<PgWalstream> for AppSchema {
-    type Table = UsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
-        (table_name == self.users.name()).then_some(&self.users)
-    }
-}
-
-impl WireSchema<Wal2Json> for AppSchema {
+impl WireSchema for AppSchema {
     type Table = UsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         (table_name == self.users.name()).then_some(&self.users)
@@ -132,7 +119,14 @@ fn scenario_scalar_row() -> (
         &["id", "active", "handle", "credits", "price", "ts"],
         &[0],
     );
-    let pg_oids: Vec<u32> = alloc::vec![20, 16, 25, 20, 1700, 1184];
+    let wire_types: Vec<WireType> = alloc::vec![
+        WireType::Int,
+        WireType::Bool,
+        WireType::Text,
+        WireType::Int,
+        WireType::Decimal,
+        WireType::TimestampTz,
+    ];
     let pg_type_names: Vec<Arc<str>> = alloc::vec![
         Arc::from("bigint"),
         Arc::from("boolean"),
@@ -144,7 +138,7 @@ fn scenario_scalar_row() -> (
     let schema = AppSchema {
         users: UsersTable {
             inner,
-            pg_oids,
+            wire_types,
             pg_type_names,
         },
     };

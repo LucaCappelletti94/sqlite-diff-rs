@@ -13,14 +13,14 @@ use crate::encoding::Value;
 ///
 /// Object-safe: `dyn WireAdapter<Src, S, B>` works. The primary
 /// implementation is [`TypeMap<Src, S, B>`](super::TypeMap), which
-/// dispatches on `Src::TypeKey` via a hashmap.
+/// dispatches on [`WireType`](super::WireType) via a hashmap.
 pub trait WireAdapter<Src: WireSource, S, B> {
     /// Decode one column payload.
     ///
     /// # Errors
     ///
     /// Returns [`DecodeError::NoDecoderForType`] when the underlying
-    /// registry has no decoder for the payload's type key, or the
+    /// registry has no decoder for the payload's semantic type, or the
     /// specific decoder's own failure mode when it does.
     fn decode(&self, payload: Src::Payload<'_>) -> Result<Value<S, B>, DecodeError>;
 }

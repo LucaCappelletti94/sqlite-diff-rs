@@ -1,21 +1,18 @@
 //! [`WireSource`]: sealed marker trait for CDC wire formats.
 
-use core::hash::Hash;
-
 use super::sealed::Sealed;
+use super::wire_type::WireType;
 
 /// Per-format marker naming a CDC wire source.
 ///
 /// Implementors are unit structs owned by each format module
-/// (`PgWalstream`, `Wal2Json`, `Maxwell`). The associated types describe
-/// the format's per-column payload and its native type-identity key.
+/// (`PgWalstream`, `Wal2Json`, `Maxwell`). The associated payload type
+/// describes the format's per-column wire data.
 ///
-/// # Type keys
-///
-/// - `PgWalstream::TypeKey = pg_walstream::Oid` (u32 alias).
-/// - `Wal2Json::TypeKey = alloc::sync::Arc<str>` (Postgres type name).
-/// - `Maxwell::TypeKey = alloc::sync::Arc<str>` (MySQL type name; empty
-///   string when the Maxwell daemon runs without `--include_types`).
+/// Type identity is no longer source-native. Every payload carries a
+/// source-independent [`WireType`] that selects the decoder, so one
+/// semantic catalog drives every source without a per-source
+/// translation table.
 pub trait WireSource: Sealed {
     /// Per-column payload the format hands to a decoder.
     ///
@@ -23,26 +20,24 @@ pub trait WireSource: Sealed {
     /// errors are self-describing without an outer wrapping layer.
     type Payload<'a>;
 
-    /// Type identity as seen on this source's wire.
-    type TypeKey: Hash + Eq + Clone;
-
-    /// Extract the type key from a payload for dispatch.
-    fn type_key(payload: &Self::Payload<'_>) -> Self::TypeKey;
+    /// Semantic type of the column carried by the payload, used for
+    /// decoder dispatch.
+    fn wire_type(payload: &Self::Payload<'_>) -> WireType;
 
     /// Extract the column name from a payload for diagnostic messages.
     fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str;
 }
 
-/// Schema-side source-native type key for one column of one table.
-pub trait WireColumnTypes<Src: WireSource> {
-    /// Type key for the column at `column_index`.
-    fn column_type_key(&self, column_index: usize) -> Src::TypeKey;
+/// Schema-side semantic type for one column of one table.
+pub trait WireColumnTypes {
+    /// Semantic [`WireType`] for the column at `column_index`.
+    fn column_type(&self, column_index: usize) -> WireType;
 }
 
 /// Table-name lookup for the [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest) entry point.
-pub trait WireSchema<Src: WireSource> {
+pub trait WireSchema {
     /// Concrete schema type for one table.
-    type Table: crate::schema::NamedColumns + WireColumnTypes<Src>;
+    type Table: crate::schema::NamedColumns + WireColumnTypes;
 
     /// Resolve a table name to its schema entry.
     fn get(&self, table_name: &str) -> Option<&Self::Table>;
@@ -55,7 +50,7 @@ pub trait WireSchema<Src: WireSource> {
 pub trait Digestable<F, T, S, B>
 where
     F: crate::builders::Format<S, B>,
-    T: crate::schema::NamedColumns + WireColumnTypes<Self::Src>,
+    T: crate::schema::NamedColumns + WireColumnTypes,
 {
     /// Wire source this event came from.
     type Src: WireSource;
@@ -76,6 +71,6 @@ where
         adapter: &A,
     ) -> Result<crate::builders::DiffSetBuilder<F, T, S, B>, Self::Error>
     where
-        Sch: WireSchema<Self::Src, Table = T>,
+        Sch: WireSchema<Table = T>,
         A: super::WireAdapter<Self::Src, S, B>;
 }

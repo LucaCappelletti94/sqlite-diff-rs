@@ -103,13 +103,10 @@ pub async fn get_changes_v2(client: &Client, slot: &str) -> Vec<String> {
 // ============================================================================
 
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
-use sqlite_diff_rs::pg_walstream::PgWalstream;
-use sqlite_diff_rs::wal2json::Wal2Json;
 use sqlite_diff_rs::{
     DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable, Value, WireColumnTypes,
-    WireSchema,
+    WireSchema, WireType,
 };
 
 /// The `users` table both roundtrip tests exercise. Columns:
@@ -118,8 +115,7 @@ use sqlite_diff_rs::{
 #[derive(Debug, Clone)]
 pub struct UsersTable {
     inner: SimpleTable,
-    pg_oids: Vec<u32>,
-    pg_type_names: Vec<Arc<str>>,
+    wire_types: Vec<WireType>,
 }
 
 impl UsersTable {
@@ -132,16 +128,13 @@ impl UsersTable {
                 &["id", "active", "handle", "price", "ts", "metadata"],
                 &[0],
             ),
-            // int8 = 20, bool = 16, text = 25, numeric = 1700,
-            // timestamptz = 1184, jsonb = 3802.
-            pg_oids: vec![20, 16, 25, 1700, 1184, 3802],
-            pg_type_names: vec![
-                Arc::from("bigint"),
-                Arc::from("boolean"),
-                Arc::from("text"),
-                Arc::from("numeric"),
-                Arc::from("timestamp with time zone"),
-                Arc::from("jsonb"),
+            wire_types: vec![
+                WireType::Int,
+                WireType::Bool,
+                WireType::Text,
+                WireType::Decimal,
+                WireType::TimestampTz,
+                WireType::Jsonb,
             ],
         }
     }
@@ -210,15 +203,9 @@ impl NamedColumns for UsersTable {
     }
 }
 
-impl WireColumnTypes<PgWalstream> for UsersTable {
-    fn column_type_key(&self, column_index: usize) -> u32 {
-        self.pg_oids[column_index]
-    }
-}
-
-impl WireColumnTypes<Wal2Json> for UsersTable {
-    fn column_type_key(&self, column_index: usize) -> Arc<str> {
-        Arc::clone(&self.pg_type_names[column_index])
+impl WireColumnTypes for UsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        self.wire_types[column_index]
     }
 }
 
@@ -230,14 +217,7 @@ pub struct AppSchema {
     pub users: UsersTable,
 }
 
-impl WireSchema<PgWalstream> for AppSchema {
-    type Table = UsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
-        (table_name == self.users.name()).then_some(&self.users)
-    }
-}
-
-impl WireSchema<Wal2Json> for AppSchema {
+impl WireSchema for AppSchema {
     type Table = UsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         (table_name == self.users.name()).then_some(&self.users)

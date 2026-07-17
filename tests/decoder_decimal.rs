@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecimalTextDecoder, TypeMap, Value, WireAdapter};
+use sqlite_diff_rs::{DecimalTextDecoder, TypeMap, Value, WireAdapter, WireType};
 
 // -- pg_walstream ------------------------------------------------------------
 
@@ -33,8 +33,7 @@ fn decimal_pg_walstream_verbatim() {
         let cv = ColumnValue::text(wire);
         let got: Value<String, Vec<u8>> = PgWalstreamColumn {
             column_name: "n",
-            oid: 1700,
-            type_modifier: -1,
+            wire_type: WireType::Decimal,
             data: &cv,
         }
         .decoded_by(&DecimalTextDecoder)
@@ -48,8 +47,7 @@ fn decimal_pg_walstream_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 1700,
-        type_modifier: -1,
+        wire_type: WireType::Decimal,
         data: &cv,
     }
     .decoded_by(&DecimalTextDecoder)
@@ -64,7 +62,7 @@ fn decimal_wal2json_string_verbatim() {
     let s = serde_json::Value::String("1234567890.12345678".into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "numeric",
+        wire_type: WireType::Decimal,
         value: &s,
     }
     .decoded_by(&DecimalTextDecoder)
@@ -82,7 +80,7 @@ fn decimal_wal2json_number_serializes_via_display() {
     let n = serde_json::Value::Number(serde_json::Number::from(1234_i64));
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "numeric",
+        wire_type: WireType::Decimal,
         value: &n,
     }
     .decoded_by(&DecimalTextDecoder)
@@ -97,7 +95,7 @@ fn decimal_maxwell_string_verbatim() {
     let s = serde_json::Value::String("-5000.0000".into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "n",
-        mysql_type: Some("decimal"),
+        wire_type: WireType::Decimal,
         value: &s,
     }
     .decoded_by(&DecimalTextDecoder)
@@ -117,8 +115,7 @@ fn defaults_route_decimal_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "n",
-            oid: 1700,
-            type_modifier: -1,
+            wire_type: WireType::Decimal,
             data: &cv,
         })
         .unwrap();
@@ -128,7 +125,7 @@ fn defaults_route_decimal_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "n",
-            pg_type_name: "numeric",
+            wire_type: WireType::Decimal,
             value: &s,
         })
         .unwrap();
@@ -137,7 +134,7 @@ fn defaults_route_decimal_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "n",
-            mysql_type: Some("decimal"),
+            wire_type: WireType::Decimal,
             value: &s,
         })
         .unwrap();

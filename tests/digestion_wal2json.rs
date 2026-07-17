@@ -8,7 +8,6 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::wal2json::{
@@ -16,7 +15,7 @@ use sqlite_diff_rs::wal2json::{
 };
 use sqlite_diff_rs::{
     ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema,
+    Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -64,19 +63,19 @@ impl NamedColumns for TestUsersTable {
     }
 }
 
-impl WireColumnTypes<Wal2Json> for TestUsersTable {
-    fn column_type_key(&self, column_index: usize) -> Arc<str> {
-        // id -> integer, name -> text, active -> boolean
+impl WireColumnTypes for TestUsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        // id -> Int, name -> Text, active -> Bool
         match column_index {
-            0 => Arc::from("integer"),
-            1 => Arc::from("text"),
-            2 => Arc::from("boolean"),
+            0 => WireType::Int,
+            1 => WireType::Text,
+            2 => WireType::Bool,
             _ => panic!("column {column_index} out of range"),
         }
     }
 }
 
-impl WireSchema<Wal2Json> for TestSchema {
+impl WireSchema for TestSchema {
     type Table = TestUsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         if table_name == "users" {

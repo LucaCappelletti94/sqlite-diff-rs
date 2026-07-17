@@ -22,7 +22,7 @@ use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
-    DecodeError, Int64OverflowToTextDecoder, IntDecoder, TypeMap, Value, WireAdapter,
+    DecodeError, Int64OverflowToTextDecoder, IntDecoder, TypeMap, Value, WireAdapter, WireType,
 };
 
 // -- IntDecoder: pg_walstream ------------------------------------------------
@@ -34,16 +34,14 @@ fn int_decoder_pg_walstream_text_positive_and_negative() {
 
     let got_pos: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_pos,
     }
     .decoded_by(&IntDecoder)
     .unwrap();
     let got_neg: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_neg,
     }
     .decoded_by(&IntDecoder)
@@ -60,16 +58,14 @@ fn int_decoder_pg_walstream_text_i64_bounds() {
 
     let got_max: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_max,
     }
     .decoded_by(&IntDecoder)
     .unwrap();
     let got_min: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_min,
     }
     .decoded_by(&IntDecoder)
@@ -79,8 +75,7 @@ fn int_decoder_pg_walstream_text_i64_bounds() {
 
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "n",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_over,
     }
     .decoded_by(&IntDecoder);
@@ -97,8 +92,7 @@ fn int_decoder_pg_walstream_binary_int2_int4_int8() {
     let cv_two = ColumnValue::binary_bytes(Bytes::copy_from_slice(&two));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 21,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_two,
     }
     .decoded_by(&IntDecoder)
@@ -110,8 +104,7 @@ fn int_decoder_pg_walstream_binary_int2_int4_int8() {
     let cv_four = ColumnValue::binary_bytes(Bytes::copy_from_slice(&four));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_four,
     }
     .decoded_by(&IntDecoder)
@@ -123,8 +116,7 @@ fn int_decoder_pg_walstream_binary_int2_int4_int8() {
     let cv_eight = ColumnValue::binary_bytes(Bytes::copy_from_slice(&eight));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 20,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv_eight,
     }
     .decoded_by(&IntDecoder)
@@ -137,8 +129,7 @@ fn int_decoder_pg_walstream_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "n",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv,
     }
     .decoded_by(&IntDecoder)
@@ -151,8 +142,7 @@ fn int_decoder_pg_walstream_rejects_non_int_text() {
     let cv = ColumnValue::text("hello");
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "n",
-        oid: 23,
-        type_modifier: -1,
+        wire_type: WireType::Int,
         data: &cv,
     }
     .decoded_by(&IntDecoder);
@@ -169,7 +159,7 @@ fn int_decoder_wal2json_valid_i64() {
     let n = serde_json::Value::Number(42.into());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "integer",
+        wire_type: WireType::Int,
         value: &n,
     }
     .decoded_by(&IntDecoder)
@@ -182,7 +172,7 @@ fn int_decoder_wal2json_null() {
     let n = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "integer",
+        wire_type: WireType::Int,
         value: &n,
     }
     .decoded_by(&IntDecoder)
@@ -195,7 +185,7 @@ fn int_decoder_wal2json_rejects_non_number() {
     let s = serde_json::Value::String("42".into());
     let result: Result<Value<String, Vec<u8>>, _> = Wal2JsonColumn {
         column_name: "n",
-        pg_type_name: "integer",
+        wire_type: WireType::Int,
         value: &s,
     }
     .decoded_by(&IntDecoder);
@@ -212,7 +202,7 @@ fn int_decoder_maxwell_valid_i64() {
     let n = serde_json::Value::Number((-9999_i64).into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "n",
-        mysql_type: Some("int"),
+        wire_type: WireType::Int,
         value: &n,
     }
     .decoded_by(&IntDecoder)
@@ -227,7 +217,7 @@ fn overflow_decoder_fits_i64_maxwell() {
     let at_max = serde_json::Value::Number(i64::MAX.into());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "big",
-        mysql_type: Some("bigint unsigned"),
+        wire_type: WireType::Int,
         value: &at_max,
     }
     .decoded_by(&Int64OverflowToTextDecoder)
@@ -242,7 +232,7 @@ fn overflow_decoder_overflows_to_text_maxwell() {
     let over_json = serde_json::from_str::<serde_json::Value>("9223372036854775808").unwrap();
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "big",
-        mysql_type: Some("bigint unsigned"),
+        wire_type: WireType::Int,
         value: &over_json,
     }
     .decoded_by(&Int64OverflowToTextDecoder)
@@ -252,7 +242,7 @@ fn overflow_decoder_overflows_to_text_maxwell() {
     let very_large = serde_json::from_str::<serde_json::Value>("18000000000000000000").unwrap();
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "big",
-        mysql_type: Some("bigint unsigned"),
+        wire_type: WireType::Int,
         value: &very_large,
     }
     .decoded_by(&Int64OverflowToTextDecoder)
@@ -265,7 +255,7 @@ fn overflow_decoder_null() {
     let n = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "big",
-        mysql_type: Some("bigint unsigned"),
+        wire_type: WireType::Int,
         value: &n,
     }
     .decoded_by(&Int64OverflowToTextDecoder)
@@ -286,8 +276,7 @@ fn type_map_defaults_route_int_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "n",
-            oid: 23,
-            type_modifier: -1,
+            wire_type: WireType::Int,
             data: &cv,
         })
         .unwrap();
@@ -298,7 +287,7 @@ fn type_map_defaults_route_int_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "n",
-            pg_type_name: "integer",
+            wire_type: WireType::Int,
             value: &json,
         })
         .unwrap();
@@ -308,7 +297,7 @@ fn type_map_defaults_route_int_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "n",
-            mysql_type: Some("int"),
+            wire_type: WireType::Int,
             value: &json,
         })
         .unwrap();
@@ -319,7 +308,7 @@ fn type_map_defaults_route_int_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "big",
-            mysql_type: Some("bigint unsigned"),
+            wire_type: WireType::Int,
             value: &over,
         })
         .unwrap();

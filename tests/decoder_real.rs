@@ -17,7 +17,7 @@ use bytes::Bytes;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecodeError, RealDecoder, TypeMap, Value, WireAdapter};
+use sqlite_diff_rs::{DecodeError, RealDecoder, TypeMap, Value, WireAdapter, WireType};
 
 // -- RealDecoder: pg_walstream text mode -------------------------------------
 
@@ -34,8 +34,7 @@ fn real_decoder_pg_walstream_text_basic() {
         let cv = ColumnValue::text(wire);
         let got: Value<String, Vec<u8>> = PgWalstreamColumn {
             column_name: "x",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &cv,
         }
         .decoded_by(&RealDecoder)
@@ -49,8 +48,7 @@ fn real_decoder_pg_walstream_text_nan_becomes_null() {
     let cv = ColumnValue::text("NaN");
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv,
     }
     .decoded_by(&RealDecoder)
@@ -65,16 +63,14 @@ fn real_decoder_pg_walstream_text_infinities() {
 
     let got_pos: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv_pos,
     }
     .decoded_by(&RealDecoder)
     .unwrap();
     let got_neg: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv_neg,
     }
     .decoded_by(&RealDecoder)
@@ -90,8 +86,7 @@ fn real_decoder_pg_walstream_binary_float4_and_float8() {
     let cv_f4 = ColumnValue::binary_bytes(Bytes::copy_from_slice(&f4));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 700,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv_f4,
     }
     .decoded_by(&RealDecoder)
@@ -103,8 +98,7 @@ fn real_decoder_pg_walstream_binary_float4_and_float8() {
     let cv_f8 = ColumnValue::binary_bytes(Bytes::copy_from_slice(&f8));
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv_f8,
     }
     .decoded_by(&RealDecoder)
@@ -117,8 +111,7 @@ fn real_decoder_pg_walstream_null() {
     let cv = ColumnValue::Null;
     let got: Value<String, Vec<u8>> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv,
     }
     .decoded_by(&RealDecoder)
@@ -131,8 +124,7 @@ fn real_decoder_pg_walstream_rejects_non_float_text() {
     let cv = ColumnValue::text("not a number");
     let result: Result<Value<String, Vec<u8>>, _> = PgWalstreamColumn {
         column_name: "x",
-        oid: 701,
-        type_modifier: -1,
+        wire_type: WireType::Real,
         data: &cv,
     }
     .decoded_by(&RealDecoder);
@@ -149,7 +141,7 @@ fn real_decoder_wal2json_number() {
     let n = serde_json::Value::Number(serde_json::Number::from_f64(0.25).unwrap());
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "x",
-        pg_type_name: "double precision",
+        wire_type: WireType::Real,
         value: &n,
     }
     .decoded_by(&RealDecoder)
@@ -162,7 +154,7 @@ fn real_decoder_wal2json_null() {
     let n = serde_json::Value::Null;
     let got: Value<String, Vec<u8>> = Wal2JsonColumn {
         column_name: "x",
-        pg_type_name: "double precision",
+        wire_type: WireType::Real,
         value: &n,
     }
     .decoded_by(&RealDecoder)
@@ -177,7 +169,7 @@ fn real_decoder_maxwell_number() {
     let n = serde_json::Value::Number(serde_json::Number::from_f64(-1.5).unwrap());
     let got: Value<String, Vec<u8>> = MaxwellColumn {
         column_name: "x",
-        mysql_type: Some("double"),
+        wire_type: WireType::Real,
         value: &n,
     }
     .decoded_by(&RealDecoder)
@@ -198,8 +190,7 @@ fn type_map_defaults_route_real_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "x",
-            oid: 700,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &cv_f4,
         })
         .unwrap();
@@ -210,8 +201,7 @@ fn type_map_defaults_route_real_types() {
     let got = pg
         .decode(PgWalstreamColumn {
             column_name: "x",
-            oid: 701,
-            type_modifier: -1,
+            wire_type: WireType::Real,
             data: &cv_f8,
         })
         .unwrap();
@@ -222,7 +212,7 @@ fn type_map_defaults_route_real_types() {
     let got = w2j
         .decode(Wal2JsonColumn {
             column_name: "x",
-            pg_type_name: "real",
+            wire_type: WireType::Real,
             value: &n,
         })
         .unwrap();
@@ -232,7 +222,7 @@ fn type_map_defaults_route_real_types() {
     let got = mx
         .decode(MaxwellColumn {
             column_name: "x",
-            mysql_type: Some("float"),
+            wire_type: WireType::Real,
             value: &n,
         })
         .unwrap();
