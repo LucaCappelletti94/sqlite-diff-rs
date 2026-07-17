@@ -11,7 +11,9 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use sqlite_diff_rs::wal2json::{Action, ChangeV1, Column, ConversionError, MessageV2, Wal2Json};
+use sqlite_diff_rs::wal2json::{
+    Action, ChangeV1, Column, ConversionError, MessageV2, Wal2Json, parse_v2,
+};
 use sqlite_diff_rs::{
     ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
     Value, WireColumnTypes, WireSchema,
@@ -148,6 +150,7 @@ fn w2j_v2_changeset_insert() {
         table: Some("users".to_string()),
         columns: Some(all_columns(1, "Alice", true)),
         identity: None,
+        lsn: None,
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -168,6 +171,7 @@ fn w2j_v2_changeset_update() {
         table: Some("users".to_string()),
         columns: Some(all_columns(1, "Alicia", true)),
         identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -188,6 +192,7 @@ fn w2j_v2_changeset_delete() {
         table: Some("users".to_string()),
         columns: None,
         identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -210,6 +215,7 @@ fn w2j_v2_patchset_insert() {
         table: Some("users".to_string()),
         columns: Some(all_columns(1, "Alice", true)),
         identity: None,
+        lsn: None,
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -230,6 +236,7 @@ fn w2j_v2_patchset_update() {
         table: Some("users".to_string()),
         columns: Some(all_columns(1, "Alicia", true)),
         identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -250,6 +257,7 @@ fn w2j_v2_patchset_delete() {
         table: Some("users".to_string()),
         columns: None,
         identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -448,6 +456,7 @@ fn w2j_table_not_found_is_error() {
         table: Some("nonexistent".to_string()),
         columns: Some(all_columns(1, "Alice", true)),
         identity: None,
+        lsn: None,
     };
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
@@ -470,6 +479,7 @@ fn w2j_missing_columns_is_error_for_insert() {
         table: Some("users".to_string()),
         columns: None,
         identity: None,
+        lsn: None,
     };
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
@@ -492,6 +502,7 @@ fn w2j_missing_identity_is_error_for_delete() {
         table: Some("users".to_string()),
         columns: None,
         identity: None,
+        lsn: None,
     };
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
@@ -518,6 +529,7 @@ fn w2j_column_not_found_is_error() {
             serde_json::Value::Number(serde_json::Number::from(1_i64))
         )]),
         identity: None,
+        lsn: None,
     };
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
@@ -540,6 +552,7 @@ fn w2j_decode_error_is_propagated() {
         table: Some("users".to_string()),
         columns: Some(all_columns(1, "Alice", true)),
         identity: None,
+        lsn: None,
     };
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
@@ -590,6 +603,7 @@ fn w2j_v2_no_table_is_ignored() {
         table: None,
         columns: Some(all_columns(1, "Alice", true)),
         identity: None,
+        lsn: None,
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -612,6 +626,7 @@ fn w2j_v2_begin_commit_truncate_message_are_ignored() {
             table: Some("users".to_string()),
             columns: Some(all_columns(1, "Alice", true)),
             identity: None,
+            lsn: None,
         };
 
         let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -643,5 +658,61 @@ fn w2j_v1_unknown_kind_is_ignored() {
     assert!(
         cs.build().is_empty(),
         "unknown kind must produce empty output"
+    );
+}
+
+// -- MessageV2 lsn field ---------------------------------------------------
+
+#[test]
+fn w2j_v2_lsn_present_parses() {
+    let json = r#"{"action":"I","schema":"public","table":"users","lsn":"0/16B2270","columns":[{"name":"id","type":"integer","value":1}]}"#;
+    let msg = parse_v2(json).unwrap();
+    assert_eq!(msg.lsn.as_deref(), Some("0/16B2270"));
+}
+
+#[test]
+fn w2j_v2_lsn_absent_defaults_none() {
+    let json = r#"{"action":"I","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1}]}"#;
+    let msg = parse_v2(json).unwrap();
+    assert_eq!(msg.lsn, None);
+}
+
+#[test]
+fn w2j_v2_lsn_does_not_affect_digest() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    let without = MessageV2 {
+        action: Action::I,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(all_columns(1, "Alice", true)),
+        identity: None,
+        lsn: None,
+    };
+    let with = MessageV2 {
+        lsn: Some("0/16B2270".to_string()),
+        ..without.clone()
+    };
+
+    let cs_without: ChangeSet<TestUsersTable, String, Vec<u8>> = ChangeSet::new()
+        .digest(&without, &schema, &adapter)
+        .unwrap();
+    let cs_with: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&with, &schema, &adapter).unwrap();
+    assert_eq!(
+        cs_without.build(),
+        cs_with.build(),
+        "changeset output must be identical regardless of lsn"
+    );
+
+    let ps_without: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&without, &schema, &adapter).unwrap();
+    let ps_with: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&with, &schema, &adapter).unwrap();
+    assert_eq!(
+        ps_without.build(),
+        ps_with.build(),
+        "patchset output must be identical regardless of lsn"
     );
 }

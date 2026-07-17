@@ -83,6 +83,12 @@ pub struct MessageV2 {
     /// Identity columns for the old row (UPDATE, DELETE).
     #[serde(default)]
     pub identity: Option<Vec<Column>>,
+    /// `PostgreSQL` LSN in `hi/lo` hex notation (for example `0/16B2270`),
+    /// present when wal2json runs with `include-lsn=true`. `None` otherwise.
+    /// Kept as a raw string so this module stays free of any Postgres-specific
+    /// numeric LSN type. The consumer decides how to interpret it.
+    #[serde(default)]
+    pub lsn: Option<String>,
 }
 
 /// Old key information for v1 updates/deletes.
@@ -847,6 +853,7 @@ mod arbitrary_impl {
                 table: u.arbitrary()?,
                 columns: u.arbitrary()?,
                 identity: u.arbitrary()?,
+                lsn: u.arbitrary()?,
             })
         }
     }
