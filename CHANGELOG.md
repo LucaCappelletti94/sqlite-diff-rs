@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+`wal2json::MessageV2` now carries the optional wal2json LSN.
+
+### Added
+
+`lsn: Option<String>` field on `wal2json::MessageV2`, populated from the message's `lsn` when wal2json runs with `include-lsn=true` and `None` otherwise. The value stays a raw `hi/lo` hex string (for example `0/16B2270`) so the module carries no Postgres-specific numeric LSN type, and the consumer decides how to parse it. The `Digestable` wire output is byte-identical whether or not the field is present.
+
+### Breaking
+
+Struct-literal construction of `MessageV2` must now supply `lsn` (for example `lsn: None`). Deserialization from wal2json JSON is unaffected because the field is `#[serde(default)]`.
+
 ## 0.2.0
 
 Schema-aware forward conversion for CDC wire formats. Downstream users register a type-to-decoder mapping once and consume `pg_walstream`, `wal2json`, or `maxwell` interchangeably.
