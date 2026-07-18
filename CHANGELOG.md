@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+The optional `pg_walstream` dependency moves from 0.7 to 0.8.
+
+### Breaking
+
+The `pg_walstream` and `pg_walstream_reverse` module re-exports (`EventType`, `RowData`, `ColumnValue`, `ChangeEvent`, `ReplicaIdentity`, `ColumnData`, `ColumnInfo`, `LogicalReplicationMessage`, `TupleData`, `Oid`, and the rest) now resolve to `pg_walstream` 0.8 types. Consumers of the `pg-walstream` feature that also depend on `pg_walstream` directly must move to 0.8. Enabling the feature raises the minimum supported Rust version to 1.87, which `pg_walstream` 0.8 requires.
+
 ## 0.4.0
 
 Source-independent semantic type key for `digest`. A catalog carrying semantic column types now drives `DiffSetBuilder::digest` for every wire source without translating to a source-native key.
