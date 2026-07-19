@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+### Fixed
+
+The wal2json `bytea` decoder (`PgByteaTextModeDecoder`) now accepts wal2json's bare lowercase hex form (for example `0001deadff`) in addition to the Postgres-style `\x`-prefixed hex form, so `bytea` columns round-trip on the wal2json vehicle. The pgoutput and Maxwell paths are unchanged.
+
 ## 0.5.0
 
 The optional `pg_walstream` dependency moves from 0.7 to 0.8.
