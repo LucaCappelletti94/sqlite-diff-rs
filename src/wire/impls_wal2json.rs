@@ -232,7 +232,8 @@ macro_rules! not_yet_impl {
 // ------------------------------------------------------------------
 // PgByteaTextModeDecoder
 //
-// wal2json v2 emits PG BYTEA as a JSON string in `\xHEX` form.
+// wal2json v2 emits PG BYTEA as a JSON string of bare lowercase hex
+// (no `\x` prefix). An optional `\x` prefix is also accepted.
 // Null pass-through.
 // ------------------------------------------------------------------
 
@@ -243,16 +244,18 @@ where
     fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
         match payload.value {
             serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => match super::bytes_helpers::decode_pg_hex_escape(s) {
-                Ok(bytes) => Ok(Value::Blob(B::from(bytes))),
-                Err(at) => Err(DecodeError::InvalidHexEscape {
-                    column: payload.column_name.to_string(),
-                    at,
-                }),
-            },
+            serde_json::Value::String(s) => {
+                match super::bytes_helpers::decode_wal2json_bytea_hex(s) {
+                    Ok(bytes) => Ok(Value::Blob(B::from(bytes))),
+                    Err(at) => Err(DecodeError::InvalidHexEscape {
+                        column: payload.column_name.to_string(),
+                        at,
+                    }),
+                }
+            }
             _ => Err(DecodeError::WrongPayloadKind {
                 column: payload.column_name.to_string(),
-                expected: "JSON string with \\xHEX prefix",
+                expected: "JSON string of hex bytes",
                 actual: "other JSON shape",
             }),
         }

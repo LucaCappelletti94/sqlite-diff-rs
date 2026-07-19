@@ -2,8 +2,8 @@
 //!
 //! - `PgByteaBinaryDecoder` (pg_walstream): handles both `ColumnValue::Binary`
 //!   (pass-through) and `ColumnValue::Text` with `\xHEX` prefix.
-//! - `PgByteaTextModeDecoder` (wal2json): decodes `\xHEX`-prefixed JSON
-//!   strings into `Value::Blob`.
+//! - `PgByteaTextModeDecoder` (wal2json): decodes bare-hex (and
+//!   optionally `\xHEX`-prefixed) JSON strings into `Value::Blob`.
 //! - `MySqlBinaryDecoder` (maxwell): base64-decodes JSON strings.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
@@ -91,6 +91,64 @@ fn pg_bytea_text_mode_decoder_wal2json_hex() {
     .decoded_by(&PgByteaTextModeDecoder)
     .unwrap();
     assert_eq!(got, Value::Blob(alloc::vec![0xCA, 0xFE, 0xF0, 0x0D]));
+}
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_bare_hex() {
+    // wal2json emits BYTEA as bare lowercase hex with no `\x` prefix.
+    let s = serde_json::Value::String("0001deadff".into());
+    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
+        column_name: "bin",
+        wire_type: WireType::Bytes,
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0x00, 0x01, 0xde, 0xad, 0xff]));
+}
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_prefixed_hex() {
+    // A Postgres-style `\x`-prefixed hex text form still decodes.
+    let s = serde_json::Value::String("\\xdeadbeef".into());
+    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
+        column_name: "bin",
+        wire_type: WireType::Bytes,
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder)
+    .unwrap();
+    assert_eq!(got, Value::Blob(alloc::vec![0xde, 0xad, 0xbe, 0xef]));
+}
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_odd_nibbles() {
+    let s = serde_json::Value::String("0001d".into());
+    let result: Result<Value<String, Vec<u8>>, _> = Wal2JsonColumn {
+        column_name: "bin",
+        wire_type: WireType::Bytes,
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder);
+    match result {
+        Err(DecodeError::InvalidHexEscape { column, .. }) => assert_eq!(column, "bin"),
+        other => panic!("expected InvalidHexEscape, got {other:?}"),
+    }
+}
+
+#[test]
+fn pg_bytea_text_mode_decoder_wal2json_non_hex() {
+    let s = serde_json::Value::String("00zz".into());
+    let result: Result<Value<String, Vec<u8>>, _> = Wal2JsonColumn {
+        column_name: "bin",
+        wire_type: WireType::Bytes,
+        value: &s,
+    }
+    .decoded_by(&PgByteaTextModeDecoder);
+    match result {
+        Err(DecodeError::InvalidHexEscape { column, .. }) => assert_eq!(column, "bin"),
+        other => panic!("expected InvalidHexEscape, got {other:?}"),
+    }
 }
 
 #[test]

@@ -20,14 +20,39 @@ pub(crate) fn decode_pg_hex_escape(s: &str) -> Result<Vec<u8>, usize> {
     if bytes.len() < 2 || bytes[0] != b'\\' || bytes[1] != b'x' {
         return Err(0);
     }
-    let hex = &bytes[2..];
+    // Offsets stay relative to `s`, so shift past the `\x` prefix.
+    decode_hex(&bytes[2..]).map_err(|at| at + 2)
+}
+
+/// Decode a wal2json BYTEA hex string into raw bytes.
+///
+/// wal2json emits BYTEA as bare lowercase hex with no `\x` prefix, so
+/// accept both the bare form and a Postgres-style `\x`-prefixed form.
+///
+/// # Errors
+///
+/// Returns the zero-based byte offset (into the hex payload, after any
+/// `\x` prefix) of the first invalid hex character, or of the odd
+/// trailing nibble.
+pub(crate) fn decode_wal2json_bytea_hex(s: &str) -> Result<Vec<u8>, usize> {
+    let hex = s.strip_prefix("\\x").unwrap_or(s);
+    decode_hex(hex.as_bytes())
+}
+
+/// Decode an even-length hex slice into raw bytes.
+///
+/// # Errors
+///
+/// Returns the byte offset within `hex` of the first invalid character,
+/// or `hex.len() - 1` when the length is odd.
+fn decode_hex(hex: &[u8]) -> Result<Vec<u8>, usize> {
     if hex.len() % 2 != 0 {
-        return Err(bytes.len().saturating_sub(1));
+        return Err(hex.len().saturating_sub(1));
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
     for (i, chunk) in hex.chunks_exact(2).enumerate() {
-        let hi = hex_nibble(chunk[0]).ok_or(2 + i * 2)?;
-        let lo = hex_nibble(chunk[1]).ok_or(2 + i * 2 + 1)?;
+        let hi = hex_nibble(chunk[0]).ok_or(i * 2)?;
+        let lo = hex_nibble(chunk[1]).ok_or(i * 2 + 1)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)
@@ -118,6 +143,32 @@ mod tests {
     #[test]
     fn hex_decode_odd_length() {
         assert!(decode_pg_hex_escape("\\xdea").is_err());
+    }
+
+    #[test]
+    fn wal2json_bytea_bare_hex() {
+        assert_eq!(
+            decode_wal2json_bytea_hex("0001deadff").unwrap(),
+            vec![0x00, 0x01, 0xDE, 0xAD, 0xFF]
+        );
+    }
+
+    #[test]
+    fn wal2json_bytea_prefixed_hex() {
+        assert_eq!(
+            decode_wal2json_bytea_hex("\\xdeadbeef").unwrap(),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
+    }
+
+    #[test]
+    fn wal2json_bytea_odd_length() {
+        assert!(decode_wal2json_bytea_hex("0001d").is_err());
+    }
+
+    #[test]
+    fn wal2json_bytea_invalid_char() {
+        assert!(decode_wal2json_bytea_hex("00zz").is_err());
     }
 
     #[test]
