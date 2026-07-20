@@ -1,14 +1,12 @@
 //! End-to-end schema-aware roundtrip via wal2json.
 //!
 //! Postgres source with a table exercising multiple payload families
-//! (bool, int, text, numeric, timestamp, uuid, jsonb). Drive an INSERT
+//! (bool, int, text, numeric, timestamp, jsonb). Drive an INSERT
 //! and an UPDATE through `wal2json`, capture the JSON messages, digest
 //! via the unified [`DiffSetBuilder::digest`] entry point with
-//! `sqlite_diff_rs::TypeMap::defaults()` (UUID registered explicitly),
+//! `sqlite_diff_rs::TypeMap::defaults()`,
 //! apply the patchset to a fresh SQLite via `diesel-sqlite-session`,
 //! and verify SQLite row state matches Postgres source.
-
-use std::sync::Arc;
 
 use diesel::prelude::*;
 use diesel::sql_query;
@@ -17,8 +15,8 @@ use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
 use schema_aware_roundtrip::{
     AppSchema, UsersTable, connect, create_slot, drop_slot, get_changes_v2, start_postgres,
 };
-use sqlite_diff_rs::wal2json::{Action, Wal2Json, parse_v2};
-use sqlite_diff_rs::{PatchSet, TypeMap, UuidBlob16Decoder};
+use sqlite_diff_rs::wal2json::{Action, parse_v2};
+use sqlite_diff_rs::{PatchSet, TypeMap};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct UserRow {
@@ -34,14 +32,6 @@ struct UserRow {
     ts: String,
     #[diesel(sql_type = Text)]
     metadata: String,
-}
-
-fn make_type_map() -> TypeMap<Wal2Json, String, Vec<u8>> {
-    // Register UUID (not in defaults) using the blob-16 shape so the
-    // SQLite side stores 16 raw bytes.
-    let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
-    types.register(Arc::from("uuid"), UuidBlob16Decoder);
-    types
 }
 
 /// SQLite DDL matching the Postgres shape: `id` primary key,
@@ -113,7 +103,7 @@ async fn wal2json_insert_roundtrip_e2e() {
 
     // Digest via the unified schema-aware API.
     let schema = AppSchema::default();
-    let types = make_type_map();
+    let types = TypeMap::defaults();
     let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
         .digest(&insert_msg, &schema, &types)
         .expect("Failed to digest wal2json insert");

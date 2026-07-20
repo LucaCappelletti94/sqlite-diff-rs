@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 /// Returns the zero-based byte offset (into `s`) of the first invalid
 /// hex character. When the input does not begin with `\x` or has an
 /// odd hex length, the offset points at that anomaly.
+#[cfg(feature = "pg-walstream")]
 pub(crate) fn decode_pg_hex_escape(s: &str) -> Result<Vec<u8>, usize> {
     let bytes = s.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'\\' || bytes[1] != b'x' {
@@ -34,6 +35,7 @@ pub(crate) fn decode_pg_hex_escape(s: &str) -> Result<Vec<u8>, usize> {
 /// Returns the zero-based byte offset (into the hex payload, after any
 /// `\x` prefix) of the first invalid hex character, or of the odd
 /// trailing nibble.
+#[cfg(feature = "wal2json")]
 pub(crate) fn decode_wal2json_bytea_hex(s: &str) -> Result<Vec<u8>, usize> {
     let hex = s.strip_prefix("\\x").unwrap_or(s);
     decode_hex(hex.as_bytes())
@@ -45,6 +47,7 @@ pub(crate) fn decode_wal2json_bytea_hex(s: &str) -> Result<Vec<u8>, usize> {
 ///
 /// Returns the byte offset within `hex` of the first invalid character,
 /// or `hex.len() - 1` when the length is odd.
+#[cfg(any(feature = "wal2json", feature = "pg-walstream"))]
 fn decode_hex(hex: &[u8]) -> Result<Vec<u8>, usize> {
     if hex.len() % 2 != 0 {
         return Err(hex.len().saturating_sub(1));
@@ -58,6 +61,7 @@ fn decode_hex(hex: &[u8]) -> Result<Vec<u8>, usize> {
     Ok(out)
 }
 
+#[cfg(any(feature = "wal2json", feature = "pg-walstream"))]
 #[inline]
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
@@ -71,6 +75,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
 /// Decode a standard base64 (RFC 4648) string, tolerant of trailing
 /// `=` padding. Returns `Err(())` on any invalid character or invalid
 /// length.
+#[cfg(feature = "maxwell")]
 pub(crate) fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
     let src = s.as_bytes();
     // Strip trailing '=' padding for length calc.
@@ -97,6 +102,7 @@ pub(crate) fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
     Ok(out)
 }
 
+#[cfg(feature = "maxwell")]
 #[inline]
 fn base64_char(c: u8) -> Option<u8> {
     match c {
@@ -114,6 +120,7 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_deadbeef() {
         assert_eq!(
@@ -122,6 +129,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_uppercase() {
         assert_eq!(
@@ -130,21 +138,25 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_empty() {
         assert_eq!(decode_pg_hex_escape("\\x").unwrap(), Vec::<u8>::new());
     }
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_missing_prefix() {
         assert!(decode_pg_hex_escape("deadbeef").is_err());
     }
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_odd_length() {
         assert!(decode_pg_hex_escape("\\xdea").is_err());
     }
 
+    #[cfg(feature = "wal2json")]
     #[test]
     fn wal2json_bytea_bare_hex() {
         assert_eq!(
@@ -153,6 +165,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "wal2json")]
     #[test]
     fn wal2json_bytea_prefixed_hex() {
         assert_eq!(
@@ -161,21 +174,25 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "wal2json")]
     #[test]
     fn wal2json_bytea_odd_length() {
         assert!(decode_wal2json_bytea_hex("0001d").is_err());
     }
 
+    #[cfg(feature = "wal2json")]
     #[test]
     fn wal2json_bytea_invalid_char() {
         assert!(decode_wal2json_bytea_hex("00zz").is_err());
     }
 
+    #[cfg(feature = "pg-walstream")]
     #[test]
     fn hex_decode_invalid_char() {
         assert!(decode_pg_hex_escape("\\xzz").is_err());
     }
 
+    #[cfg(feature = "maxwell")]
     #[test]
     fn base64_roundtrip() {
         assert_eq!(
@@ -186,11 +203,13 @@ mod tests {
         assert_eq!(decode_base64("").unwrap(), Vec::<u8>::new());
     }
 
+    #[cfg(feature = "maxwell")]
     #[test]
     fn base64_invalid_char() {
         assert!(decode_base64("!!!!").is_err());
     }
 
+    #[cfg(feature = "maxwell")]
     #[test]
     fn base64_invalid_length() {
         assert!(decode_base64("abc").is_err());

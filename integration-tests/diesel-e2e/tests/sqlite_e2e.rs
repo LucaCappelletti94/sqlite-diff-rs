@@ -158,6 +158,42 @@ fn kv_composite_pk_lifecycle() {
 }
 
 #[test]
+fn kv_composite_primary_key_move_via_changeset() {
+    use sqlite_diff_rs::{ChangeSet, ChangeUpdate, SimpleTable};
+
+    let mut conn = conn();
+    conn.batch_execute(KV_DDL).unwrap();
+    conn.batch_execute("INSERT INTO kv (tenant_id, user_id, value) VALUES (1, 20, 'orig')")
+        .unwrap();
+
+    // Move the row from composite key (1, 20) to (2, 99) and change its value.
+    // A patchset has no slot for the new key, so this is changeset-only.
+    let schema = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
+        ChangeUpdate::<_, String, Vec<u8>>::from(schema)
+            .set(0, 1_i64, 2_i64)
+            .unwrap()
+            .set(1, 20_i64, 99_i64)
+            .unwrap()
+            .set(2, "orig", "moved")
+            .unwrap(),
+    );
+
+    for op in changeset.iter() {
+        op.execute(&mut conn).expect("execute changeset op");
+    }
+
+    let rows: Vec<KvRow> =
+        sql_query("SELECT tenant_id, user_id, value FROM kv ORDER BY tenant_id, user_id")
+            .load(&mut conn)
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tenant_id, 2);
+    assert_eq!(rows[0].user_id, 99);
+    assert_eq!(rows[0].value.as_deref(), Some("moved"));
+}
+
+#[test]
 fn identifier_with_embedded_quotes_survives_execution() {
     // SQLite tolerates any identifier when double-quoted. Diesel's identifier
     // quoter doubles embedded quotes; the resulting DDL and DML must match.
