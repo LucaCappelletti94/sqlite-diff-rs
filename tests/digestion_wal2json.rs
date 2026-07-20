@@ -11,11 +11,11 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::wal2json::{
-    Action, ChangeV1, Column, ConversionError, MessageV2, Wal2Json, parse_v2,
+    Action, ChangeV1, Column, ConversionError, MessageV2, OldKeys, Wal2Json, parse_v2,
 };
 use sqlite_diff_rs::{
-    ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema, WireType,
+    ChangeSet, ChangesetOp, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK,
+    SimpleTable, TypeMap, Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -714,4 +714,190 @@ fn w2j_v2_lsn_does_not_affect_digest() {
         ps_with.build(),
         "patchset output must be identical regardless of lsn"
     );
+}
+
+// -- Changeset UPDATE captures the old-row image ---------------------------
+//
+// The changeset format stores old and new per column, so the digest must read
+// the wal2json old image (v2 `identity`, v1 `oldkeys`), not only the new
+// values. A primary-key change depends on the old key reaching the WHERE
+// clause.
+
+#[test]
+fn w2j_v2_changeset_update_captures_old_pk_on_key_change() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    // id changes 1 -> 2, identity carries the full old row.
+    let msg = MessageV2 {
+        action: Action::U,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(all_columns(2, "Alice", true)),
+        identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1);
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(
+                values[0].0,
+                Some(Value::Integer(1)),
+                "old key must be captured"
+            );
+            assert_eq!(
+                values[0].1,
+                Some(Value::Integer(2)),
+                "new key must be present"
+            );
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn w2j_v2_changeset_update_captures_full_old_image() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    // name changes, identity is the full old row (REPLICA IDENTITY FULL).
+    let msg = MessageV2 {
+        action: Action::U,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(all_columns(1, "Alicia", true)),
+        identity: Some(all_columns(1, "Alice", true)),
+        lsn: None,
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old id captured");
+            assert_eq!(
+                values[1].0,
+                Some(Value::Text("Alice".to_string())),
+                "old name captured"
+            );
+            assert_eq!(
+                values[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name present"
+            );
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn w2j_v2_changeset_update_default_identity_captures_pk_only() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    // name changes, identity carries only the primary key (default identity).
+    let msg = MessageV2 {
+        action: Action::U,
+        schema: Some("public".to_string()),
+        table: Some("users".to_string()),
+        columns: Some(all_columns(1, "Alicia", true)),
+        identity: Some(alloc::vec![int_col("id", 1)]),
+        lsn: None,
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            // Old primary key captured so the WHERE predicate can render.
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old pk captured");
+            // Non-key column absent from identity: old stays None, new set.
+            assert_eq!(
+                values[1].0, None,
+                "non-key old absent under default identity"
+            );
+            assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn w2j_v1_changeset_update_captures_old_pk_from_oldkeys() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    // id changes 1 -> 2, oldkeys carries the old primary key.
+    let change = ChangeV1 {
+        kind: "update".to_string(),
+        schema: "public".to_string(),
+        table: "users".to_string(),
+        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
+        columntypes: alloc::vec![
+            "integer".to_string(),
+            "text".to_string(),
+            "boolean".to_string(),
+        ],
+        columnvalues: all_values(2, "Alice", true),
+        oldkeys: Some(OldKeys {
+            keynames: alloc::vec!["id".to_string()],
+            keytypes: alloc::vec!["integer".to_string()],
+            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
+        }),
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old key from oldkeys");
+            assert_eq!(values[0].1, Some(Value::Integer(2)), "new key present");
+            assert_eq!(values[1].0, None, "non-key old absent from oldkeys");
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn w2j_v1_changeset_update_non_key_captures_old_pk() {
+    // A non-key update: oldkeys carries only the PK, name changes.
+    let schema = test_schema();
+    let adapter = default_adapter();
+
+    let change = ChangeV1 {
+        kind: "update".to_string(),
+        schema: "public".to_string(),
+        table: "users".to_string(),
+        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
+        columntypes: alloc::vec![
+            "integer".to_string(),
+            "text".to_string(),
+            "boolean".to_string(),
+        ],
+        columnvalues: all_values(1, "Alicia", true),
+        oldkeys: Some(OldKeys {
+            keynames: alloc::vec!["id".to_string()],
+            keytypes: alloc::vec!["integer".to_string()],
+            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
+        }),
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old pk from oldkeys");
+            assert_eq!(values[1].0, None, "non-key old absent from oldkeys");
+            assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
 }

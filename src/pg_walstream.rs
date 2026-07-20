@@ -299,9 +299,19 @@ where
             continue;
         }
 
-        update = update
-            .set_new(col_idx, new_decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
+        // No old value on the wire. Under REPLICA IDENTITY DEFAULT a non-key
+        // update sends no old tuple, so the key did not change and its old
+        // value equals the new value. Keep it for primary-key columns so the
+        // WHERE predicate can be built; other columns stay set_new.
+        update = if table.primary_key_index(col_idx).is_some() {
+            update
+                .set(col_idx, new_decoded.clone(), new_decoded)
+                .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?
+        } else {
+            update
+                .set_new(col_idx, new_decoded)
+                .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?
+        };
     }
     Ok(update)
 }

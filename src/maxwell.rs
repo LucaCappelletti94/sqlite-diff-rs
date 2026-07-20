@@ -352,23 +352,22 @@ where
         };
         let new = adapter.decode(new_payload)?;
 
-        if let Some(old_map) = old
-            && let Some(old_value) = old_map.get(name)
-        {
+        // A column present in `old` changed, so pair its old and new values. A
+        // column absent from `old` did not change, so its old value equals the
+        // new value. That keeps an unchanged primary key available for the
+        // WHERE clause and unchanged columns out of the SET.
+        let old = if let Some(old_value) = old.and_then(|old_map| old_map.get(name)) {
             let old_payload = MaxwellColumn {
                 column_name: name.as_str(),
                 wire_type,
                 value: old_value,
             };
-            let old = adapter.decode(old_payload)?;
-            update = update
-                .set(col_idx, old, new)
-                .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
-            continue;
-        }
-
+            adapter.decode(old_payload)?
+        } else {
+            new.clone()
+        };
         update = update
-            .set_new(col_idx, new)
+            .set(col_idx, old, new)
             .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
     }
     Ok(update)

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+Changeset UPDATE digests now always capture the old primary key, so a changeset produced from a wire event applies through the diesel changeset path even when the update does not change the key. The wal2json digest previously dropped the old-row image entirely (it now reads `identity` in the v2 format and `oldkeys` in the v1 format). The Maxwell digest treats a column absent from `old` as unchanged, taking its old value from the new value, since Maxwell lists only changed columns in `old`. The pgoutput digest keeps a primary-key column's old value from the new tuple when `old_data` is absent under `REPLICA IDENTITY DEFAULT`. The patchset builders are unchanged, since they use only the new image.
+
 ## 0.6.0
 
 ### Added

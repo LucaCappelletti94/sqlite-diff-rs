@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 
 use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, Message, OpType};
 use sqlite_diff_rs::{
-    ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema, WireType,
+    ChangeSet, ChangesetOp, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK,
+    SimpleTable, TypeMap, Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -296,8 +296,9 @@ fn maxwell_decode_error_is_propagated() {
 
 #[test]
 fn maxwell_changeset_update_without_old_is_ok() {
-    // Maxwell updates carry `old` as optional. When absent, the builder
-    // falls through to `set_new` for all columns — this is fine.
+    // Maxwell updates carry `old` as optional. When it is absent, every column
+    // is treated as unchanged (old equals new), since Maxwell lists changed
+    // columns in `old`.
     let schema = test_schema();
     let adapter = default_adapter();
     let new_data = data_map(1, "Alice", true);
@@ -310,4 +311,80 @@ fn maxwell_changeset_update_without_old_is_ok() {
         !bytes.is_empty(),
         "changeset must produce output without old data"
     );
+}
+
+// -- Changeset UPDATE captures the old primary key -------------------------
+//
+// Maxwell's `old` carries only the columns that changed, so the unchanged
+// primary key of a non-key update is absent from it. The digest must still
+// capture the old key (equal to the new key, since it did not change) so a
+// changeset apply can build a WHERE clause.
+
+#[test]
+fn maxwell_changeset_update_captures_old_pk_when_old_omits_it() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let new_data = data_map(1, "Alicia", true);
+    // Only the changed column is present in `old`, as Maxwell emits it.
+    let mut old = BTreeMap::new();
+    old.insert(
+        "name".to_string(),
+        serde_json::Value::String("Alice".to_string()),
+    );
+    let msg = message(OpType::Update, new_data, Some(old));
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1);
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(
+                values[0].0,
+                Some(Value::Integer(1)),
+                "old primary key must be captured even when absent from `old`"
+            );
+            assert_eq!(
+                values[1].0,
+                Some(Value::Text("Alice".to_string())),
+                "old name"
+            );
+            assert_eq!(
+                values[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+            // An unchanged column absent from `old` is captured as old == new.
+            assert_eq!(
+                values[2].0, values[2].1,
+                "unchanged column captured as old == new"
+            );
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn maxwell_changeset_update_captures_changed_pk() {
+    // A primary-key change: Maxwell includes the changed key in `old`.
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let new_data = data_map(2, "Alice", true);
+    let mut old = BTreeMap::new();
+    old.insert(
+        "id".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(1_i64)),
+    );
+    let msg = message(OpType::Update, new_data, Some(old));
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old key");
+            assert_eq!(values[0].1, Some(Value::Integer(2)), "new key");
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
 }
