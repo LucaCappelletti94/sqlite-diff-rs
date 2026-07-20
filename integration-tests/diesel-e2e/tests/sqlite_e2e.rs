@@ -8,8 +8,8 @@ use diesel::sql_types::{BigInt, Binary, Double, Nullable, Text};
 use sqlite_diff_rs::DiffOps;
 
 use diesel_e2e::{
-    blobs_schema, insert_blob_row, insert_three_users, kv_full_cycle, kv_schema,
-    update_alice_delete_bob, users_schema,
+    blobs_schema, duplicate_email_patchset, insert_blob_row, insert_three_users, kv_full_cycle,
+    kv_schema, update_alice_delete_bob, users_schema,
 };
 
 const USERS_DDL: &str = "\
@@ -241,27 +241,6 @@ struct UniqUserRow {
     id: i64,
     #[diesel(sql_type = Text)]
     email: String,
-}
-
-/// Two rows with distinct PKs but colliding UNIQUE email.
-fn duplicate_email_patchset()
--> sqlite_diff_rs::PatchSet<sqlite_diff_rs::SimpleTable, String, Vec<u8>> {
-    let schema = sqlite_diff_rs::SimpleTable::new("users", &["id", "email"], &[0]);
-    sqlite_diff_rs::PatchSet::<sqlite_diff_rs::SimpleTable, String, Vec<u8>>::new()
-        .insert(
-            sqlite_diff_rs::Insert::from(schema.clone())
-                .set(0, 1_i64)
-                .unwrap()
-                .set(1, "alice@example.com")
-                .unwrap(),
-        )
-        .insert(
-            sqlite_diff_rs::Insert::from(schema.clone())
-                .set(0, 2_i64)
-                .unwrap()
-                .set(1, "alice@example.com") // UNIQUE violation on second insert
-                .unwrap(),
-        )
 }
 
 /// `apply` (no transaction) commits everything up to a failing op, so state

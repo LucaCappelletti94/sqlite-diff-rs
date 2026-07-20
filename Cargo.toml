@@ -63,6 +63,7 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
 pg_walstream = { version = "0.8", default-features = false, optional = true }
 diesel = { version = "2", default-features = false, optional = true }
+diesel-async = { version = "0.7", default-features = false, optional = true }
 
 [dev-dependencies]
 rusqlite = { version = "0.40", features = ["bundled", "session", "backup"] }
@@ -81,6 +82,7 @@ wal2json = ["dep:serde", "dep:serde_json"]
 pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
 maxwell = ["dep:serde", "dep:serde_json"]
 diesel = ["dep:diesel"]
+diesel-async = ["dep:diesel-async", "diesel"]
 
 [lints]
 workspace = true

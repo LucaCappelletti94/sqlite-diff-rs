@@ -25,6 +25,8 @@ pub mod wal2json;
 pub mod wire;
 
 // Re-export main types
+#[cfg(feature = "diesel-async")]
+pub use builders::ApplyOpsAsync;
 #[cfg(feature = "diesel")]
 pub use builders::{
     Adapter, ApplyOps, Binder, BoundChangesetOp, BoundOp, BoundPatchsetOp, DefaultBinder,
