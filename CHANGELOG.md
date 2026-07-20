@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+The `diesel` feature now renders `ChangeSet` operations as backend-generic Diesel queries, alongside the existing `PatchSet` support. `ChangesetOp` implements `QueryFragment`, `QueryId`, and `RunQueryDsl`, and `ChangesetOp::with_adapter` builds a `BoundChangesetOp` just as `PatchsetOp::with_adapter` builds a `BoundPatchsetOp`. Both bound types are aliases of the new generic `BoundOp`, and `ApplyOps` drives either one. Because a changeset carries the old and new value of every column, it renders primary-key changes (including composite keys) as `UPDATE ... SET <changed columns> WHERE <old key>`, which a patchset cannot represent. A changeset `UPDATE` writes only the columns whose value actually changed, so applying it never rewrites (or spuriously triggers on) a column that did not move.
+
 ## 0.5.1
 
 ### Fixed

@@ -98,9 +98,9 @@ Patchsets (`'P'` / `0x50`) omit old values for non-PK columns, producing a small
 
 See the [SQLite session extension docs](https://www.sqlite.org/session.html) for the full specification.
 
-## Apply patchsets with Diesel
+## Apply diffs with Diesel
 
-The `diesel` feature turns each `PatchsetOp` into a backend-generic Diesel query. Downstream implements one `Adapter` per schema (the set of tables), and it maps `(table_name, column_index)` pairs to column identifiers and to per-column `Binder`s. Each `Binder` calls `push_bind_param` with the target `SqlType` the column expects, so values travel as native binary binds and the emitted SQL contains no `CAST` wrappers regardless of backend. The `ApplyOps` extension trait wraps the batch-execute and `conn.transaction` shapes so a full apply reads as one call.
+The `diesel` feature turns each op of a `PatchSet` or `ChangeSet` into a backend-generic Diesel query. Downstream implements one `Adapter` per schema (the set of tables), and it maps `(table_name, column_index)` pairs to column identifiers and to per-column `Binder`s. Each `Binder` calls `push_bind_param` with the target `SqlType` the column expects, so values travel as native binary binds and the emitted SQL contains no `CAST` wrappers regardless of backend. The `ApplyOps` extension trait wraps the batch-execute and `conn.transaction` shapes so a full apply reads as one call. A `ChangeSet` additionally renders primary-key changes, including composite keys, because it carries both the old and the new value of every column. A `PatchSet` stores no new primary-key value, so those updates are changeset-only.
 
 ```rust,ignore
 use diesel::pg::Pg;
@@ -164,7 +164,7 @@ sqlite-diff-rs = { version = "0.1", features = ["diesel"] }
 diesel = { version = "2", features = ["postgres"] }
 ```
 
-End-to-end tests against real SQLite, Postgres, and MySQL containers live under [`integration-tests/diesel-e2e/`](integration-tests/diesel-e2e/). The unit test file [`tests/diesel_patchset.rs`](tests/diesel_patchset.rs) has the fully runnable version of the example above.
+End-to-end tests against real SQLite, Postgres, and MySQL containers live under [`integration-tests/diesel-e2e/`](integration-tests/diesel-e2e/). The unit test files [`tests/diesel_patchset.rs`](tests/diesel_patchset.rs) and [`tests/diesel_changeset.rs`](tests/diesel_changeset.rs) hold fully runnable versions of the example above and of the changeset primary-key cases.
 
 ## `no_std` Support
 

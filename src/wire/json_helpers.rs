@@ -58,6 +58,7 @@ pub(crate) fn canonicalize_string(s: &str) -> String {
 /// # Errors
 ///
 /// Returns the `serde_json::Error` message if serialization fails.
+#[cfg(any(feature = "maxwell", feature = "wal2json"))]
 pub(crate) fn serialize_verbatim(value: &serde_json::Value) -> Result<String, String> {
     serde_json::to_string(value).map_err(|e| e.to_string())
 }
