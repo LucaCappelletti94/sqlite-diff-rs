@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 
 use sqlite_diff_rs::pg_walstream::{ColumnValue, ConversionError, EventType, PgWalstream, RowData};
 use sqlite_diff_rs::{
-    ChangeSet, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-    Value, WireColumnTypes, WireSchema, WireType,
+    ChangeSet, ChangesetOp, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK,
+    SimpleTable, TypeMap, Value, WireColumnTypes, WireSchema, WireType,
 };
 
 // ---------------------------------------------------------------------------
@@ -371,4 +371,83 @@ fn pg_update_with_no_old_data_patchset_still_works() {
         !bytes.is_empty(),
         "patchset update with no old data must produce output"
     );
+}
+
+// -- Changeset UPDATE captures the old primary key -------------------------
+//
+// Under REPLICA IDENTITY DEFAULT a non-key update sends no old tuple, so
+// `old_data` is None. The unchanged primary key must still be captured from
+// the new tuple (the key did not change) so a changeset apply can build a
+// WHERE clause.
+
+#[test]
+fn pg_changeset_update_captures_old_pk_when_old_data_absent() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let new = row_data(1, "Alicia", true);
+
+    let event = EventType::Update {
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
+        relation_oid: 1,
+        old_data: None,
+        new_data: new,
+        replica_identity: pg_walstream::ReplicaIdentity::Default,
+        key_columns: alloc::vec![Arc::from("id")],
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&event, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1);
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(
+                values[0].0,
+                Some(Value::Integer(1)),
+                "old primary key must be captured from the new tuple when old_data is absent"
+            );
+            // A non-key column has no old value on the wire, so it stays set_new.
+            assert_eq!(
+                values[1].0, None,
+                "non-key old absent under default identity"
+            );
+            assert_eq!(
+                values[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
+}
+
+#[test]
+fn pg_changeset_update_captures_changed_pk() {
+    // A primary-key change: the old tuple carries the old key.
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let old = row_data(1, "Alice", true);
+    let new = row_data(2, "Alice", true);
+
+    let event = EventType::Update {
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
+        relation_oid: 1,
+        old_data: Some(old),
+        new_data: new,
+        replica_identity: pg_walstream::ReplicaIdentity::Default,
+        key_columns: alloc::vec![Arc::from("id")],
+    };
+
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&event, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    match &ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old key");
+            assert_eq!(values[0].1, Some(Value::Integer(2)), "new key");
+        }
+        other => panic!("expected update, got {other:?}"),
+    }
 }

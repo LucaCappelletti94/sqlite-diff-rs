@@ -298,7 +298,12 @@ where
                     .columns
                     .as_ref()
                     .ok_or(ConversionError::MissingColumns)?;
-                let update = build_changeset_update_from_v2(columns, table, adapter)?;
+                let update = build_changeset_update_from_v2(
+                    columns,
+                    self.identity.as_deref(),
+                    table,
+                    adapter,
+                )?;
                 Ok(DiffOps::update(builder, update))
             }
             Action::D => {
@@ -480,6 +485,7 @@ where
 
 fn build_changeset_update_from_v2<T, S, B, A>(
     columns: &[Column],
+    identity: Option<&[Column]>,
     table: &T,
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
@@ -495,15 +501,30 @@ where
             .column_index(&col.name)
             .ok_or_else(|| ConversionError::ColumnNotFound(col.name.clone()))?;
         let wire_type = table.column_type(col_idx);
-        let payload = Wal2JsonColumn {
+        let new = adapter.decode(Wal2JsonColumn {
             column_name: col.name.as_str(),
             wire_type,
             value: &col.value,
-        };
-        let new = adapter.decode(payload)?;
-        update = update
-            .set_new(col_idx, new)
-            .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+        })?;
+
+        // Pair the new value with its old-row value from the identity image
+        // when present, so a primary-key change keeps the old key for the
+        // WHERE clause. Non-key columns absent from the identity fall back to
+        // set_new.
+        if let Some(old_col) = identity.and_then(|id| id.iter().find(|c| c.name == col.name)) {
+            let old = adapter.decode(Wal2JsonColumn {
+                column_name: col.name.as_str(),
+                wire_type,
+                value: &old_col.value,
+            })?;
+            update = update
+                .set(col_idx, old, new)
+                .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+        } else {
+            update = update
+                .set_new(col_idx, new)
+                .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+        }
     }
     Ok(update)
 }
@@ -669,15 +690,33 @@ where
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
         let wire_type = table.column_type(col_idx);
-        let payload = Wal2JsonColumn {
+        let new = adapter.decode(Wal2JsonColumn {
             column_name: name,
             wire_type,
             value,
-        };
-        let new = adapter.decode(payload)?;
-        update = update
-            .set_new(col_idx, new)
-            .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+        })?;
+
+        // Pair with the old value from oldkeys when the column is present
+        // there (always at least the primary key), else fall back to set_new.
+        let old_value = change.oldkeys.as_ref().and_then(|ok| {
+            iter_v1_oldkeys(ok)
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v)
+        });
+        if let Some(old_value) = old_value {
+            let old = adapter.decode(Wal2JsonColumn {
+                column_name: name,
+                wire_type,
+                value: old_value,
+            })?;
+            update = update
+                .set(col_idx, old, new)
+                .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+        } else {
+            update = update
+                .set_new(col_idx, new)
+                .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+        }
     }
     Ok(update)
 }
