@@ -67,6 +67,7 @@ The schema type implements `WireSchema` and its tables implement `WireColumnType
 | `pg-walstream` | Integration with `pg_walstream` crate |
 | `maxwell` | Parse Maxwell CDC JSON events |
 | `diesel` | Execute patchsets as backend-generic Diesel queries via a downstream [`Adapter`] |
+| `diesel-async` | Apply patchsets and changesets through an async Diesel connection (`diesel-async`) |
 
 Enable features in `Cargo.toml`:
 
@@ -165,6 +166,8 @@ diesel = { version = "2", features = ["postgres"] }
 ```
 
 End-to-end tests against real SQLite, Postgres, and MySQL containers live under [`integration-tests/diesel-e2e/`](integration-tests/diesel-e2e/). The unit test files [`tests/diesel_patchset.rs`](tests/diesel_patchset.rs) and [`tests/diesel_changeset.rs`](tests/diesel_changeset.rs) hold fully runnable versions of the example above and of the changeset primary-key cases.
+
+The `diesel-async` feature adds the same apply path over an async connection. The rendering is identical (adapters and binders included), so only the driver differs: enable `diesel-async` alongside `diesel`, bring [`ApplyOpsAsync`] into scope, and call `set.iter().apply_async(&mut conn).await` or `set.iter().apply_transactional_async(&mut conn).await` against any `diesel_async::AsyncConnection` (`AsyncPgConnection`, `AsyncMysqlConnection`, or a `SyncConnectionWrapper<SqliteConnection>`). The async end-to-end tests live beside the synchronous ones under [`integration-tests/diesel-e2e/`](integration-tests/diesel-e2e/).
 
 ## `no_std` Support
 

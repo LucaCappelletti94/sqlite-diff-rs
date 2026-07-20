@@ -134,3 +134,26 @@ pub fn kv_full_cycle(schema: &SimpleTable) -> PatchSet<SimpleTable, String, Vec<
             vec![1_i64.into(), 10_i64.into()],
         ))
 }
+
+/// Two `users` rows with distinct primary keys but a colliding `UNIQUE`
+/// email, so applying the second insert violates the constraint. Used to
+/// exercise transactional rollback and non-transactional partial-apply.
+#[must_use]
+pub fn duplicate_email_patchset() -> PatchSet<SimpleTable, String, Vec<u8>> {
+    let schema = SimpleTable::new("users", &["id", "email"], &[0]);
+    PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .insert(
+            Insert::from(schema.clone())
+                .set(0, 1_i64)
+                .unwrap()
+                .set(1, "dup@example.com")
+                .unwrap(),
+        )
+        .insert(
+            Insert::from(schema.clone())
+                .set(0, 2_i64)
+                .unwrap()
+                .set(1, "dup@example.com")
+                .unwrap(),
+        )
+}

@@ -2,6 +2,8 @@
 
 mod change;
 mod delete_operation;
+#[cfg(feature = "diesel-async")]
+mod diesel_async_query;
 #[cfg(feature = "diesel")]
 mod diesel_query;
 mod format;
@@ -14,6 +16,8 @@ mod view;
 
 pub use change::{ChangeSet, DiffOps, DiffSet, DiffSetBuilder, PatchSet};
 pub use delete_operation::{ChangeDelete, PatchDelete};
+#[cfg(feature = "diesel-async")]
+pub use diesel_async_query::ApplyOpsAsync;
 #[cfg(feature = "diesel")]
 pub use diesel_query::{
     Adapter, ApplyOps, Binder, BoundChangesetOp, BoundOp, BoundPatchsetOp, DefaultBinder,
