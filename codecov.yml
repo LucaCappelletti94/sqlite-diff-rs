@@ -7,3 +7,9 @@ coverage:
     patch:
       default:
         target: 80%
+
+# The diesel-async execution driver is exercised by the diesel E2E async suite
+# in integration-tests/diesel-e2e, a standalone workspace whose path-dependency
+# coverage llvm-cov does not attribute back to this file, so exclude it here.
+ignore:
+  - "src/builders/diesel_async_query.rs"
