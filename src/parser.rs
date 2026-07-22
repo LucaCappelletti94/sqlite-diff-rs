@@ -633,6 +633,7 @@ fn parse_values(data: &[u8], base_pos: usize, count: usize) -> Result<ParsedValu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SimpleTable;
     use alloc::vec;
 
     #[test]
@@ -1072,5 +1073,98 @@ mod tests {
             assert_eq!(values[1].1, Some(Value::Integer(200)));
             assert_eq!(values[2].1, Some(Value::Text("shipped".into())));
         });
+    }
+
+    /// Assert a parsed [`TableSchema`] and a [`SimpleTable`] of the same shape
+    /// agree on every [`SchemaWithPK`] accessor, so the read and build sides
+    /// are symmetric.
+    fn assert_schema_pk_parity(
+        parsed: &TableSchema<String>,
+        simple: &SimpleTable,
+        row: &[Value<String, Vec<u8>>],
+    ) {
+        assert_eq!(
+            parsed.number_of_primary_keys(),
+            simple.number_of_primary_keys(),
+            "number_of_primary_keys",
+        );
+        for col in 0..simple.number_of_columns() {
+            assert_eq!(
+                parsed.primary_key_index(col),
+                simple.primary_key_index(col),
+                "primary_key_index at col {col}",
+            );
+        }
+        assert_eq!(
+            parsed.primary_key_columns(),
+            simple.primary_key_columns(),
+            "primary_key_columns",
+        );
+        assert_eq!(
+            parsed.extract_pk(&row),
+            simple.extract_pk(&row),
+            "extract_pk"
+        );
+    }
+
+    #[test]
+    fn test_parsed_schema_pk_parity_single_key() {
+        // Changeset over `kv(id, val)` with single-column key `id` (flags [1, 0]).
+        let mut data = vec![b'T', 2, 1, 0, b'k', b'v', 0];
+        data.push(op_codes::INSERT);
+        data.push(0);
+        data.push(0x01);
+        data.extend(&1i64.to_be_bytes());
+        data.push(0x03);
+        data.push(1);
+        data.push(b'x');
+
+        let ParsedDiffSet::Changeset(set) = ParsedDiffSet::parse(&data).unwrap() else {
+            panic!("expected changeset");
+        };
+        let (parsed, _rows) = set.tables.first().expect("one table");
+        assert_eq!(parsed.pk_flags(), &[1, 0]);
+
+        let simple = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let row: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Text("x".into())];
+        assert_schema_pk_parity(parsed, &simple, &row);
+        assert_eq!(parsed.primary_key_columns(), vec![0]);
+    }
+
+    #[test]
+    fn test_parsed_schema_pk_parity_composite_reordered_key() {
+        // Changeset over `abc(a, b, c)` whose key is `(b, a)`, so the key column
+        // order differs from table order. Flags are [2, 1, 0].
+        let mut data = vec![b'T', 3, 2, 1, 0, b'a', b'b', b'c', 0];
+        data.push(op_codes::INSERT);
+        data.push(0);
+        data.push(0x01);
+        data.extend(&10i64.to_be_bytes());
+        data.push(0x01);
+        data.extend(&20i64.to_be_bytes());
+        data.push(0x03);
+        data.push(1);
+        data.push(b'z');
+
+        let ParsedDiffSet::Changeset(set) = ParsedDiffSet::parse(&data).unwrap() else {
+            panic!("expected changeset");
+        };
+        let (parsed, _rows) = set.tables.first().expect("one table");
+        assert_eq!(parsed.pk_flags(), &[2, 1, 0]);
+
+        let simple = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let row: Vec<Value<String, Vec<u8>>> = vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Text("z".into()),
+        ];
+        assert_schema_pk_parity(parsed, &simple, &row);
+        // Key order is (b, a): column 1 first, column 0 second.
+        assert_eq!(parsed.primary_key_columns(), vec![1, 0]);
+        // `extract_pk` follows key order: b's value, then a's value.
+        assert_eq!(
+            parsed.extract_pk(&row),
+            vec![Value::Integer(20), Value::Integer(10)]
+        );
     }
 }

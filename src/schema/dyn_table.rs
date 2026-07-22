@@ -170,6 +170,22 @@ pub trait SchemaWithPK: DynTable + Clone + Hash {
         &self,
         values: &impl IndexableValues<Text = S, Binary = B>,
     ) -> alloc::vec::Vec<Value<S, B>>;
+
+    /// Returns the column indices of the primary key, ordered by their
+    /// position within the composite key (key order).
+    ///
+    /// This is the forward companion to [`primary_key_index`](Self::primary_key_index):
+    /// that maps a column index to its key position, while this lists the key
+    /// column indices in key order. The ordering matches
+    /// [`extract_pk`](Self::extract_pk), so the two agree on which cell is which
+    /// key component.
+    fn primary_key_columns(&self) -> Vec<usize> {
+        let mut pairs: Vec<(usize, usize)> = (0..self.number_of_columns())
+            .filter_map(|col| self.primary_key_index(col).map(|pos| (pos, col)))
+            .collect();
+        pairs.sort_by_key(|&(pos, _)| pos);
+        pairs.into_iter().map(|(_, col)| col).collect()
+    }
 }
 
 impl<T: SchemaWithPK> SchemaWithPK for &T {
@@ -232,6 +248,10 @@ mod tests {
                 t.primary_key_index(idx)
             );
         }
+        assert_eq!(
+            <&SimpleTable as SchemaWithPK>::primary_key_columns(&r),
+            t.primary_key_columns()
+        );
         let values: Vec<Value<String, Vec<u8>>> = vec![
             Value::Integer(1),
             Value::Text("alice".into()),
