@@ -200,7 +200,7 @@ impl<T: SchemaWithPK, S: Clone, B: Clone> PatchsetOp<'_, T, S, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChangeSet, DiffOps, Insert, PatchSet, SimpleTable};
+    use crate::{ChangeDelete, ChangeSet, DiffOps, Insert, ParsedDiffSet, PatchSet, SimpleTable};
     use alloc::string::String;
     use alloc::vec;
 
@@ -378,5 +378,51 @@ mod tests {
             ops[0].primary_key(),
             vec![Value::Integer(20), Value::Integer(10)]
         );
+    }
+
+    #[test]
+    fn primary_key_on_parsed_changeset_ops() {
+        // The whole point: ops from a parsed diff are over TableSchema<String>,
+        // not SimpleTable. primary_key() must be callable there.
+        let schema = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let bytes = ChangeSet::<SimpleTable, String, Vec<u8>>::new()
+            .insert(
+                Insert::from(schema.clone())
+                    .set(0, 1i64)
+                    .unwrap()
+                    .set(1, "a")
+                    .unwrap(),
+            )
+            .delete(
+                ChangeDelete::from(schema)
+                    .set(0, 2i64)
+                    .unwrap()
+                    .set(1, "b")
+                    .unwrap(),
+            )
+            .build();
+        let ParsedDiffSet::Changeset(set) = ParsedDiffSet::parse(&bytes).unwrap() else {
+            panic!("expected changeset");
+        };
+        let keys: Vec<Vec<Val>> = set.iter().map(|op| op.primary_key()).collect();
+        assert!(keys.contains(&vec![Value::Integer(1)]));
+        assert!(keys.contains(&vec![Value::Integer(2)]));
+    }
+
+    #[test]
+    fn primary_key_on_parsed_patchset_ops() {
+        let schema = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
+        ps.add_table(&schema);
+        ps.digest_sql("INSERT INTO kv (id, val) VALUES (1, 'a')")
+            .unwrap();
+        ps.digest_sql("DELETE FROM kv WHERE id = 2").unwrap();
+        let bytes = ps.build();
+        let ParsedDiffSet::Patchset(set) = ParsedDiffSet::parse(&bytes).unwrap() else {
+            panic!("expected patchset");
+        };
+        let keys: Vec<Vec<Val>> = set.iter().map(|op| op.primary_key()).collect();
+        assert!(keys.contains(&vec![Value::Integer(1)]));
+        assert!(keys.contains(&vec![Value::Integer(2)]));
     }
 }
