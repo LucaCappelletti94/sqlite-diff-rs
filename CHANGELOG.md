@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+`ParsedDiffSet::rename_tables` renames table sections in place. A callback maps each section name to a new one (or `None` to keep it), and the count of renamed sections is returned. Only the name changes, so a diffset captured against one schema can apply where the same tables carry different physical names (for example an RLS translation that renames the storage table), which `sqlite3changeset_apply` cannot remap on its own.
+
 ## 0.6.1
 
 ### Fixed
