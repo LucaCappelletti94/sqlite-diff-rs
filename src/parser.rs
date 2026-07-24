@@ -321,6 +321,36 @@ impl ParsedDiffSet {
                 .collect(),
         }
     }
+
+    /// Rename table sections in place.
+    ///
+    /// The callback receives each section name and returns a new name, or
+    /// `None` to leave it unchanged. Returns the number of sections renamed.
+    /// Only the name changes. Columns, primary-key flags, and operations are
+    /// untouched, and two sections mapped to the same name stay separate.
+    pub fn rename_tables<F>(&mut self, mut rename: F) -> usize
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
+        fn rename_in<Fmt, F>(tables: &mut [(TableSchema<String>, Fmt)], rename: &mut F) -> usize
+        where
+            F: FnMut(&str) -> Option<String>,
+        {
+            let mut renamed = 0;
+            for (schema, _) in tables.iter_mut() {
+                if let Some(new_name) = rename(schema.name.as_str()) {
+                    schema.name = new_name;
+                    renamed += 1;
+                }
+            }
+            renamed
+        }
+
+        match self {
+            ParsedDiffSet::Changeset(d) => rename_in(&mut d.tables, &mut rename),
+            ParsedDiffSet::Patchset(d) => rename_in(&mut d.tables, &mut rename),
+        }
+    }
 }
 
 /// Parse binary data as a changeset.
