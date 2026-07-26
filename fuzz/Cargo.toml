@@ -65,3 +65,9 @@ name = "wire_maxwell"
 path = "fuzz_targets/wire_maxwell.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "wire_pg_binary"
+path = "fuzz_targets/wire_pg_binary.rs"
+test = false
+doc = false

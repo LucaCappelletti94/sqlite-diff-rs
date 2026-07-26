@@ -42,8 +42,8 @@ pub use schema::{DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTa
 pub use wire::{
     BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, DecodeError, Decoder, Digestable,
     Int64OverflowToTextDecoder, IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder,
-    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
-    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
+    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgBinary, PgBinaryColumn,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
     TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, TypeMap, TypeMapDefaults,
     UuidBlob16Decoder, UuidText36Decoder, WireAdapter, WireColumnTypes, WireSchema, WireSource,
     WireType,

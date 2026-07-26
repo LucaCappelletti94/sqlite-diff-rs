@@ -74,3 +74,62 @@ where
         Sch: WireSchema<Table = T>,
         A: super::WireAdapter<Self::Src, S, B>;
 }
+
+/// A value read back from an executed Postgres query in binary result
+/// format, tagged with the catalog's semantic type for the column.
+///
+/// Unlike the CDC sources, the semantic type is not recoverable from the
+/// raw bytes (binary `int4` and `float4` are both four opaque bytes), so
+/// the payload carries the [`WireType`] explicitly, supplied by the
+/// caller from its catalog. This makes decoder dispatch deterministic and
+/// makes the caller choose the type the same way CDC does, which is what
+/// guarantees representation parity with the CDC paths.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PgBinary;
+
+impl Sealed for PgBinary {}
+
+impl WireSource for PgBinary {
+    type Payload<'a> = PgBinaryColumn<'a>;
+
+    fn wire_type(payload: &Self::Payload<'_>) -> WireType {
+        payload.wire_type
+    }
+
+    fn column_name<'a>(payload: &'a Self::Payload<'_>) -> &'a str {
+        payload.column_name
+    }
+}
+
+/// One binary result field for the [`PgBinary`] source.
+///
+/// `raw` is `None` for a SQL NULL. `wire_type` is the caller's catalog
+/// type for the column, not inferred from the bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct PgBinaryColumn<'a> {
+    /// Column name, carried for self-describing decoder errors.
+    pub column_name: &'a str,
+    /// Semantic column type driving decoder dispatch.
+    pub wire_type: WireType,
+    /// Raw binary result bytes, or `None` for SQL NULL.
+    pub raw: Option<&'a [u8]>,
+}
+
+impl PgBinaryColumn<'_> {
+    /// Ergonomic helper for calling a specific [`Decoder`](super::Decoder)
+    /// on this payload without fully-qualified syntax. Fixes the `Src`
+    /// generic to [`PgBinary`] so the compiler can pick the impl.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoder's [`DecodeError`](super::DecodeError).
+    pub fn decoded_by<D, S, B>(
+        self,
+        decoder: &D,
+    ) -> Result<crate::encoding::Value<S, B>, super::error::DecodeError>
+    where
+        D: super::decoder::Decoder<PgBinary, S, B>,
+    {
+        decoder.decode(self)
+    }
+}

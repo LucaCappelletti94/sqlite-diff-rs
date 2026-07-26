@@ -14,7 +14,9 @@
     feature = "maxwell"
 ))]
 
-use sqlite_diff_rs::testing::{test_wire_maxwell, test_wire_pg_walstream, test_wire_wal2json};
+use sqlite_diff_rs::testing::{
+    test_wire_maxwell, test_wire_pg_binary, test_wire_pg_walstream, test_wire_wal2json,
+};
 
 const CORPUS: &[&[u8]] = &[
     b"",
@@ -42,5 +44,6 @@ fn wire_fuzz_helpers_survive_hand_corpus() {
         test_wire_pg_walstream(entry);
         test_wire_wal2json(entry);
         test_wire_maxwell(entry);
+        test_wire_pg_binary(entry);
     }
 }

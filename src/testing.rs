@@ -890,7 +890,6 @@ pub fn run_crash_dir_regression(
 
 /// Every [`WireType`](crate::wire::WireType) variant, used by the wire
 /// fuzz helpers to exercise each default decoder.
-#[cfg(any(feature = "pg-walstream", feature = "wal2json", feature = "maxwell"))]
 const ALL_WIRE_TYPES: [crate::wire::WireType; 14] = [
     crate::wire::WireType::Bool,
     crate::wire::WireType::Int,
@@ -907,6 +906,25 @@ const ALL_WIRE_TYPES: [crate::wire::WireType; 14] = [
     crate::wire::WireType::Json,
     crate::wire::WireType::Jsonb,
 ];
+
+/// Feed arbitrary bytes into every built-in decoder for the [`PgBinary`](crate::PgBinary)
+/// source via [`TypeMap::defaults`](crate::wire::TypeMap::defaults), as both a present
+/// binary field and a SQL NULL. Asserts nothing panics.
+pub fn test_wire_pg_binary(input: &[u8]) {
+    use crate::wire::{PgBinary, PgBinaryColumn, TypeMap, WireAdapter};
+
+    let types: TypeMap<PgBinary, alloc::string::String, Vec<u8>> = TypeMap::defaults();
+
+    for wire_type in ALL_WIRE_TYPES {
+        for raw in [Some(input), None] {
+            let _ = types.decode(PgBinaryColumn {
+                column_name: "c",
+                wire_type,
+                raw,
+            });
+        }
+    }
+}
 
 /// Feed arbitrary bytes into every built-in decoder for the
 /// `pg_walstream` source via [`TypeMap::defaults`](crate::wire::TypeMap::defaults). Asserts nothing
