@@ -106,49 +106,16 @@ pub fn parse(json: &str) -> Result<Message, serde_json::Error> {
     serde_json::from_str(json)
 }
 
-/// Errors during Maxwell to changeset conversion.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConversionError {
-    /// A column name from the event was not found in the table schema.
-    #[error("Column '{0}' not found in table schema")]
-    ColumnNotFound(String),
-
-    /// The table name in the event doesn't match the expected schema.
-    #[error("Table name mismatch: expected '{expected}', got '{actual}'")]
-    TableMismatch {
-        /// Expected table name from the schema.
-        expected: String,
-        /// Actual table name from the Maxwell message.
-        actual: String,
-    },
-
-    /// Table named in the wire event is not in the schema.
-    #[error("Table '{0}' not found in schema")]
-    TableNotFound(String),
-
-    /// The event is missing required data for the operation.
-    #[error("Missing {0} data for {1} operation")]
-    MissingData(&'static str, &'static str),
-
-    /// A JSON value type is not supported for conversion.
-    #[error("Unsupported JSON value type for column '{0}'")]
-    UnsupportedType(String),
-
-    /// The operation type is not applicable for the requested conversion.
-    #[error("Operation '{0}' cannot be converted to the requested type")]
-    InvalidOperation(String),
-
-    /// User-registered decoder rejected a column payload.
-    #[error("Decoder failed: {0}")]
-    Decode(#[from] crate::wire::DecodeError),
-}
+pub use crate::wire::ConversionError;
 
 use crate::ChangesetFormat;
 use crate::builders::{ChangeDelete, Insert, PatchDelete, Update};
-use crate::encoding::Value;
 use crate::schema::NamedColumns;
 
-use crate::wire::{Sealed, WireSource, WireType};
+use crate::wire::{
+    Sealed, WireColumnItem, WireSource, WireType, build_changeset_delete, build_insert,
+    build_patch_delete, build_patchset_update, resolve_table,
+};
 
 use crate::builders::{DiffOps, DiffSetBuilder, PatchsetFormat};
 use crate::wire::WireAdapter;
@@ -185,6 +152,26 @@ pub struct MaxwellColumn<'a> {
     pub wire_type: WireType,
     /// Column value as a JSON value.
     pub value: &'a serde_json::Value,
+}
+
+/// One Maxwell column adapted to the shared [`WireColumnItem`] contract.
+struct MaxwellItem<'a> {
+    name: &'a str,
+    value: &'a serde_json::Value,
+}
+
+impl WireColumnItem<Maxwell> for MaxwellItem<'_> {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn payload(&self, wire_type: WireType) -> MaxwellColumn<'_> {
+        MaxwellColumn {
+            column_name: self.name,
+            wire_type,
+            value: self.value,
+        }
+    }
 }
 
 impl MaxwellColumn<'_> {
@@ -287,15 +274,6 @@ where
     }
 }
 
-fn resolve_table<'a, Sch>(schema: &'a Sch, name: &str) -> Result<&'a Sch::Table, ConversionError>
-where
-    Sch: WireSchema,
-{
-    schema
-        .get(name)
-        .ok_or_else(|| ConversionError::TableNotFound(name.into()))
-}
-
 fn build_insert_from_maxwell<T, S, B, A>(
     data: &BTreeMap<String, serde_json::Value>,
     table: &T,
@@ -307,23 +285,14 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
 {
-    let mut insert = Insert::from(table.clone());
-    for (name, value) in data {
-        let col_idx = table
-            .column_index(name)
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let wire_type = table.column_type(col_idx);
-        let payload = MaxwellColumn {
-            column_name: name.as_str(),
-            wire_type,
+    build_insert(
+        data.iter().map(|(name, value)| MaxwellItem {
+            name: name.as_str(),
             value,
-        };
-        let decoded = adapter.decode(payload)?;
-        insert = insert
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
-    }
-    Ok(insert)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_changeset_update_from_maxwell<T, S, B, A>(
@@ -384,23 +353,14 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
 {
-    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
-    for (name, value) in data {
-        let col_idx = table
-            .column_index(name)
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let wire_type = table.column_type(col_idx);
-        let payload = MaxwellColumn {
-            column_name: name.as_str(),
-            wire_type,
+    build_patchset_update(
+        data.iter().map(|(name, value)| MaxwellItem {
+            name: name.as_str(),
             value,
-        };
-        let decoded = adapter.decode(payload)?;
-        update = update
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
-    }
-    Ok(update)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_changeset_delete_from_maxwell<T, S, B, A>(
@@ -414,23 +374,14 @@ where
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
 {
-    let mut delete = ChangeDelete::from(table.clone());
-    for (name, value) in data {
-        let col_idx = table
-            .column_index(name)
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        let wire_type = table.column_type(col_idx);
-        let payload = MaxwellColumn {
-            column_name: name.as_str(),
-            wire_type,
+    build_changeset_delete(
+        data.iter().map(|(name, value)| MaxwellItem {
+            name: name.as_str(),
             value,
-        };
-        let decoded = adapter.decode(payload)?;
-        delete = delete
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.clone()))?;
-    }
-    Ok(delete)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_patch_delete_from_maxwell<T, S, B, A>(
@@ -444,29 +395,14 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Maxwell, S, B>,
 {
-    let num_pks = table.number_of_primary_keys();
-    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
-
-    for (name, value) in data {
-        let col_idx = table
-            .column_index(name)
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.clone()))?;
-        if let Some(pk_idx) = table.primary_key_index(col_idx) {
-            let wire_type = table.column_type(col_idx);
-            let payload = MaxwellColumn {
-                column_name: name.as_str(),
-                wire_type,
-                value,
-            };
-            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
-        }
-    }
-
-    let pk = pk_slots
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or(ConversionError::MissingData("pk", "DELETE"))?;
-    Ok(PatchDelete::new(table.clone(), pk))
+    build_patch_delete(
+        data.iter().map(|(name, value)| MaxwellItem {
+            name: name.as_str(),
+            value,
+        }),
+        table,
+        adapter,
+    )
 }
 
 // ============================================================================

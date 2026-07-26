@@ -13,84 +13,10 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::wal2json::{
     Action, ChangeV1, Column, ConversionError, MessageV2, OldKeys, Wal2Json, parse_v2,
 };
-use sqlite_diff_rs::{
-    ChangeSet, ChangesetOp, DecodeError, DynTable, NamedColumns, PatchSet, SchemaWithPK,
-    SimpleTable, TypeMap, Value, WireColumnTypes, WireSchema, WireType,
-};
+use sqlite_diff_rs::{ChangeSet, ChangesetOp, DecodeError, PatchSet, TypeMap, Value};
 
-// ---------------------------------------------------------------------------
-// Test schema
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct TestSchema {
-    users: TestUsersTable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TestUsersTable(SimpleTable);
-
-impl DynTable for TestUsersTable {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-    fn number_of_columns(&self) -> usize {
-        self.0.number_of_columns()
-    }
-    fn write_pk_flags(&self, buf: &mut [u8]) {
-        self.0.write_pk_flags(buf);
-    }
-}
-
-impl SchemaWithPK for TestUsersTable {
-    fn extract_pk<S: Clone, B: Clone>(
-        &self,
-        values: &impl sqlite_diff_rs::IndexableValues<Text = S, Binary = B>,
-    ) -> Vec<Value<S, B>> {
-        self.0.extract_pk(values)
-    }
-    fn number_of_primary_keys(&self) -> usize {
-        self.0.number_of_primary_keys()
-    }
-    fn primary_key_index(&self, col: usize) -> Option<usize> {
-        self.0.primary_key_index(col)
-    }
-}
-
-impl NamedColumns for TestUsersTable {
-    fn column_index(&self, name: &str) -> Option<usize> {
-        self.0.column_index(name)
-    }
-}
-
-impl WireColumnTypes for TestUsersTable {
-    fn column_type(&self, column_index: usize) -> WireType {
-        // id -> Int, name -> Text, active -> Bool
-        match column_index {
-            0 => WireType::Int,
-            1 => WireType::Text,
-            2 => WireType::Bool,
-            _ => panic!("column {column_index} out of range"),
-        }
-    }
-}
-
-impl WireSchema for TestSchema {
-    type Table = TestUsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
-        if table_name == "users" {
-            Some(&self.users)
-        } else {
-            None
-        }
-    }
-}
-
-fn test_schema() -> TestSchema {
-    TestSchema {
-        users: TestUsersTable(SimpleTable::new("users", &["id", "name", "active"], &[0])),
-    }
-}
+mod common;
+use common::{TestUsersTable, test_schema};
 
 fn default_adapter() -> TypeMap<Wal2Json, String, Vec<u8>> {
     TypeMap::defaults()

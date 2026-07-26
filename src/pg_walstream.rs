@@ -5,9 +5,6 @@
 //! [`Digestable`] on those events so callers fold them
 //! into a builder via `DiffSetBuilder::digest(&event, &schema, &adapter)`.
 
-use alloc::string::String;
-use alloc::vec::Vec;
-
 // Re-export key types from pg_walstream for convenience
 pub use pg_walstream::Oid;
 pub use pg_walstream::{ChangeEvent, ColumnValue, EventType, Lsn, ReplicaIdentity, RowData};
@@ -16,52 +13,15 @@ use crate::ChangesetFormat;
 use crate::builders::{
     ChangeDelete, DiffOps, DiffSetBuilder, Insert, PatchDelete, PatchsetFormat, Update,
 };
-use crate::encoding::Value;
 use crate::schema::NamedColumns;
-use crate::wire::{Sealed, WireAdapter, WireSource, WireType};
+use crate::wire::{
+    Sealed, WireAdapter, WireColumnItem, WireSource, WireType, build_changeset_delete,
+    build_insert, build_patch_delete, build_patchset_update, resolve_table,
+};
 use core::fmt::Debug;
 use core::hash::Hash;
 
-/// Errors during `pg_walstream` to changeset conversion.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConversionError {
-    /// A column name from the event was not found in the table schema.
-    #[error("Column '{0}' not found in table schema")]
-    ColumnNotFound(String),
-
-    /// The table name in the event doesn't match the expected schema.
-    #[error("Table name mismatch: expected '{expected}', got '{actual}'")]
-    TableMismatch {
-        /// Expected table name from the schema.
-        expected: String,
-        /// Actual table name from the event.
-        actual: String,
-    },
-
-    /// Table named in the wire event is not in the schema.
-    #[error("Table '{0}' not found in schema")]
-    TableNotFound(String),
-
-    /// The event is missing required data.
-    #[error("Missing data in event")]
-    MissingData,
-
-    /// A column value could not be decoded into a supported `Value`.
-    #[error("Unsupported value for column '{0}'")]
-    UnsupportedType(String),
-
-    /// The event type is not applicable for the requested conversion.
-    #[error("Event type '{0}' cannot be converted to the requested operation")]
-    InvalidEventType(String),
-
-    /// Old data is required but not available (replica identity issue).
-    #[error("Old data not available (check replica identity setting)")]
-    MissingOldData,
-
-    /// User-registered decoder rejected a column payload.
-    #[error("Decoder failed: {0}")]
-    Decode(#[from] crate::wire::DecodeError),
-}
+pub use crate::wire::ConversionError;
 
 /// Marker type for the `pg_walstream` source. Passed as the `Src`
 /// generic parameter to `TypeMap`, `WireAdapter`, and `Decoder`.
@@ -112,6 +72,26 @@ impl PgWalstreamColumn<'_> {
         D: crate::wire::Decoder<PgWalstream, S, B>,
     {
         decoder.decode(self)
+    }
+}
+
+/// One `pg_walstream` column adapted to the shared [`WireColumnItem`] contract.
+struct PgItem<'a> {
+    name: &'a str,
+    data: &'a ColumnValue,
+}
+
+impl WireColumnItem<PgWalstream> for PgItem<'_> {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn payload(&self, wire_type: WireType) -> PgWalstreamColumn<'_> {
+        PgWalstreamColumn {
+            column_name: self.name,
+            wire_type,
+            data: self.data,
+        }
     }
 }
 
@@ -221,15 +201,6 @@ where
     }
 }
 
-fn resolve_table<'a, Sch>(schema: &'a Sch, name: &str) -> Result<&'a Sch::Table, ConversionError>
-where
-    Sch: WireSchema,
-{
-    schema
-        .get(name)
-        .ok_or_else(|| ConversionError::TableNotFound(name.into()))
-}
-
 fn build_insert_from_pg<T, S, B, A>(
     data: &RowData,
     table: &T,
@@ -241,22 +212,14 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
 {
-    let mut insert = Insert::from(table.clone());
-    for (name, value) in data.iter() {
-        let col_idx = table
-            .column_index(name.as_ref())
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-        let payload = PgWalstreamColumn {
-            column_name: name.as_ref(),
-            wire_type: table.column_type(col_idx),
+    build_insert(
+        data.iter().map(|(name, value)| PgItem {
+            name: name.as_ref(),
             data: value,
-        };
-        let decoded = adapter.decode(payload)?;
-        insert = insert
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-    }
-    Ok(insert)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_changeset_update_from_pg<T, S, B, A>(
@@ -327,22 +290,14 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
 {
-    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
-    for (name, value) in new_data.iter() {
-        let col_idx = table
-            .column_index(name.as_ref())
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-        let payload = PgWalstreamColumn {
-            column_name: name.as_ref(),
-            wire_type: table.column_type(col_idx),
+    build_patchset_update(
+        new_data.iter().map(|(name, value)| PgItem {
+            name: name.as_ref(),
             data: value,
-        };
-        let decoded = adapter.decode(payload)?;
-        update = update
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-    }
-    Ok(update)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_changeset_delete_from_pg<T, S, B, A>(
@@ -356,22 +311,14 @@ where
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
 {
-    let mut delete = ChangeDelete::from(table.clone());
-    for (name, value) in old_data.iter() {
-        let col_idx = table
-            .column_index(name.as_ref())
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-        let payload = PgWalstreamColumn {
-            column_name: name.as_ref(),
-            wire_type: table.column_type(col_idx),
+    build_changeset_delete(
+        old_data.iter().map(|(name, value)| PgItem {
+            name: name.as_ref(),
             data: value,
-        };
-        let decoded = adapter.decode(payload)?;
-        delete = delete
-            .set(col_idx, decoded)
-            .map_err(|_| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-    }
-    Ok(delete)
+        }),
+        table,
+        adapter,
+    )
 }
 
 fn build_patch_delete_from_pg<T, S, B, A>(
@@ -385,27 +332,12 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<PgWalstream, S, B>,
 {
-    let num_pks = table.number_of_primary_keys();
-    let mut pk_slots: Vec<Option<Value<S, B>>> = alloc::vec![None; num_pks];
-
-    for (name, value) in old_data.iter() {
-        let col_idx = table
-            .column_index(name.as_ref())
-            .ok_or_else(|| ConversionError::ColumnNotFound(name.as_ref().into()))?;
-        if let Some(pk_idx) = table.primary_key_index(col_idx) {
-            let payload = PgWalstreamColumn {
-                column_name: name.as_ref(),
-                wire_type: table.column_type(col_idx),
-                data: value,
-            };
-            pk_slots[pk_idx] = Some(adapter.decode(payload)?);
-        }
-    }
-
-    let pk: Vec<Value<S, B>> = pk_slots
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or(ConversionError::MissingData)?;
-
-    Ok(PatchDelete::new(table.clone(), pk))
+    build_patch_delete(
+        old_data.iter().map(|(name, value)| PgItem {
+            name: name.as_ref(),
+            data: value,
+        }),
+        table,
+        adapter,
+    )
 }

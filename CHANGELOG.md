@@ -6,6 +6,12 @@
 
 `ParsedDiffSet::rename_tables` renames table sections in place. A callback maps each section name to a new one (or `None` to keep it), and the count of renamed sections is returned. Only the name changes, so a diffset captured against one schema can apply where the same tables carry different physical names (for example an RLS translation that renames the storage table), which `sqlite3changeset_apply` cannot remap on its own.
 
+A new `PgBinary` wire source decodes PostgreSQL binary result fields (the form diesel's Postgres backend hands back) straight into `Value` through the same `WireType` and `Decoder` machinery the CDC sources use, so a query result and a CDC event reach a byte-identical representation by construction. The payload `PgBinaryColumn` carries the caller's catalog `WireType` explicitly (binary `int4` and `float4` are both four opaque bytes), a `None` `raw` short-circuits to `Value::Null`, and `TypeMap::<PgBinary, _, _>::defaults()` covers the v1 set `bool`, `int`, `real`, `text`, `bytea`, and `uuid` (as a 16-byte blob). The remaining types stay `NotYetImplemented` until their numeric binary layouts render back to text byte-identically to the verbatim decoders. A cross-source parity test guards that `PgBinary` never diverges from `PgWalstream`.
+
+### Changed
+
+The three CDC wire sources now share one internal decoding core instead of carrying near-identical copies. `wal2json::ConversionError`, `maxwell::ConversionError`, and `pg_walstream::ConversionError` are now a single re-exported `#[non_exhaustive]` type with the union of the previous variants, so matching on it must account for the shared set. The per-source `build_insert`/`build_patchset_update`/`build_changeset_delete`/`build_patch_delete` helpers, the float and PostgreSQL-binary scalar decoders, and the JSON-source (`Maxwell`, `Wal2Json`) `text`/`decimal`/`uuid`/`json` decoders are now shared, and the duplicated `pk_indices` computation in the SQL and diesel renderers now calls the existing `SchemaWithPK::primary_key_columns`. No wire-format or decoded-value behavior changes.
+
 ## 0.6.1
 
 ### Fixed

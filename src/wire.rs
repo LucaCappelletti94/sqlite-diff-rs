@@ -24,11 +24,18 @@
 mod adapter;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod bytes_helpers;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+mod conversion_error;
 mod decoder;
 mod error;
+#[cfg(any(feature = "maxwell", feature = "wal2json"))]
+mod json_decoders;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod json_helpers;
+mod scalar_helpers;
 mod sealed;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+mod shared_builders;
 mod source;
 mod type_map;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
@@ -37,12 +44,15 @@ mod wire_type;
 
 #[cfg(feature = "maxwell")]
 mod impls_maxwell;
+mod impls_pg_binary;
 #[cfg(feature = "pg-walstream")]
 mod impls_pg_walstream;
 #[cfg(feature = "wal2json")]
 mod impls_wal2json;
 
 pub use adapter::WireAdapter;
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+pub use conversion_error::ConversionError;
 pub use decoder::Decoder;
 pub use decoder::{
     BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Int64OverflowToTextDecoder, IntDecoder,
@@ -54,6 +64,11 @@ pub use decoder::{
 pub use error::DecodeError;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 pub(crate) use sealed::Sealed;
-pub use source::{Digestable, WireColumnTypes, WireSchema, WireSource};
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+pub(crate) use shared_builders::{
+    WireColumnItem, build_changeset_delete, build_insert, build_patch_delete,
+    build_patchset_update, resolve_table,
+};
+pub use source::{Digestable, PgBinary, PgBinaryColumn, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};
 pub use wire_type::WireType;

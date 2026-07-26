@@ -22,7 +22,6 @@
 //! ```
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::fmt::{Debug, Write};
 use core::hash::Hash;
 
@@ -59,29 +58,11 @@ pub trait ColumnNames: NamedColumns {
     ///
     /// Returns `None` if the index is out of bounds.
     fn column_name(&self, index: usize) -> Option<&str>;
-
-    /// Get the column indices that are part of the primary key, in PK order.
-    fn pk_indices(&self) -> Vec<usize> {
-        // Build a list of (pk_ordinal, col_idx) pairs, then sort by pk_ordinal
-        let mut pk_cols: Vec<(usize, usize)> = Vec::new();
-        for col_idx in 0..self.number_of_columns() {
-            if let Some(pk_ordinal) = self.primary_key_index(col_idx) {
-                pk_cols.push((pk_ordinal, col_idx));
-            }
-        }
-        pk_cols.sort_by_key(|(ordinal, _)| *ordinal);
-        pk_cols.into_iter().map(|(_, col_idx)| col_idx).collect()
-    }
 }
 
 impl ColumnNames for crate::SimpleTable {
     fn column_name(&self, index: usize) -> Option<&str> {
         self.column_name(index)
-    }
-
-    fn pk_indices(&self) -> Vec<usize> {
-        // SimpleTable already has this method
-        crate::SimpleTable::pk_indices(self)
     }
 }
 
@@ -157,7 +138,7 @@ fn format_delete_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     sql.push_str(" WHERE ");
 
     // Get PK column indices in order
-    let pk_indices = table.pk_indices();
+    let pk_indices = table.primary_key_columns();
 
     let mut first = true;
     for (pk_ordinal, &col_idx) in pk_indices.iter().enumerate() {
@@ -264,7 +245,7 @@ fn format_update_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
 
     // WHERE clause: use PK values
     sql.push_str(" WHERE ");
-    let pk_indices = table.pk_indices();
+    let pk_indices = table.primary_key_columns();
 
     let mut first_where = true;
     for (pk_ordinal, &col_idx) in pk_indices.iter().enumerate() {
@@ -368,6 +349,7 @@ mod tests {
     use crate::{
         ChangeDelete, ChangeSet, DiffOps, Insert, PatchDelete, PatchSet, SimpleTable, Update,
     };
+    use alloc::vec::Vec;
 
     #[test]
     fn test_quote_identifier_simple() {

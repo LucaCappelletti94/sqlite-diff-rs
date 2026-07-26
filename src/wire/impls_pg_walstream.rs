@@ -11,6 +11,9 @@ use super::decoder::{
     UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
+use super::scalar_helpers::{
+    decode_pg_bool_binary, decode_pg_int_binary, decode_pg_real_binary, normalize_real,
+};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
 use crate::encoding::Value;
@@ -47,15 +50,7 @@ impl<S, B> Decoder<PgWalstream, S, B> for BoolDecoder {
                     },
                 }),
             },
-            ColumnValue::Binary(b) => match b.as_ref() {
-                [0x01] => Ok(Value::Integer(1)),
-                [0x00] => Ok(Value::Integer(0)),
-                _ => Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "single byte 0x00 or 0x01",
-                    actual: "other binary contents",
-                }),
-            },
+            ColumnValue::Binary(b) => decode_pg_bool_binary(payload.column_name, b.as_ref()),
         }
     }
 }
@@ -100,28 +95,6 @@ impl<S, B> Decoder<PgWalstream, S, B> for IntDecoder {
             }
             ColumnValue::Binary(b) => decode_pg_int_binary(payload.column_name, b.as_ref()),
         }
-    }
-}
-
-fn decode_pg_int_binary<S, B>(column_name: &str, bytes: &[u8]) -> Result<Value<S, B>, DecodeError> {
-    match bytes.len() {
-        2 => {
-            let arr: [u8; 2] = bytes.try_into().unwrap();
-            Ok(Value::Integer(i16::from_be_bytes(arr).into()))
-        }
-        4 => {
-            let arr: [u8; 4] = bytes.try_into().unwrap();
-            Ok(Value::Integer(i32::from_be_bytes(arr).into()))
-        }
-        8 => {
-            let arr: [u8; 8] = bytes.try_into().unwrap();
-            Ok(Value::Integer(i64::from_be_bytes(arr)))
-        }
-        _ => Err(DecodeError::WrongPayloadKind {
-            column: column_name.to_string(),
-            expected: "int2, int4, or int8 binary (2, 4, or 8 bytes)",
-            actual: "unexpected binary integer width",
-        }),
     }
 }
 
@@ -204,38 +177,6 @@ impl<S, B> Decoder<PgWalstream, S, B> for RealDecoder {
             }
             ColumnValue::Binary(b) => decode_pg_real_binary(payload.column_name, b.as_ref()),
         }
-    }
-}
-
-#[inline]
-fn normalize_real<S, B>(f: f64) -> Value<S, B> {
-    if f.is_nan() {
-        Value::Null
-    } else if f == 0.0 {
-        Value::Real(0.0)
-    } else {
-        Value::Real(f)
-    }
-}
-
-fn decode_pg_real_binary<S, B>(
-    column_name: &str,
-    bytes: &[u8],
-) -> Result<Value<S, B>, DecodeError> {
-    match bytes.len() {
-        4 => {
-            let arr: [u8; 4] = bytes.try_into().unwrap();
-            Ok(normalize_real(f64::from(f32::from_be_bytes(arr))))
-        }
-        8 => {
-            let arr: [u8; 8] = bytes.try_into().unwrap();
-            Ok(normalize_real(f64::from_be_bytes(arr)))
-        }
-        _ => Err(DecodeError::WrongPayloadKind {
-            column: column_name.to_string(),
-            expected: "float4 or float8 binary (4 or 8 bytes)",
-            actual: "unexpected binary float width",
-        }),
     }
 }
 

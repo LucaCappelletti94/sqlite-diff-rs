@@ -11,10 +11,21 @@ use super::decoder::{
     UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
+use super::scalar_helpers::normalize_real;
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
 use crate::encoding::Value;
 use crate::maxwell::{Maxwell, MaxwellColumn};
+
+impl super::json_decoders::AsJsonValue for crate::maxwell::MaxwellColumn<'_> {
+    fn json_value(&self) -> &serde_json::Value {
+        self.value
+    }
+
+    fn column_name(&self) -> &str {
+        self.column_name
+    }
+}
 
 impl<S, B> Decoder<Maxwell, S, B> for NullDecoder {
     fn decode(&self, _payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
@@ -170,17 +181,6 @@ impl<S, B> Decoder<Maxwell, S, B> for RealDecoder {
     }
 }
 
-#[inline]
-fn normalize_real<S, B>(f: f64) -> Value<S, B> {
-    if f.is_nan() {
-        Value::Null
-    } else if f == 0.0 {
-        Value::Real(0.0)
-    } else {
-        Value::Real(f)
-    }
-}
-
 // ------------------------------------------------------------------
 // TextDecoder
 // ------------------------------------------------------------------
@@ -190,27 +190,7 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON string",
-                actual: "JSON boolean",
-            }),
-            serde_json::Value::Number(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON string",
-                actual: "JSON number",
-            }),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "JSON string",
-                    actual: "JSON array or object",
-                })
-            }
-        }
+        super::json_decoders::decode_json_text(&payload)
     }
 }
 
@@ -267,21 +247,7 @@ where
     B: From<Vec<u8>>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => match super::uuid_helpers::parse_uuid(s) {
-                Ok(bytes) => Ok(Value::Blob(B::from(bytes.to_vec()))),
-                Err(source_len) => Err(DecodeError::InvalidUuid {
-                    column: payload.column_name.to_string(),
-                    source_len,
-                }),
-            },
-            _ => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON UUID string",
-                actual: "other JSON shape",
-            }),
-        }
+        super::json_decoders::decode_json_uuid_blob(&payload)
     }
 }
 
@@ -290,23 +256,7 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => {
-                match super::uuid_helpers::preserve_or_canonicalize_uuid_text(s) {
-                    Ok(canonical) => Ok(Value::Text(S::from(canonical))),
-                    Err(source_len) => Err(DecodeError::InvalidUuid {
-                        column: payload.column_name.to_string(),
-                        source_len,
-                    }),
-                }
-            }
-            _ => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON UUID string",
-                actual: "other JSON shape",
-            }),
-        }
+        super::json_decoders::decode_json_uuid_text(&payload)
     }
 }
 
@@ -319,43 +269,13 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-            // Maxwell emits `decimal` as a JSON number by default.
-            // `serde_json::Number::to_string` preserves parsed
-            // digits; callers who need arbitrary precision should
-            // enable serde_json's `arbitrary_precision` feature.
-            serde_json::Value::Number(n) => Ok(Value::Text(S::from(n.to_string()))),
-            _ => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON string or number decimal",
-                actual: "other JSON shape",
-            }),
-        }
+        super::json_decoders::decode_json_decimal(&payload)
     }
 }
 
 // ------------------------------------------------------------------
 // Temporal verbatim decoders
 // ------------------------------------------------------------------
-
-fn decode_maxwell_string_verbatim<S, B>(
-    payload: MaxwellColumn<'_>,
-) -> Result<Value<S, B>, DecodeError>
-where
-    S: From<alloc::string::String>,
-{
-    match payload.value {
-        serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-        _ => Err(DecodeError::WrongPayloadKind {
-            column: payload.column_name.to_string(),
-            expected: "JSON string",
-            actual: "other JSON shape",
-        }),
-    }
-}
 
 macro_rules! verbatim_impl {
     ($decoder:ty) => {
@@ -364,7 +284,7 @@ macro_rules! verbatim_impl {
             S: From<alloc::string::String>,
         {
             fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-                decode_maxwell_string_verbatim(payload)
+                super::json_decoders::decode_json_text(&payload)
             }
         }
     };
@@ -385,17 +305,7 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
-            other => match crate::wire::json_helpers::serialize_verbatim(other) {
-                Ok(text) => Ok(Value::Text(S::from(text))),
-                Err(error) => Err(DecodeError::JsonNotSerializable {
-                    column: payload.column_name.to_string(),
-                    error,
-                }),
-            },
-        }
+        super::json_decoders::decode_json_verbatim(&payload)
     }
 }
 
@@ -404,20 +314,7 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: MaxwellColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::String(s) => {
-                let canon = crate::wire::json_helpers::canonicalize_string(s);
-                Ok(Value::Text(S::from(canon)))
-            }
-            other => match crate::wire::json_helpers::canonicalize_to_string(other) {
-                Ok(text) => Ok(Value::Text(S::from(text))),
-                Err(error) => Err(DecodeError::JsonNotSerializable {
-                    column: payload.column_name.to_string(),
-                    error,
-                }),
-            },
-        }
+        super::json_decoders::decode_json_canonical(&payload)
     }
 }
 

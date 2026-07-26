@@ -213,21 +213,6 @@ enum RenderPlan<'a, S, B> {
     },
 }
 
-/// Derive PK-ordinal-ordered column indices from a [`SchemaWithPK`].
-///
-/// Works with any schema (including `TableSchema<String>` parsed from
-/// binary, which does not implement `ColumnNames`).
-fn pk_indices<T: SchemaWithPK>(table: &T) -> Vec<usize> {
-    let mut pk_cols: Vec<(usize, usize)> = Vec::new();
-    for col_idx in 0..table.number_of_columns() {
-        if let Some(pk_ordinal) = table.primary_key_index(col_idx) {
-            pk_cols.push((pk_ordinal, col_idx));
-        }
-    }
-    pk_cols.sort_by_key(|(ordinal, _)| *ordinal);
-    pk_cols.into_iter().map(|(_, col_idx)| col_idx).collect()
-}
-
 /// Build a PK `WHERE` predicate. `value_for(pk_ordinal, col_idx)` supplies
 /// the key value for each PK column (from a compact `pk` slice for patchsets,
 /// or from old-row values for changesets).
@@ -239,7 +224,7 @@ where
     T: SchemaWithPK,
     F: FnMut(usize, usize) -> Result<&'a Value<S, B>, RenderError>,
 {
-    let pk_columns = pk_indices(table);
+    let pk_columns = table.primary_key_columns();
     if pk_columns.is_empty() {
         return Err(RenderError::EmptyRowPredicate);
     }
