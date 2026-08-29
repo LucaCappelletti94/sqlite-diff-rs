@@ -11,7 +11,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::wal2json::{
-    Action, ChangeV1, Column, ConversionError, MessageV2, OldKeys, Wal2Json, parse_v2,
+    Action, ChangeV1, Column, ColumnArrays, ConversionError, LogicalMessageV2, MessageV2, OldKeys,
+    RowV2, TransactionBoundary, TruncateV2, Wal2Json, parse_v1, parse_v2,
 };
 use sqlite_diff_rs::{ChangeSet, ChangesetOp, DecodeError, PatchSet, TypeMap, Value};
 
@@ -23,11 +24,43 @@ fn default_adapter() -> TypeMap<Wal2Json, String, Vec<u8>> {
 }
 
 fn column(name: &str, type_name: &str, value: serde_json::Value) -> Column {
-    Column {
-        name: name.to_string(),
-        type_name: type_name.to_string(),
-        value,
+    let mut column = Column::new(name);
+    column.type_name = Some(type_name.to_string());
+    column.value = Some(value);
+    column
+}
+
+/// `RowV2` is `#[non_exhaustive]`, so a row is built through its constructor.
+fn v2_row(
+    action: Action,
+    table: &str,
+    columns: Option<Vec<Column>>,
+    identity: Option<Vec<Column>>,
+    lsn: Option<&str>,
+) -> MessageV2 {
+    let mut row = RowV2::new(table);
+    row.schema = Some("public".to_string());
+    row.columns = columns;
+    row.identity = identity;
+    row.lsn = lsn.map(str::to_string);
+    match action {
+        Action::Insert => MessageV2::Insert(row),
+        Action::Update => MessageV2::Update(row),
+        Action::Delete => MessageV2::Delete(row),
+        other => panic!("{other:?} is not a row action"),
     }
+}
+
+fn v1_arrays(names: &[&str], types: &[&str], values: Vec<serde_json::Value>) -> ColumnArrays {
+    let mut arrays = ColumnArrays::new(names.iter().map(|name| (*name).to_string()).zip(values));
+    arrays.columntypes = Some(types.iter().map(|t| (*t).to_string()).collect());
+    arrays
+}
+
+fn v1_oldkeys(names: &[&str], types: &[&str], values: Vec<serde_json::Value>) -> OldKeys {
+    let mut keys = OldKeys::new(names.iter().map(|name| (*name).to_string()).zip(values));
+    keys.keytypes = Some(types.iter().map(|t| (*t).to_string()).collect());
+    keys
 }
 
 fn int_col(name: &str, val: i64) -> Column {
@@ -69,14 +102,13 @@ fn w2j_v2_changeset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -90,14 +122,13 @@ fn w2j_v2_changeset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alicia", true)),
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(1, "Alicia", true)),
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -111,14 +142,13 @@ fn w2j_v2_changeset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::D,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: None,
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Delete,
+        "users",
+        None,
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -134,14 +164,13 @@ fn w2j_v2_patchset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -155,14 +184,13 @@ fn w2j_v2_patchset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alicia", true)),
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(1, "Alicia", true)),
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -176,14 +204,13 @@ fn w2j_v2_patchset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::D,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: None,
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Delete,
+        "users",
+        None,
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -199,18 +226,15 @@ fn w2j_v1_changeset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "insert".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Insert {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alice", true),
-        oldkeys: None,
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alice", true),
+        ),
+        pk: None,
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -225,22 +249,20 @@ fn w2j_v1_changeset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "update".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Update {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alicia", true),
-        oldkeys: Some(sqlite_diff_rs::wal2json::OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
-        }),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alicia", true),
+        ),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+        ),
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -255,22 +277,15 @@ fn w2j_v1_changeset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "delete".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Delete {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alice", true),
-        oldkeys: Some(sqlite_diff_rs::wal2json::OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
-        }),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+        ),
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -287,18 +302,15 @@ fn w2j_v1_patchset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "insert".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Insert {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alice", true),
-        oldkeys: None,
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alice", true),
+        ),
+        pk: None,
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -313,22 +325,20 @@ fn w2j_v1_patchset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "update".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Update {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alicia", true),
-        oldkeys: Some(sqlite_diff_rs::wal2json::OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
-        }),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alicia", true),
+        ),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+        ),
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -343,22 +353,15 @@ fn w2j_v1_patchset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "delete".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Delete {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alice", true),
-        oldkeys: Some(sqlite_diff_rs::wal2json::OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
-        }),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+        ),
     };
 
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
@@ -375,14 +378,13 @@ fn w2j_table_not_found_is_error() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("nonexistent".to_string()),
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Insert,
+        "nonexistent",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -398,14 +400,7 @@ fn w2j_missing_columns_is_error_for_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: None,
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(Action::Insert, "users", None, None, None);
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -421,14 +416,7 @@ fn w2j_missing_identity_is_error_for_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::D,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: None,
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(Action::Delete, "users", None, None, None);
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -444,18 +432,17 @@ fn w2j_column_not_found_is_error() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(alloc::vec![column(
+    let msg = v2_row(
+        Action::Insert,
+        "users",
+        Some(alloc::vec![column(
             "missing_col",
             "integer",
             serde_json::Value::Number(serde_json::Number::from(1_i64))
         )]),
-        identity: None,
-        lsn: None,
-    };
+        None,
+        None,
+    );
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -471,14 +458,13 @@ fn w2j_decode_error_is_propagated() {
     let adapter: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
     let schema = test_schema();
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -491,98 +477,64 @@ fn w2j_decode_error_is_propagated() {
     }
 }
 
+/// A v1 delete carries its old keys or it does not parse, so the builder can no longer be handed
+/// one without them. This replaces a test that asserted a `MissingColumns` conversion error.
 #[test]
-fn w2j_v1_missing_oldkeys_is_error_for_patchset_delete() {
-    let schema = test_schema();
-    let adapter = default_adapter();
+fn w2j_v1_delete_without_oldkeys_is_rejected_when_parsed() {
+    let json = r#"{"change":[{"kind":"delete","schema":"public","table":"users"}]}"#;
 
-    let change = ChangeV1 {
-        kind: "delete".to_string(),
-        schema: "public".to_string(),
-        table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string()],
-        columntypes: alloc::vec!["integer".to_string()],
-        columnvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
-        oldkeys: None,
-    };
-
-    let result: Result<PatchSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
-        PatchSet::new().digest(&change, &schema, &adapter);
-    match result {
-        Err(ConversionError::MissingColumns) => {}
-        Err(other) => panic!("expected MissingColumns, got {other:?}"),
-        Ok(_) => panic!("expected error"),
-    }
+    assert!(
+        parse_v1(json).is_err(),
+        "a delete without oldkeys must not parse"
+    );
 }
 
-// -- No-op handling --------------------------------------------------------
-
+/// A row action without a table is refused at the parse boundary now, so digestion never sees one.
+/// This replaces a test that built such a message directly, which the typed model cannot express.
 #[test]
-fn w2j_v2_no_table_is_ignored() {
-    let schema = test_schema();
-    let adapter = default_adapter();
+fn w2j_v2_row_without_table_is_rejected_when_parsed() {
+    let json =
+        r#"{"action":"I","schema":"public","columns":[{"name":"id","type":"integer","value":1}]}"#;
 
-    let msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: None,
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
-
-    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
-        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
     assert!(
-        cs.build().is_empty(),
-        "no-table message must produce empty output"
+        parse_v2(json).is_err(),
+        "a row action without a table must not parse"
     );
 }
 
 #[test]
-fn w2j_v2_begin_commit_truncate_message_are_ignored() {
+fn w2j_v2_non_row_actions_are_ignored() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    for action in [Action::B, Action::C, Action::T, Action::M] {
-        let msg = MessageV2 {
-            action,
-            schema: Some("public".to_string()),
-            table: Some("users".to_string()),
-            columns: Some(all_columns(1, "Alice", true)),
-            identity: None,
-            lsn: None,
-        };
+    let messages = [
+        MessageV2::Begin(TransactionBoundary::new()),
+        MessageV2::Commit(TransactionBoundary::new()),
+        MessageV2::Truncate(TruncateV2::new("users")),
+        MessageV2::Message(LogicalMessageV2::new(true, "prefix", "content")),
+    ];
 
+    for msg in messages {
         let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
             ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
         assert!(
             cs.build().is_empty(),
-            "non-DML action {action:?} must be ignored"
+            "non-row action {:?} must be ignored",
+            msg.action()
         );
     }
 }
 
+/// The kinds the model does not know are refused at the parse boundary, so digestion never sees
+/// one. This replaces a test that fed an "unknown" kind straight to the builder, which the typed
+/// model can no longer express.
 #[test]
-fn w2j_v1_unknown_kind_is_ignored() {
-    let schema = test_schema();
-    let adapter = default_adapter();
+fn w2j_v1_unknown_kind_is_rejected_when_parsed() {
+    let json = r#"{"change":[{"kind":"unknown","schema":"public","table":"users"}]}"#;
 
-    let change = ChangeV1 {
-        kind: "unknown".to_string(),
-        schema: "public".to_string(),
-        table: "users".to_string(),
-        columnnames: alloc::vec![],
-        columntypes: alloc::vec![],
-        columnvalues: alloc::vec![],
-        oldkeys: None,
-    };
-
-    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
-        ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
     assert!(
-        cs.build().is_empty(),
-        "unknown kind must produce empty output"
+        parse_v1(json).is_err(),
+        "an unknown kind must not parse into a change"
     );
 }
 
@@ -591,15 +543,19 @@ fn w2j_v1_unknown_kind_is_ignored() {
 #[test]
 fn w2j_v2_lsn_present_parses() {
     let json = r#"{"action":"I","schema":"public","table":"users","lsn":"0/16B2270","columns":[{"name":"id","type":"integer","value":1}]}"#;
-    let msg = parse_v2(json).unwrap();
-    assert_eq!(msg.lsn.as_deref(), Some("0/16B2270"));
+    let MessageV2::Insert(row) = parse_v2(json).unwrap() else {
+        panic!("expected an insert");
+    };
+    assert_eq!(row.lsn.as_deref(), Some("0/16B2270"));
 }
 
 #[test]
 fn w2j_v2_lsn_absent_defaults_none() {
     let json = r#"{"action":"I","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1}]}"#;
-    let msg = parse_v2(json).unwrap();
-    assert_eq!(msg.lsn, None);
+    let MessageV2::Insert(row) = parse_v2(json).unwrap() else {
+        panic!("expected an insert");
+    };
+    assert_eq!(row.lsn, None);
 }
 
 #[test]
@@ -607,18 +563,20 @@ fn w2j_v2_lsn_does_not_affect_digest() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let without = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alice", true)),
-        identity: None,
-        lsn: None,
-    };
-    let with = MessageV2 {
-        lsn: Some("0/16B2270".to_string()),
-        ..without.clone()
-    };
+    let without = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
+    let with = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        Some("0/16B2270"),
+    );
 
     let cs_without: ChangeSet<TestUsersTable, String, Vec<u8>> = ChangeSet::new()
         .digest(&without, &schema, &adapter)
@@ -655,14 +613,13 @@ fn w2j_v2_changeset_update_captures_old_pk_on_key_change() {
     let adapter = default_adapter();
 
     // id changes 1 -> 2, identity carries the full old row.
-    let msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(2, "Alice", true)),
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(2, "Alice", true)),
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -691,14 +648,13 @@ fn w2j_v2_changeset_update_captures_full_old_image() {
     let adapter = default_adapter();
 
     // name changes, identity is the full old row (REPLICA IDENTITY FULL).
-    let msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alicia", true)),
-        identity: Some(all_columns(1, "Alice", true)),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(1, "Alicia", true)),
+        Some(all_columns(1, "Alice", true)),
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -727,14 +683,13 @@ fn w2j_v2_changeset_update_default_identity_captures_pk_only() {
     let adapter = default_adapter();
 
     // name changes, identity carries only the primary key (default identity).
-    let msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(all_columns(1, "Alicia", true)),
-        identity: Some(alloc::vec![int_col("id", 1)]),
-        lsn: None,
-    };
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(1, "Alicia", true)),
+        Some(alloc::vec![int_col("id", 1)]),
+        None,
+    );
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
@@ -760,22 +715,20 @@ fn w2j_v1_changeset_update_captures_old_pk_from_oldkeys() {
     let adapter = default_adapter();
 
     // id changes 1 -> 2, oldkeys carries the old primary key.
-    let change = ChangeV1 {
-        kind: "update".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Update {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(2, "Alice", true),
-        oldkeys: Some(OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
-        }),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(2, "Alice", true),
+        ),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
+        ),
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
@@ -797,22 +750,20 @@ fn w2j_v1_changeset_update_non_key_captures_old_pk() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let change = ChangeV1 {
-        kind: "update".to_string(),
-        schema: "public".to_string(),
+    let change = ChangeV1::Update {
+        schema: Some("public".to_string()),
         table: "users".to_string(),
-        columnnames: alloc::vec!["id".to_string(), "name".to_string(), "active".to_string()],
-        columntypes: alloc::vec![
-            "integer".to_string(),
-            "text".to_string(),
-            "boolean".to_string(),
-        ],
-        columnvalues: all_values(1, "Alicia", true),
-        oldkeys: Some(OldKeys {
-            keynames: alloc::vec!["id".to_string()],
-            keytypes: alloc::vec!["integer".to_string()],
-            keyvalues: alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
-        }),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alicia", true),
+        ),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["id"],
+            &["integer"],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
+        ),
     };
 
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
