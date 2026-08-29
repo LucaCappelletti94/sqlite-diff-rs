@@ -99,7 +99,7 @@ jobs:
       - name: Build with no default features
         run: cargo build --no-default-features
 
-  # Ensure Cargo.lock is up to date
+  # Verify Cargo.lock is consistent with Cargo.toml
   lockfile:
     name: Lockfile
     runs-on: ubuntu-latest
@@ -109,8 +109,8 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Check Cargo.lock is up to date
-        run: cargo update --locked
+      - name: Verify Cargo.lock satisfies Cargo.toml
+        run: cargo metadata --locked --format-version=1
 
 
   # diesel E2E tests (standalone workspace, requires Docker for Pg and MySQL)
