@@ -2166,14 +2166,14 @@ dependencies = [
 
 [[package]]
 name = "sqlite-diff-rs"
-version = "0.5.1"
+version = "0.9.0"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.0",
  "pg_walstream",
- "serde",
  "serde_json",
  "thiserror",
+ "wal2json-events",
 ]
 
 [[package]]
@@ -2672,6 +2672,17 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "wal2json-events"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e07472d540f81a13c811ca9132d9839326a2be5f61823bc6f9c94a6c67886269"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "want"

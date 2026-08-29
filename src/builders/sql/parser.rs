@@ -456,7 +456,7 @@ mod tests {
             .digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')")
             .unwrap();
         assert_eq!(builder.len(), 1);
-        assert!(!builder.build().is_empty());
+        assert_ne!(builder.build(), [] as [u8; 0]);
     }
 
     #[test]
@@ -477,7 +477,7 @@ mod tests {
             .digest_sql("UPDATE users SET name = 'Bob' WHERE id = 1")
             .unwrap();
         assert_eq!(builder.len(), 1);
-        assert!(!builder.build().is_empty());
+        assert_ne!(builder.build(), [] as [u8; 0]);
     }
 
     #[test]
@@ -488,7 +488,7 @@ mod tests {
             .digest_sql("DELETE FROM users WHERE id = 1")
             .unwrap();
         assert_eq!(builder.len(), 1);
-        assert!(!builder.build().is_empty());
+        assert_ne!(builder.build(), [] as [u8; 0]);
     }
 
     #[test]
@@ -512,7 +512,7 @@ mod tests {
             .unwrap();
         // INSERT(1) + INSERT(2) + DELETE(1) leaves only INSERT(2)
         assert_eq!(builder.len(), 1);
-        assert!(!builder.build().is_empty());
+        assert_ne!(builder.build(), [] as [u8; 0]);
     }
 
     #[test]

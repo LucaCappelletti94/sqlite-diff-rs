@@ -30,7 +30,7 @@ fn test_digest_simple_insert() {
         .unwrap();
     assert_eq!(ps.len(), 1);
     assert!(!ps.is_empty());
-    assert!(!ps.build().is_empty());
+    assert_ne!(ps.build(), [] as [u8; 0]);
 }
 
 #[test]

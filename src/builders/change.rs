@@ -1765,7 +1765,7 @@ mod tests {
     fn test_build_empty_builder() {
         let builder = ChangesetBuilder::new();
         let bytes = builder.build();
-        assert!(bytes.is_empty());
+        assert_eq!(bytes, [] as [u8; 0]);
     }
 
     #[test]
@@ -1783,7 +1783,7 @@ mod tests {
         // Verify the structure:
         // Table header: 'T', col_count(2), pk_flags(1,0), name("t\0")
         // Operation: INSERT(0x12), indirect(0), values...
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
 
         // Check table marker
         assert_eq!(bytes[0], b'T');
@@ -1813,7 +1813,7 @@ mod tests {
         let builder = ChangesetBuilder::new().delete(delete);
         let bytes = builder.build();
 
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
         assert_eq!(bytes[0], b'T');
         // Operation code: DELETE = 0x09
         assert_eq!(bytes[6], 0x09);
@@ -1831,7 +1831,7 @@ mod tests {
         let builder = ChangesetBuilder::new().update(update);
         let bytes = builder.build();
 
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
         assert_eq!(bytes[0], b'T');
         // Operation code: UPDATE = 0x17
         assert_eq!(bytes[6], 0x17);
@@ -1856,7 +1856,7 @@ mod tests {
         let builder = ChangesetBuilder::new().insert(insert).insert(insert2);
         let bytes = builder.build();
 
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
         // Should have one table header and two insert operations
         assert_eq!(bytes[0], b'T');
     }
@@ -1881,7 +1881,7 @@ mod tests {
         let bytes = builder.build();
 
         // INSERT + DELETE with same values cancels out
-        assert!(bytes.is_empty());
+        assert_eq!(bytes, [] as [u8; 0]);
     }
 
     // ========================================================================
@@ -2078,7 +2078,7 @@ mod tests {
         assert_eq!(cs.len(), 200);
 
         let bytes = cs.build();
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
 
         // Reparse the binary to make sure 200 ops survived the round-trip.
         let reparsed = crate::parser::ParsedDiffSet::try_from(bytes.as_slice()).unwrap();
@@ -2509,7 +2509,7 @@ mod tests {
             .set(1, "a")
             .unwrap();
         let bytes = ChangesetBuilder::new().insert(insert).build();
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
     }
 
     #[test]
@@ -2521,7 +2521,7 @@ mod tests {
             .set(1, 42i64)
             .unwrap();
         let bytes = ChangesetBuilder::new().insert(insert).build();
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
     }
 
     #[test]
@@ -2533,7 +2533,7 @@ mod tests {
             .set(1, "a")
             .unwrap();
         let bytes = ChangesetBuilder::new().insert(insert).build();
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
     }
 
     // ========================================================================
@@ -2545,14 +2545,14 @@ mod tests {
         // An empty builder builds to empty bytes (no headers, no ops).
         let cs: ChangesetBuilder = ChangesetBuilder::new();
         let bytes = cs.build();
-        assert!(bytes.is_empty());
+        assert_eq!(bytes, [] as [u8; 0]);
     }
 
     #[test]
     fn test_session_row_order_empty_rows_returns_empty_vec() {
         // Direct exercise of the empty-rows short-circuit (line 157-158).
         let rows: RowMap<ChangesetFormat, String, Vec<u8>> = IndexMap::default();
-        assert!(session_row_order(&rows).is_empty());
+        assert_eq!(session_row_order(&rows), [] as [usize; 0]);
     }
 
     #[test]
@@ -2563,7 +2563,7 @@ mod tests {
         builder.add_table(&table);
         let frozen: DiffSet<PatchsetFormat, TestTable, String, Vec<u8>> = builder.into();
         let bytes = frozen.build();
-        assert!(bytes.is_empty());
+        assert_eq!(bytes, [] as [u8; 0]);
     }
 
     // ========================================================================

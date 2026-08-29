@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 
 use sqlite_diff_rs::pg_walstream::{ColumnValue, EventType, PgWalstream};
-use sqlite_diff_rs::wal2json::{Action, Column, MessageV2, Wal2Json};
+use sqlite_diff_rs::wal2json::{Action, Column, ColumnArrays, MessageV2, RowV2, Wal2Json};
 use sqlite_diff_rs::{
     DynTable, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap, Value, WireColumnTypes,
     WireSchema, WireType,
@@ -110,6 +110,23 @@ impl WireSchema for AppSchema {
 
 /// Row with (id BIGINT, active BOOLEAN, handle TEXT, credits BIGINT, price NUMERIC, ts TIMESTAMPTZ).
 #[allow(clippy::type_complexity)]
+fn v2_row(
+    action: Action,
+    columns: Option<Vec<Column>>,
+    identity: Option<Vec<Column>>,
+) -> MessageV2 {
+    let mut row = RowV2::new("users");
+    row.schema = Some("public".to_string());
+    row.columns = columns;
+    row.identity = identity;
+    match action {
+        Action::Insert => MessageV2::Insert(row),
+        Action::Update => MessageV2::Update(row),
+        Action::Delete => MessageV2::Delete(row),
+        other => panic!("{other:?} is not a row action"),
+    }
+}
+
 fn scenario_scalar_row() -> (
     AppSchema,
     Vec<(&'static str, ColumnValue, serde_json::Value)>,
@@ -193,11 +210,10 @@ fn columns_from_vals(
     vals.iter()
         .map(|(name, _, value)| {
             let idx = NamedColumns::column_index(&schema.users, name).unwrap();
-            Column {
-                name: (*name).to_string(),
-                type_name: schema.users.pg_type_names[idx].as_ref().to_string(),
-                value: value.clone(),
-            }
+            let mut column = Column::new(*name);
+            column.type_name = Some(schema.users.pg_type_names[idx].as_ref().to_string());
+            column.value = Some(value.clone());
+            column
         })
         .collect()
 }
@@ -218,14 +234,11 @@ fn cross_format_insert_produces_byte_equal_patchset() {
         ),
     };
 
-    let w2j_msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(columns_from_vals(&schema, &vals)),
-        identity: None,
-        lsn: None,
-    };
+    let w2j_msg = v2_row(
+        Action::Insert,
+        Some(columns_from_vals(&schema, &vals)),
+        None,
+    );
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
@@ -263,14 +276,11 @@ fn cross_format_delete_produces_byte_equal_patchset() {
         key_columns: alloc::vec![Arc::from("id")],
     };
 
-    let w2j_msg = MessageV2 {
-        action: Action::D,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: None,
-        identity: Some(columns_from_vals(&schema, &vals)),
-        lsn: None,
-    };
+    let w2j_msg = v2_row(
+        Action::Delete,
+        None,
+        Some(columns_from_vals(&schema, &vals)),
+    );
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
@@ -323,14 +333,11 @@ fn cross_format_update_produces_byte_equal_patchset() {
         key_columns: alloc::vec![Arc::from("id")],
     };
 
-    let w2j_msg = MessageV2 {
-        action: Action::U,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(columns_from_vals(&schema, &vals)),
-        identity: Some(columns_from_vals(&schema, &old_vals)),
-        lsn: None,
-    };
+    let w2j_msg = v2_row(
+        Action::Update,
+        Some(columns_from_vals(&schema, &vals)),
+        Some(columns_from_vals(&schema, &old_vals)),
+    );
 
     let pg_types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
@@ -356,29 +363,29 @@ fn wal2json_v1_and_v2_insert_produce_byte_equal_patchset() {
 
     let (schema, vals) = scenario_scalar_row();
 
-    let v2_msg = MessageV2 {
-        action: Action::I,
-        schema: Some("public".to_string()),
-        table: Some("users".to_string()),
-        columns: Some(columns_from_vals(&schema, &vals)),
-        identity: None,
-        lsn: None,
-    };
+    let v2_msg = v2_row(
+        Action::Insert,
+        Some(columns_from_vals(&schema, &vals)),
+        None,
+    );
 
-    let v1_change = ChangeV1 {
-        kind: "insert".to_string(),
-        schema: "public".to_string(),
-        table: "users".to_string(),
-        columnnames: vals.iter().map(|(n, _, _)| (*n).to_string()).collect(),
-        columntypes: vals
-            .iter()
-            .map(|(n, _, _)| {
-                let idx = NamedColumns::column_index(&schema.users, n).unwrap();
+    let mut columns = ColumnArrays::new(
+        vals.iter()
+            .map(|(name, _, value)| ((*name).to_string(), value.clone())),
+    );
+    columns.columntypes = Some(
+        vals.iter()
+            .map(|(name, _, _)| {
+                let idx = NamedColumns::column_index(&schema.users, name).unwrap();
                 schema.users.pg_type_names[idx].as_ref().to_string()
             })
             .collect(),
-        columnvalues: vals.iter().map(|(_, _, v)| v.clone()).collect(),
-        oldkeys: None,
+    );
+    let v1_change = ChangeV1::Insert {
+        schema: Some("public".to_string()),
+        table: "users".to_string(),
+        columns,
+        pk: None,
     };
 
     let w2j_types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
