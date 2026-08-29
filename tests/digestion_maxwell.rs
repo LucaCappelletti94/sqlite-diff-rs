@@ -8,10 +8,13 @@
 
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, Message, OpType};
+use sqlite_diff_rs::maxwell::{
+    ColumnDefinition, ControlMessage, ConversionError, DatabaseChange, DatabaseDefinition,
+    DatabaseDropChange, DdlMetadata, Maxwell, Message, OpType, RowChange, TableAlterChange,
+    TableCreateChange, TableDefinition, TableDropChange,
+};
 use sqlite_diff_rs::{ChangeSet, ChangesetOp, DecodeError, PatchSet, TypeMap, Value};
 
 mod common;
@@ -21,8 +24,8 @@ fn default_adapter() -> TypeMap<Maxwell, String, Vec<u8>> {
     TypeMap::defaults()
 }
 
-fn data_map(id: i64, name: &str, active: bool) -> BTreeMap<String, serde_json::Value> {
-    let mut map = BTreeMap::new();
+fn data_map(id: i64, name: &str, active: bool) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
     map.insert(
         "id".to_string(),
         serde_json::Value::Number(serde_json::Number::from(id)),
@@ -35,26 +38,59 @@ fn data_map(id: i64, name: &str, active: bool) -> BTreeMap<String, serde_json::V
     map
 }
 
-fn message(
-    op_type: OpType,
-    data: BTreeMap<String, serde_json::Value>,
-    old: Option<BTreeMap<String, serde_json::Value>>,
-) -> Message {
-    Message {
+fn row_change(
+    table: &str,
+    data: serde_json::Map<String, serde_json::Value>,
+    old: Option<serde_json::Map<String, serde_json::Value>>,
+) -> RowChange {
+    RowChange {
         database: "testdb".to_string(),
-        table: "users".to_string(),
-        op_type,
-        ts: None,
-        xid: None,
-        commit: None,
-        position: None,
-        server_id: None,
-        thread_id: None,
-        primary_key: None,
-        primary_key_columns: None,
+        table: table.to_string(),
         data,
         old,
-        columns_types: None,
+        ..Default::default()
+    }
+}
+
+fn message(
+    op_type: OpType,
+    data: serde_json::Map<String, serde_json::Value>,
+    old: Option<serde_json::Map<String, serde_json::Value>>,
+) -> Message {
+    let row = row_change("users", data, old);
+    match op_type {
+        OpType::Insert => Message::Insert(row),
+        OpType::Update => Message::Update(row),
+        OpType::Delete => Message::Delete(row),
+        OpType::BootstrapInsert => Message::BootstrapInsert(row),
+        other => panic!("unhandled op type in test helper: {other:?}"),
+    }
+}
+
+fn minimal_ddl_metadata() -> DdlMetadata {
+    DdlMetadata {
+        ts: 0,
+        sql: String::new(),
+        position: None,
+        gtid: None,
+        schema_id: None,
+    }
+}
+
+fn minimal_table_definition(database: &str, table: &str) -> TableDefinition {
+    TableDefinition {
+        database: database.to_string(),
+        table: table.to_string(),
+        charset: None,
+        primary_key: alloc::vec!["id".to_string()],
+        columns: alloc::vec![ColumnDefinition {
+            name: "id".to_string(),
+            column_type: "int".to_string(),
+            charset: None,
+            signed: None,
+            enum_values: None,
+            column_length: None,
+        }],
     }
 }
 
@@ -155,22 +191,7 @@ fn maxwell_table_not_found_is_error() {
     let adapter = default_adapter();
     let data = data_map(1, "Alice", true);
 
-    let msg = Message {
-        database: "testdb".to_string(),
-        table: "nonexistent".to_string(),
-        op_type: OpType::Insert,
-        ts: None,
-        xid: None,
-        commit: None,
-        position: None,
-        server_id: None,
-        thread_id: None,
-        primary_key: None,
-        primary_key_columns: None,
-        data,
-        old: None,
-        columns_types: None,
-    };
+    let msg = Message::Insert(row_change("nonexistent", data, None));
 
     let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, ConversionError> =
         ChangeSet::new().digest(&msg, &schema, &adapter);
@@ -186,7 +207,7 @@ fn maxwell_column_not_found_is_error() {
     let schema = test_schema();
     let adapter = default_adapter();
 
-    let mut data = BTreeMap::new();
+    let mut data = serde_json::Map::new();
     data.insert(
         "missing_col".to_string(),
         serde_json::Value::Number(serde_json::Number::from(1_i64)),
@@ -252,7 +273,7 @@ fn maxwell_changeset_update_captures_old_pk_when_old_omits_it() {
     let adapter = default_adapter();
     let new_data = data_map(1, "Alicia", true);
     // Only the changed column is present in `old`, as Maxwell emits it.
-    let mut old = BTreeMap::new();
+    let mut old = serde_json::Map::new();
     old.insert(
         "name".to_string(),
         serde_json::Value::String("Alice".to_string()),
@@ -296,7 +317,7 @@ fn maxwell_changeset_update_captures_changed_pk() {
     let schema = test_schema();
     let adapter = default_adapter();
     let new_data = data_map(2, "Alice", true);
-    let mut old = BTreeMap::new();
+    let mut old = serde_json::Map::new();
     old.insert(
         "id".to_string(),
         serde_json::Value::Number(serde_json::Number::from(1_i64)),
@@ -313,4 +334,212 @@ fn maxwell_changeset_update_captures_changed_pk() {
         }
         other => panic!("expected update, got {other:?}"),
     }
+}
+
+// -- Contract: BootstrapInsert digests as Insert ---------------------------
+
+#[test]
+fn bootstrap_insert_changeset_matches_insert() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let data = data_map(42, "Eve", false);
+
+    let insert_msg = message(OpType::Insert, data.clone(), None);
+    let bootstrap_msg = message(OpType::BootstrapInsert, data, None);
+
+    let insert_bytes: Vec<u8> = ChangeSet::new()
+        .digest(&insert_msg, &schema, &adapter)
+        .unwrap()
+        .build();
+    let bootstrap_bytes: Vec<u8> = ChangeSet::new()
+        .digest(&bootstrap_msg, &schema, &adapter)
+        .unwrap()
+        .build();
+
+    assert_eq!(
+        insert_bytes, bootstrap_bytes,
+        "BootstrapInsert changeset must be identical to Insert on the same row"
+    );
+}
+
+#[test]
+fn bootstrap_insert_patchset_matches_insert() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let data = data_map(42, "Eve", false);
+
+    let insert_msg = message(OpType::Insert, data.clone(), None);
+    let bootstrap_msg = message(OpType::BootstrapInsert, data, None);
+
+    let insert_bytes: Vec<u8> = PatchSet::new()
+        .digest(&insert_msg, &schema, &adapter)
+        .unwrap()
+        .build();
+    let bootstrap_bytes: Vec<u8> = PatchSet::new()
+        .digest(&bootstrap_msg, &schema, &adapter)
+        .unwrap()
+        .build();
+
+    assert_eq!(
+        insert_bytes, bootstrap_bytes,
+        "BootstrapInsert patchset must be identical to Insert on the same row"
+    );
+}
+
+// -- Contract: non-row variants return the builder unchanged ---------------
+
+#[test]
+fn bootstrap_start_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::BootstrapStart(ControlMessage {
+        database: "testdb".to_string(),
+        table: "users".to_string(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "BootstrapStart must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "BootstrapStart must not add any ops");
+}
+
+#[test]
+fn bootstrap_complete_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::BootstrapComplete(ControlMessage {
+        database: "testdb".to_string(),
+        table: "users".to_string(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(
+        cs.iter().count(),
+        0,
+        "BootstrapComplete must not add any ops"
+    );
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(
+        ps.iter().count(),
+        0,
+        "BootstrapComplete must not add any ops"
+    );
+}
+
+#[test]
+fn table_create_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::TableCreate(TableCreateChange {
+        database: "testdb".to_string(),
+        table: "users".to_string(),
+        definition: minimal_table_definition("testdb", "users"),
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "TableCreate must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "TableCreate must not add any ops");
+}
+
+#[test]
+fn table_alter_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::TableAlter(TableAlterChange {
+        database: "testdb".to_string(),
+        table: "users".to_string(),
+        old_definition: minimal_table_definition("testdb", "users"),
+        definition: minimal_table_definition("testdb", "users"),
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "TableAlter must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "TableAlter must not add any ops");
+}
+
+#[test]
+fn table_drop_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::TableDrop(TableDropChange {
+        database: "testdb".to_string(),
+        table: "users".to_string(),
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "TableDrop must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "TableDrop must not add any ops");
+}
+
+#[test]
+fn database_create_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::DatabaseCreate(DatabaseChange {
+        definition: DatabaseDefinition {
+            database: "testdb".to_string(),
+            charset: None,
+        },
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "DatabaseCreate must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "DatabaseCreate must not add any ops");
+}
+
+#[test]
+fn database_alter_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::DatabaseAlter(DatabaseChange {
+        definition: DatabaseDefinition {
+            database: "testdb".to_string(),
+            charset: None,
+        },
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "DatabaseAlter must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "DatabaseAlter must not add any ops");
+}
+
+#[test]
+fn database_drop_leaves_builder_unchanged() {
+    let schema = test_schema();
+    let adapter = default_adapter();
+    let msg = Message::DatabaseDrop(DatabaseDropChange {
+        database: "testdb".to_string(),
+        metadata: minimal_ddl_metadata(),
+        ..Default::default()
+    });
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
+        ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(cs.iter().count(), 0, "DatabaseDrop must not add any ops");
+    let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
+        PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    assert_eq!(ps.iter().count(), 0, "DatabaseDrop must not add any ops");
 }

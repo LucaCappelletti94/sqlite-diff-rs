@@ -1,9 +1,15 @@
 //! Maxwell message parsing and conversion to `SQLite` changeset operations.
 //!
 //! [Maxwell](https://maxwells-daemon.io/) is a `MySQL` CDC application that
-//! reads binlogs and emits row-level changes as JSON. This module deserializes
-//! those events and converts them into changeset operations compatible with
-//! this crate's builders.
+//! reads binlogs and emits row-level changes as JSON. This module re-exports
+//! the model and parser from [`maxwell_cdc`] and provides digest conversion
+//! to changeset and patchset builders.
+//!
+//! Row events ([`Message::Insert`], [`Message::Update`], [`Message::Delete`],
+//! [`Message::BootstrapInsert`]) are converted to changeset or patchset
+//! operations. Control events ([`Message::BootstrapStart`],
+//! [`Message::BootstrapComplete`], table events, and database events) pass
+//! through without modifying the builder.
 //!
 //! Maxwell events carry no trigger-origin marker, so converted ops default
 //! to `indirect = false`. Override via the [`Indirect`](crate::Indirect) trait
@@ -17,94 +23,19 @@
 //! let json = r#"{"database":"mydb","table":"users","type":"insert","ts":1477053217,"data":{"id":1,"name":"Alice"}}"#;
 //! let message = parse(json).unwrap();
 //!
-//! assert_eq!(message.op_type, OpType::Insert);
-//! assert_eq!(message.table, "users");
+//! assert_eq!(message.op_type(), Some(OpType::Insert));
+//! if let Message::Insert(row) = &message {
+//!     assert_eq!(row.table, "users");
+//! }
 //! ```
 
-use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::vec::Vec;
-use serde::{Deserialize, Serialize};
 
-/// Maxwell operation type.
-///
-/// Represents the type of database operation captured by Maxwell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OpType {
-    /// INSERT operation.
-    Insert,
-    /// UPDATE operation.
-    Update,
-    /// DELETE operation.
-    Delete,
-}
-
-/// Maxwell CDC message.
-///
-/// Represents a single row-level change captured from `MySQL` binlog.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    /// Database name.
-    pub database: String,
-    /// Table name.
-    pub table: String,
-    /// Operation type (insert, update, delete).
-    #[serde(rename = "type")]
-    pub op_type: OpType,
-    /// Unix timestamp (seconds) when the change occurred.
-    #[serde(default)]
-    pub ts: Option<i64>,
-    /// Transaction ID.
-    #[serde(default)]
-    pub xid: Option<i64>,
-    /// Whether this is the final row in the transaction.
-    #[serde(default)]
-    pub commit: Option<bool>,
-    /// Binlog position (e.g., "master.000006:800911").
-    #[serde(default)]
-    pub position: Option<String>,
-    /// `MySQL` server ID.
-    #[serde(default)]
-    pub server_id: Option<i64>,
-    /// `MySQL` thread ID.
-    #[serde(default)]
-    pub thread_id: Option<i64>,
-    /// Primary key values.
-    #[serde(default)]
-    pub primary_key: Option<Vec<serde_json::Value>>,
-    /// Primary key column names.
-    #[serde(default)]
-    pub primary_key_columns: Option<Vec<String>>,
-    /// Current row data (new values for insert/update, deleted values for delete).
-    pub data: BTreeMap<String, serde_json::Value>,
-    /// Previous values for changed columns (update only).
-    #[serde(default)]
-    pub old: Option<BTreeMap<String, serde_json::Value>>,
-    /// Per-column MySQL type names emitted when the Maxwell daemon
-    /// runs with `--include_types`. Absent otherwise.
-    #[serde(default)]
-    pub columns_types: Option<BTreeMap<String, String>>,
-}
-
-/// Parse a Maxwell message from JSON.
-///
-/// # Errors
-///
-/// Returns a [`serde_json::Error`] if the JSON is malformed.
-///
-/// # Example
-///
-/// ```
-/// use sqlite_diff_rs::maxwell::{parse, OpType};
-///
-/// let json = r#"{"database":"test","table":"users","type":"insert","data":{"id":1}}"#;
-/// let msg = parse(json).unwrap();
-/// assert_eq!(msg.op_type, OpType::Insert);
-/// ```
-pub fn parse(json: &str) -> Result<Message, serde_json::Error> {
-    serde_json::from_str(json)
-}
+pub use maxwell_cdc::{
+    ColumnDefinition, ControlMessage, DatabaseChange, DatabaseDefinition, DatabaseDropChange,
+    DdlMetadata, Message, OpType, RowChange, TableAlterChange, TableCreateChange, TableDefinition,
+    TableDropChange, parse,
+};
 
 pub use crate::wire::ConversionError;
 
@@ -214,25 +145,30 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
-        let table = resolve_table(schema, self.table.as_str())?;
-        match self.op_type {
-            OpType::Insert => {
-                let insert = build_insert_from_maxwell(&self.data, table, adapter)?;
+        match self {
+            Message::Insert(row) | Message::BootstrapInsert(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            OpType::Update => {
+            Message::Update(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
                 let update = build_changeset_update_from_maxwell(
-                    &self.data,
-                    self.old.as_ref(),
+                    &row.data,
+                    row.old.as_ref(),
                     table,
                     adapter,
                 )?;
                 Ok(DiffOps::update(builder, update))
             }
-            OpType::Delete => {
-                let delete = build_changeset_delete_from_maxwell(&self.data, table, adapter)?;
+            Message::Delete(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let delete = build_changeset_delete_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
+            // Bootstrap control events, DDL, and anything a newer Maxwell adds carry no
+            // row data to digest. `Message` is non-exhaustive, so this cannot enumerate.
+            _ => Ok(builder),
         }
     }
 }
@@ -256,26 +192,31 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
-        let table = resolve_table(schema, self.table.as_str())?;
-        match self.op_type {
-            OpType::Insert => {
-                let insert = build_insert_from_maxwell(&self.data, table, adapter)?;
+        match self {
+            Message::Insert(row) | Message::BootstrapInsert(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            OpType::Update => {
-                let update = build_patchset_update_from_maxwell(&self.data, table, adapter)?;
+            Message::Update(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let update = build_patchset_update_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            OpType::Delete => {
-                let delete = build_patch_delete_from_maxwell(&self.data, table, adapter)?;
+            Message::Delete(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let delete = build_patch_delete_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
+            // Bootstrap control events, DDL, and anything a newer Maxwell adds carry no
+            // row data to digest. `Message` is non-exhaustive, so this cannot enumerate.
+            _ => Ok(builder),
         }
     }
 }
 
 fn build_insert_from_maxwell<T, S, B, A>(
-    data: &BTreeMap<String, serde_json::Value>,
+    data: &serde_json::Map<String, serde_json::Value>,
     table: &T,
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
@@ -296,8 +237,8 @@ where
 }
 
 fn build_changeset_update_from_maxwell<T, S, B, A>(
-    data: &BTreeMap<String, serde_json::Value>,
-    old: Option<&BTreeMap<String, serde_json::Value>>,
+    data: &serde_json::Map<String, serde_json::Value>,
+    old: Option<&serde_json::Map<String, serde_json::Value>>,
     table: &T,
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
@@ -343,7 +284,7 @@ where
 }
 
 fn build_patchset_update_from_maxwell<T, S, B, A>(
-    data: &BTreeMap<String, serde_json::Value>,
+    data: &serde_json::Map<String, serde_json::Value>,
     table: &T,
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
@@ -364,7 +305,7 @@ where
 }
 
 fn build_changeset_delete_from_maxwell<T, S, B, A>(
-    data: &BTreeMap<String, serde_json::Value>,
+    data: &serde_json::Map<String, serde_json::Value>,
     table: &T,
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
@@ -385,7 +326,7 @@ where
 }
 
 fn build_patch_delete_from_maxwell<T, S, B, A>(
-    data: &BTreeMap<String, serde_json::Value>,
+    data: &serde_json::Map<String, serde_json::Value>,
     table: &T,
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
@@ -403,68 +344,4 @@ where
         table,
         adapter,
     )
-}
-
-// ============================================================================
-// Arbitrary implementations for testing
-// ============================================================================
-
-#[cfg(feature = "testing")]
-mod arbitrary_impl {
-    use super::{Message, OpType};
-    use alloc::collections::BTreeMap;
-    use alloc::string::ToString;
-    use arbitrary::{Arbitrary, Unstructured};
-
-    impl<'a> Arbitrary<'a> for OpType {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(*u.choose(&[Self::Insert, Self::Update, Self::Delete])?)
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for Message {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            let op_type = OpType::arbitrary(u)?;
-
-            // Generate 1-5 columns of data
-            let num_cols: usize = u.int_in_range(1..=5)?;
-            let mut data = BTreeMap::new();
-            for i in 0..num_cols {
-                let col_name = alloc::format!("col{i}");
-                let value: i64 = u.arbitrary()?;
-                data.insert(col_name, serde_json::Value::Number(value.into()));
-            }
-
-            // For updates, generate old values for some columns
-            let old = if op_type == OpType::Update {
-                let mut old_data = BTreeMap::new();
-                let num_changed: usize = u.int_in_range(1..=num_cols)?;
-                for i in 0..num_changed {
-                    let col_name = alloc::format!("col{i}");
-                    let value: i64 = u.arbitrary()?;
-                    old_data.insert(col_name, serde_json::Value::Number(value.into()));
-                }
-                Some(old_data)
-            } else {
-                None
-            };
-
-            Ok(Self {
-                database: "testdb".to_string(),
-                table: "testtable".to_string(),
-                op_type,
-                ts: u.arbitrary()?,
-                xid: u.arbitrary()?,
-                commit: u.arbitrary()?,
-                position: None,
-                server_id: u.arbitrary()?,
-                thread_id: u.arbitrary()?,
-                primary_key: None,
-                primary_key_columns: None,
-                data,
-                old,
-                columns_types: None,
-            })
-        }
-    }
 }

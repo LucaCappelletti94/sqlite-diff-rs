@@ -62,6 +62,7 @@ arbitrary = { version = "1", features = ["derive"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
 wal2json-events = { version = "0.1.0", default-features = false, optional = true }
+maxwell-cdc = { version = "0.1.0", default-features = false, optional = true }
 pg_walstream = { version = "0.8", default-features = false, optional = true }
 diesel = { version = "2", default-features = false, optional = true }
 diesel-async = { version = "0.7", default-features = false, optional = true }
@@ -81,7 +82,7 @@ default = []
 testing = ["dep:rusqlite", "dep:arbitrary"]
 wal2json = ["dep:wal2json-events", "dep:serde_json"]
 pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
-maxwell = ["dep:serde", "dep:serde_json"]
+maxwell = ["dep:maxwell-cdc", "dep:serde_json"]
 diesel = ["dep:diesel"]
 diesel-async = ["dep:diesel-async", "diesel"]
 
