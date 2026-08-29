@@ -213,7 +213,7 @@ fn maxwell_decode_error_is_propagated() {
         ChangeSet::new().digest(&msg, &schema, &adapter);
     match result {
         Err(ConversionError::Decode(DecodeError::NoDecoderForType { column })) => {
-            assert!(!column.is_empty());
+            assert_ne!(column, "");
         }
         Err(other) => panic!("expected Decode(NoDecoderForType), got {other:?}"),
         Ok(_) => panic!("expected error"),

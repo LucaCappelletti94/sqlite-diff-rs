@@ -547,7 +547,7 @@ fn test_sqlite_partial_cancel_preserves_table() {
         table_names.contains(&"users".to_string()),
         "Table with surviving operations should appear in changeset"
     );
-    assert!(!changeset.is_empty());
+    assert_ne!(changeset, [] as [u8; 0]);
 }
 
 /// UPDATE that reverts to original values: does `SQLite` keep it or discard it?
