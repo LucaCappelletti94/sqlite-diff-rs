@@ -368,9 +368,8 @@ impl NamedColumns for MaxwellUsersTable {
 impl WireColumnTypes for MaxwellUsersTable {
     fn column_type(&self, column_index: usize) -> WireType {
         match column_index {
-            0 => WireType::Int,
+            0 | 2 => WireType::Int,
             1 => WireType::Text,
-            2 => WireType::Int,
             _ => panic!("column index {column_index} out of range for MaxwellUsersTable"),
         }
     }

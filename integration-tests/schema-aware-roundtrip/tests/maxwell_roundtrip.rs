@@ -93,8 +93,7 @@ async fn maxwell_insert_roundtrip_e2e() {
     //    synchronous; block_in_place avoids stalling the tokio runtime.
     let mysql_url = format!("mysql://root:test@127.0.0.1:{mysql_host_port}/testdb");
     tokio::task::block_in_place(|| {
-        let mut conn = MysqlConnection::establish(&mysql_url)
-            .expect("Failed to connect to MySQL");
+        let mut conn = MysqlConnection::establish(&mysql_url).expect("Failed to connect to MySQL");
 
         // CREATE TABLE is migration DDL; the typed DSL cannot express it.
         sql_query(
