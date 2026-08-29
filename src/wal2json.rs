@@ -15,146 +15,21 @@
 //! # Example
 //!
 //! ```
-//! use sqlite_diff_rs::wal2json::{parse_v2, MessageV2, Action};
+//! use sqlite_diff_rs::wal2json::{MessageV2, parse_v2};
 //!
 //! let json = r#"{"action":"I","schema":"public","table":"users","columns":[{"name":"id","type":"integer","value":1},{"name":"name","type":"text","value":"Alice"}]}"#;
-//! let msg = parse_v2(json).unwrap();
 //!
-//! assert_eq!(msg.action, Action::I);
-//! assert_eq!(msg.table.as_deref(), Some("users"));
+//! let MessageV2::Insert(row) = parse_v2(json).unwrap() else {
+//!     panic!("expected an insert");
+//! };
+//! assert_eq!(row.table, "users");
+//! assert_eq!(row.columns.unwrap().len(), 2);
 //! ```
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use serde::{Deserialize, Serialize};
-
-/// wal2json v2 action type.
-///
-/// Represents the type of database operation captured by wal2json.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Action {
-    /// Begin transaction.
-    B,
-    /// Commit transaction.
-    C,
-    /// Insert operation.
-    I,
-    /// Update operation.
-    U,
-    /// Delete operation.
-    D,
-    /// Truncate operation.
-    T,
-    /// Message (user-defined).
-    M,
-}
-
-/// A column in wal2json output.
-///
-/// Contains the column name, `PostgreSQL` type name, and the value as JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Column {
-    /// Column name.
-    pub name: String,
-    /// `PostgreSQL` type name (e.g., "integer", "text", "boolean").
-    #[serde(rename = "type")]
-    pub type_name: String,
-    /// The column value as a JSON value.
-    pub value: serde_json::Value,
-}
-
-/// wal2json v2 message (one per tuple).
-///
-/// In v2 format, each database change produces a separate JSON object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageV2 {
-    /// The action type (B, C, I, U, D, T, M).
-    pub action: Action,
-    /// Schema name (e.g., "public").
-    #[serde(default)]
-    pub schema: Option<String>,
-    /// Table name.
-    #[serde(default)]
-    pub table: Option<String>,
-    /// Column values for the new row (INSERT, UPDATE).
-    #[serde(default)]
-    pub columns: Option<Vec<Column>>,
-    /// Identity columns for the old row (UPDATE, DELETE).
-    #[serde(default)]
-    pub identity: Option<Vec<Column>>,
-    /// `PostgreSQL` LSN in `hi/lo` hex notation (for example `0/16B2270`),
-    /// present when wal2json runs with `include-lsn=true`. `None` otherwise.
-    /// Kept as a raw string so this module stays free of any Postgres-specific
-    /// numeric LSN type. The consumer decides how to interpret it.
-    #[serde(default)]
-    pub lsn: Option<String>,
-}
-
-/// Old key information for v1 updates/deletes.
-///
-/// Contains the primary key column names, types, and values that identify
-/// the row being updated or deleted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OldKeys {
-    /// Primary key column names.
-    pub keynames: Vec<String>,
-    /// Primary key column `PostgreSQL` types.
-    pub keytypes: Vec<String>,
-    /// Primary key column values.
-    pub keyvalues: Vec<serde_json::Value>,
-}
-
-/// wal2json v1 change entry.
-///
-/// In v1 format, all changes for a transaction are grouped together.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChangeV1 {
-    /// The kind of change: "insert", "update", or "delete".
-    pub kind: String,
-    /// Schema name.
-    pub schema: String,
-    /// Table name.
-    pub table: String,
-    /// Column names (in order).
-    #[serde(default)]
-    pub columnnames: Vec<String>,
-    /// Column `PostgreSQL` types (in order).
-    #[serde(default)]
-    pub columntypes: Vec<String>,
-    /// Column values (in order).
-    #[serde(default)]
-    pub columnvalues: Vec<serde_json::Value>,
-    /// Old key information for UPDATE/DELETE operations.
-    #[serde(default)]
-    pub oldkeys: Option<OldKeys>,
-}
-
-/// wal2json v1 transaction wrapper.
-///
-/// Contains all changes that occurred within a single transaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionV1 {
-    /// The list of changes in this transaction.
-    pub change: Vec<ChangeV1>,
-}
-
-/// Parse a wal2json v2 message from a JSON line.
-///
-/// # Errors
-///
-/// Returns a [`serde_json::Error`] if the JSON is malformed.
-pub fn parse_v2(line: &str) -> Result<MessageV2, serde_json::Error> {
-    serde_json::from_str(line)
-}
-
-/// Parse a wal2json v1 transaction from JSON.
-///
-/// # Errors
-///
-/// Returns a [`serde_json::Error`] if the JSON is malformed.
-pub fn parse_v1(json: &str) -> Result<TransactionV1, serde_json::Error> {
-    serde_json::from_str(json)
-}
+pub use wal2json_events::{
+    Action, ChangeV1, Column, ColumnArrays, LogicalMessageV2, MessageV2, OldKeys, RowV2,
+    TransactionBoundary, TransactionV1, TruncateV2, parse_v1, parse_v2,
+};
 
 pub use crate::wire::ConversionError;
 
@@ -261,43 +136,43 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        let Some(table_name) = self.table.as_deref() else {
-            return Ok(builder);
-        };
-        match self.action {
-            Action::I => {
-                let table = resolve_table(schema, table_name)?;
-                let columns = self
+        match self {
+            MessageV2::Insert(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let columns = row
                     .columns
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let insert = build_insert_from_v2(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            Action::U => {
-                let table = resolve_table(schema, table_name)?;
-                let columns = self
+            MessageV2::Update(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let columns = row
                     .columns
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let update = build_changeset_update_from_v2(
                     columns,
-                    self.identity.as_deref(),
+                    row.identity.as_deref(),
                     table,
                     adapter,
                 )?;
                 Ok(DiffOps::update(builder, update))
             }
-            Action::D => {
-                let table = resolve_table(schema, table_name)?;
-                let identity = self
+            MessageV2::Delete(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let identity = row
                     .identity
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let delete = build_changeset_delete_from_columns(identity, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
-            Action::B | Action::C | Action::T | Action::M => Ok(builder),
+            MessageV2::Begin(_)
+            | MessageV2::Commit(_)
+            | MessageV2::Truncate(_)
+            | MessageV2::Message(_) => Ok(builder),
         }
     }
 }
@@ -321,38 +196,38 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        let Some(table_name) = self.table.as_deref() else {
-            return Ok(builder);
-        };
-        match self.action {
-            Action::I => {
-                let table = resolve_table(schema, table_name)?;
-                let columns = self
+        match self {
+            MessageV2::Insert(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let columns = row
                     .columns
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let insert = build_insert_from_v2(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            Action::U => {
-                let table = resolve_table(schema, table_name)?;
-                let columns = self
+            MessageV2::Update(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let columns = row
                     .columns
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let update = build_patchset_update_from_v2(columns, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            Action::D => {
-                let table = resolve_table(schema, table_name)?;
-                let identity = self
+            MessageV2::Delete(row) => {
+                let table = resolve_table(schema, row.table.as_str())?;
+                let identity = row
                     .identity
-                    .as_ref()
+                    .as_deref()
                     .ok_or(ConversionError::MissingColumns)?;
                 let delete = build_patch_delete_from_columns(identity, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
-            Action::B | Action::C | Action::T | Action::M => Ok(builder),
+            MessageV2::Begin(_)
+            | MessageV2::Commit(_)
+            | MessageV2::Truncate(_)
+            | MessageV2::Message(_) => Ok(builder),
         }
     }
 }
@@ -376,21 +251,28 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        let table = resolve_table(schema, self.table.as_str())?;
-        match self.kind.as_str() {
-            "insert" => {
-                let insert = build_insert_from_v1(self, table, adapter)?;
+        match self {
+            ChangeV1::Insert { table, columns, .. } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let insert = build_insert_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            "update" => {
-                let update = build_changeset_update_from_v1(self, table, adapter)?;
+            ChangeV1::Update {
+                table,
+                columns,
+                oldkeys,
+                ..
+            } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let update = build_changeset_update_from_v1(columns, oldkeys, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            "delete" => {
-                let delete = build_changeset_delete_from_v1(self, table, adapter)?;
+            ChangeV1::Delete { table, oldkeys, .. } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let delete = build_changeset_delete_from_v1(oldkeys, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
-            _ => Ok(builder),
+            ChangeV1::Message { .. } => Ok(builder),
         }
     }
 }
@@ -414,26 +296,44 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        let table = resolve_table(schema, self.table.as_str())?;
-        match self.kind.as_str() {
-            "insert" => {
-                let insert = build_insert_from_v1(self, table, adapter)?;
+        match self {
+            ChangeV1::Insert { table, columns, .. } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let insert = build_insert_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            "update" => {
-                let update = build_patchset_update_from_v1(self, table, adapter)?;
+            ChangeV1::Update { table, columns, .. } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let update = build_patchset_update_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            "delete" => {
-                let delete = build_patch_delete_from_v1(self, table, adapter)?;
+            ChangeV1::Delete { table, oldkeys, .. } => {
+                let table = resolve_table(schema, table.as_str())?;
+                let delete = build_patch_delete_from_v1(oldkeys, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
-            _ => Ok(builder),
+            ChangeV1::Message { .. } => Ok(builder),
         }
     }
 }
 
 // -- v2 helpers ---------------------------------------------------------------
+
+const JSON_NULL: serde_json::Value = serde_json::Value::Null;
+
+/// wal2json omits a column's `value` only in the `pk` list, which is never digested here, so a
+/// column in `columns` or `identity` without one is malformed input rather than a SQL NULL.
+fn require_values(columns: &[Column]) -> Result<(), ConversionError> {
+    if columns.iter().any(|column| column.value.is_none()) {
+        return Err(ConversionError::MissingData("value", "row"));
+    }
+    Ok(())
+}
+
+/// The value of a column that [`require_values`] has already accepted.
+fn column_value(column: &Column) -> &serde_json::Value {
+    column.value.as_ref().unwrap_or(&JSON_NULL)
+}
 
 fn build_insert_from_v2<T, S, B, A>(
     columns: &[Column],
@@ -446,10 +346,11 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
+    require_values(columns)?;
     build_insert(
         columns.iter().map(|c| Wal2JsonItem {
             name: c.name.as_str(),
-            value: &c.value,
+            value: column_value(c),
         }),
         table,
         adapter,
@@ -468,6 +369,10 @@ where
     B: Clone + Debug + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
+    require_values(columns)?;
+    if let Some(identity) = identity {
+        require_values(identity)?;
+    }
     let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
     for col in columns {
         let col_idx = table
@@ -477,7 +382,7 @@ where
         let new = adapter.decode(Wal2JsonColumn {
             column_name: col.name.as_str(),
             wire_type,
-            value: &col.value,
+            value: column_value(col),
         })?;
 
         // Pair the new value with its old-row value from the identity image
@@ -488,7 +393,7 @@ where
             let old = adapter.decode(Wal2JsonColumn {
                 column_name: col.name.as_str(),
                 wire_type,
-                value: &old_col.value,
+                value: column_value(old_col),
             })?;
             update = update
                 .set(col_idx, old, new)
@@ -513,10 +418,11 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
+    require_values(columns)?;
     build_patchset_update(
         columns.iter().map(|c| Wal2JsonItem {
             name: c.name.as_str(),
-            value: &c.value,
+            value: column_value(c),
         }),
         table,
         adapter,
@@ -534,10 +440,11 @@ where
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
+    require_values(identity)?;
     build_changeset_delete(
         identity.iter().map(|c| Wal2JsonItem {
             name: c.name.as_str(),
-            value: &c.value,
+            value: column_value(c),
         }),
         table,
         adapter,
@@ -555,10 +462,11 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
+    require_values(identity)?;
     build_patch_delete(
         identity.iter().map(|c| Wal2JsonItem {
             name: c.name.as_str(),
-            value: &c.value,
+            value: column_value(c),
         }),
         table,
         adapter,
@@ -567,11 +475,13 @@ where
 
 // -- v1 helpers ---------------------------------------------------------------
 
-fn iter_v1_columns(change: &ChangeV1) -> impl Iterator<Item = (&str, &serde_json::Value)> + '_ {
-    change
+fn iter_v1_columns(
+    columns: &ColumnArrays,
+) -> impl Iterator<Item = (&str, &serde_json::Value)> + '_ {
+    columns
         .columnnames
         .iter()
-        .zip(change.columnvalues.iter())
+        .zip(columns.columnvalues.iter())
         .map(|(n, v)| (n.as_str(), v))
 }
 
@@ -584,7 +494,7 @@ fn iter_v1_oldkeys(oldkeys: &OldKeys) -> impl Iterator<Item = (&str, &serde_json
 }
 
 fn build_insert_from_v1<T, S, B, A>(
-    change: &ChangeV1,
+    columns: &ColumnArrays,
     table: &T,
     adapter: &A,
 ) -> Result<Insert<T, S, B>, ConversionError>
@@ -595,14 +505,15 @@ where
     A: WireAdapter<Wal2Json, S, B>,
 {
     build_insert(
-        iter_v1_columns(change).map(|(name, value)| Wal2JsonItem { name, value }),
+        iter_v1_columns(columns).map(|(name, value)| Wal2JsonItem { name, value }),
         table,
         adapter,
     )
 }
 
 fn build_changeset_update_from_v1<T, S, B, A>(
-    change: &ChangeV1,
+    columns: &ColumnArrays,
+    oldkeys: &OldKeys,
     table: &T,
     adapter: &A,
 ) -> Result<Update<T, ChangesetFormat, S, B>, ConversionError>
@@ -613,7 +524,7 @@ where
     A: WireAdapter<Wal2Json, S, B>,
 {
     let mut update: Update<T, ChangesetFormat, S, B> = Update::from(table.clone());
-    for (name, value) in iter_v1_columns(change) {
+    for (name, value) in iter_v1_columns(columns) {
         let col_idx = table
             .column_index(name)
             .ok_or_else(|| ConversionError::ColumnNotFound(name.into()))?;
@@ -624,14 +535,9 @@ where
             value,
         })?;
 
-        // Pair with the old value from oldkeys when the column is present
-        // there (always at least the primary key), else fall back to set_new.
-        let old_value = change.oldkeys.as_ref().and_then(|ok| {
-            iter_v1_oldkeys(ok)
-                .find(|(n, _)| *n == name)
-                .map(|(_, v)| v)
-        });
-        if let Some(old_value) = old_value {
+        // Pair with the old value when the column appears in oldkeys (always at least the primary
+        // key), else fall back to set_new.
+        if let Some((_, old_value)) = iter_v1_oldkeys(oldkeys).find(|(n, _)| *n == name) {
             let old = adapter.decode(Wal2JsonColumn {
                 column_name: name,
                 wire_type,
@@ -650,7 +556,7 @@ where
 }
 
 fn build_patchset_update_from_v1<T, S, B, A>(
-    change: &ChangeV1,
+    columns: &ColumnArrays,
     table: &T,
     adapter: &A,
 ) -> Result<Update<T, PatchsetFormat, S, B>, ConversionError>
@@ -661,14 +567,14 @@ where
     A: WireAdapter<Wal2Json, S, B>,
 {
     build_patchset_update(
-        iter_v1_columns(change).map(|(name, value)| Wal2JsonItem { name, value }),
+        iter_v1_columns(columns).map(|(name, value)| Wal2JsonItem { name, value }),
         table,
         adapter,
     )
 }
 
 fn build_changeset_delete_from_v1<T, S, B, A>(
-    change: &ChangeV1,
+    oldkeys: &OldKeys,
     table: &T,
     adapter: &A,
 ) -> Result<ChangeDelete<T, S, B>, ConversionError>
@@ -678,20 +584,15 @@ where
     B: Clone + Default + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
-    let items: Vec<Wal2JsonItem<'_>> = if let Some(oldkeys) = &change.oldkeys {
-        iter_v1_oldkeys(oldkeys)
-            .map(|(name, value)| Wal2JsonItem { name, value })
-            .collect()
-    } else {
-        iter_v1_columns(change)
-            .map(|(name, value)| Wal2JsonItem { name, value })
-            .collect()
-    };
-    build_changeset_delete(items, table, adapter)
+    build_changeset_delete(
+        iter_v1_oldkeys(oldkeys).map(|(name, value)| Wal2JsonItem { name, value }),
+        table,
+        adapter,
+    )
 }
 
 fn build_patch_delete_from_v1<T, S, B, A>(
-    change: &ChangeV1,
+    oldkeys: &OldKeys,
     table: &T,
     adapter: &A,
 ) -> Result<PatchDelete<T, S, B>, ConversionError>
@@ -701,156 +602,9 @@ where
     B: Clone + AsRef<[u8]>,
     A: WireAdapter<Wal2Json, S, B>,
 {
-    let oldkeys = change
-        .oldkeys
-        .as_ref()
-        .ok_or(ConversionError::MissingColumns)?;
     build_patch_delete(
         iter_v1_oldkeys(oldkeys).map(|(name, value)| Wal2JsonItem { name, value }),
         table,
         adapter,
     )
-}
-
-// Arbitrary implementations for testing
-#[cfg(feature = "testing")]
-mod arbitrary_impl {
-    use super::{Action, ChangeV1, Column, MessageV2, OldKeys, String, TransactionV1, Vec};
-    use alloc::string::ToString;
-    use arbitrary::{Arbitrary, Unstructured};
-
-    impl<'a> Arbitrary<'a> for Action {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(*u.choose(&[
-                Self::B,
-                Self::C,
-                Self::I,
-                Self::U,
-                Self::D,
-                Self::T,
-                Self::M,
-            ])?)
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for Column {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            let name: String = u.arbitrary()?;
-            let type_name = (*u.choose(&["integer", "text", "boolean", "real"])?).to_string();
-
-            // Generate a simple JSON value (not nested objects/arrays)
-            let value = match u.int_in_range(0..=3)? {
-                0 => serde_json::Value::Null,
-                1 => serde_json::Value::Bool(u.arbitrary()?),
-                2 => serde_json::Value::Number(serde_json::Number::from(
-                    u.int_in_range::<i64>(-1000..=1000)?,
-                )),
-                _ => serde_json::Value::String(u.arbitrary()?),
-            };
-
-            Ok(Self {
-                name,
-                type_name,
-                value,
-            })
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for MessageV2 {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(Self {
-                action: u.arbitrary()?,
-                schema: u.arbitrary()?,
-                table: u.arbitrary()?,
-                columns: u.arbitrary()?,
-                identity: u.arbitrary()?,
-                lsn: u.arbitrary()?,
-            })
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for OldKeys {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            let len = u.int_in_range(1..=5)?;
-            let keynames: Vec<String> =
-                (0..len).map(|_| u.arbitrary()).collect::<Result<_, _>>()?;
-            let keytypes: Vec<String> = (0..len)
-                .map(|_| {
-                    u.choose(&["integer", "text", "boolean"])
-                        .map(|s| (*s).to_string())
-                })
-                .collect::<Result<_, _>>()?;
-            let keyvalues: Vec<serde_json::Value> = (0..len)
-                .map(|_| {
-                    Ok(match u.int_in_range(0..=2)? {
-                        0 => serde_json::Value::Null,
-                        1 => serde_json::Value::Number(serde_json::Number::from(
-                            u.int_in_range::<i64>(-1000..=1000)?,
-                        )),
-                        _ => serde_json::Value::String(u.arbitrary()?),
-                    })
-                })
-                .collect::<Result<_, arbitrary::Error>>()?;
-
-            Ok(Self {
-                keynames,
-                keytypes,
-                keyvalues,
-            })
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for ChangeV1 {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            let kind = (*u.choose(&["insert", "update", "delete"])?).to_string();
-            let schema: String = u.arbitrary()?;
-            let table: String = u.arbitrary()?;
-
-            let len = u.int_in_range(1..=5)?;
-            let columnnames: Vec<String> =
-                (0..len).map(|_| u.arbitrary()).collect::<Result<_, _>>()?;
-            let columntypes: Vec<String> = (0..len)
-                .map(|_| {
-                    u.choose(&["integer", "text", "boolean", "real"])
-                        .map(|s| (*s).to_string())
-                })
-                .collect::<Result<_, _>>()?;
-            let columnvalues: Vec<serde_json::Value> = (0..len)
-                .map(|_| {
-                    Ok(match u.int_in_range(0..=3)? {
-                        0 => serde_json::Value::Null,
-                        1 => serde_json::Value::Bool(u.arbitrary()?),
-                        2 => serde_json::Value::Number(serde_json::Number::from(
-                            u.int_in_range::<i64>(-1000..=1000)?,
-                        )),
-                        _ => serde_json::Value::String(u.arbitrary()?),
-                    })
-                })
-                .collect::<Result<_, arbitrary::Error>>()?;
-
-            let oldkeys = if kind == "insert" {
-                None
-            } else {
-                u.arbitrary()?
-            };
-
-            Ok(Self {
-                kind,
-                schema,
-                table,
-                columnnames,
-                columntypes,
-                columnvalues,
-                oldkeys,
-            })
-        }
-    }
-
-    impl<'a> Arbitrary<'a> for TransactionV1 {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(Self {
-                change: u.arbitrary()?,
-            })
-        }
-    }
 }

@@ -98,7 +98,7 @@ async fn wal2json_insert_roundtrip_e2e() {
     let insert_msg = changes
         .iter()
         .filter_map(|json| parse_v2(json).ok())
-        .find(|msg| msg.action == Action::I)
+        .find(|msg| msg.action() == Action::Insert)
         .expect("Expected INSERT message from wal2json");
 
     // Digest via the unified schema-aware API.
