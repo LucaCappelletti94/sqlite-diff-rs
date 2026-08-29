@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.0
+
+### Fixed
+
+Patchset UPDATE records now write every column in column order. The encoder previously wrote all primary key columns first and the remaining columns after, a layout that agrees with SQLite only when the primary key is the first column, so a table whose key sits anywhere else produced records SQLite reads with the values landing on the wrong columns. A table header now writes its column count as a varint instead of a raw byte, which panicked outright at 256 columns and silently emitted a malformed header between 128 and 255. Both defects are now verified byte for byte against SQLite's own session extension in both directions, the encoder against SQLite's bytes and the parser against them, so a pair of cancelling errors cannot hide. Anything 0.9.0 wrote for an affected table was already malformed and cannot be read back.
+
+The base64 decoder rejects malformed input it used to accept: an effective length one above a multiple of four, an all-padding payload, and a trailing character carrying bits that no decoded byte can hold (RFC 4648 section 3.5).
+
+### Changed
+
+The Maxwell and wal2json decoders now come from the extracted `maxwell-cdc` and `wal2json-events` crates, which moves four public shapes. `maxwell::Message` is `#[non_exhaustive]`, so an exhaustive match no longer compiles. `maxwell::RowChange::data` is a `serde_json::Map` rather than a `BTreeMap`. `wal2json::MessageV2` is an enum rather than a struct. `wal2json::Column` is `#[non_exhaustive]`, so a struct literal no longer compiles.
+
+`parser::ParseError`, `errors::Error` and `builders::sql::ParseError` are now `#[non_exhaustive]`, matching their `DecodeError` and `ConversionError` siblings, so a match on any of them needs a wildcard arm.
+
+`digest_sql` rejects three inputs it used to accept quietly: an INSERT whose column list is shorter than its VALUES list (the missing columns became NULL), a WHERE naming only part of a composite primary key (the result was an operation that could never match a row), and an OR in a WHERE (one branch was kept and the rest discarded). A failure anywhere in a multi-statement input now leaves the builder untouched rather than applying the statements that happened to parse first.
+
+The minimum supported Rust version is 1.87, which is what the `pg-walstream` feature has required since 0.5.0. The manifest claimed 1.85.
+
+`testing::compare_db_states` is removed. It had no caller and mis-parsed any table name containing a space.
+
 ## 0.9.0
 
 ### Added

@@ -4,8 +4,8 @@
 //! DML through `tokio_postgres`, captures the CDC events, digests them
 //! via `sqlite_diff_rs::TypeMap::defaults()`, applies the resulting
 //! patchset to a `SqliteConnection` through `diesel-sqlite-session`,
-//! and hands the connection back to the test for verification.
-
+//! and hands the connection back to the test for verification. Also
+//! provides helpers for the Maxwell MySQL roundtrip test.
 use std::time::Duration;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -219,6 +219,172 @@ pub struct AppSchema {
 
 impl WireSchema for AppSchema {
     type Table = UsersTable;
+    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+        (table_name == self.users.name()).then_some(&self.users)
+    }
+}
+
+// ============================================================================
+// Maxwell roundtrip helpers.
+// ============================================================================
+
+/// MySQL port inside the container.
+pub const MYSQL_PORT: u16 = 3306;
+
+/// Boot a MySQL 8.0 container with row-based binlog enabled.
+///
+/// Returns the container and the host-mapped port for the MySQL service.
+/// Binlog settings required by Maxwell are passed as command arguments.
+pub async fn start_mysql() -> (ContainerAsync<GenericImage>, u16) {
+    let image = GenericImage::new("mysql", "8.0")
+        .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+        .with_wait_for(WaitFor::seconds(2))
+        .with_env_var("MYSQL_ROOT_PASSWORD", "test")
+        .with_env_var("MYSQL_DATABASE", "testdb")
+        .with_cmd(vec![
+            "--server-id=1".to_string(),
+            "--log-bin=mysql-bin".to_string(),
+            "--binlog-format=ROW".to_string(),
+            "--binlog-row-image=FULL".to_string(),
+        ]);
+
+    let container = image
+        .start()
+        .await
+        .expect("Failed to start MySQL container");
+
+    let host_port = container
+        .get_host_port_ipv4(MYSQL_PORT.tcp())
+        .await
+        .expect("Failed to get MySQL host port");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    (container, host_port)
+}
+
+/// Boot a Maxwell container that connects to MySQL at the given host port.
+///
+/// Maxwell runs with `MAXWELL_PRODUCER=stdout` so CDC events arrive on the
+/// container's stdout stream. The container uses host networking so Maxwell
+/// can reach MySQL at `127.0.0.1:<mysql_host_port>`. Environment variables
+/// follow the convention of the bundled `bin/maxwell-docker` startup script.
+pub async fn start_maxwell(mysql_host_port: u16) -> ContainerAsync<GenericImage> {
+    let image = GenericImage::new("zendesk/maxwell", "v1.44.0")
+        .with_wait_for(WaitFor::seconds(10))
+        .with_env_var("MYSQL_HOST", "127.0.0.1")
+        .with_env_var("MYSQL_USERNAME", "root")
+        .with_env_var("MYSQL_PASSWORD", "test")
+        .with_env_var("MAXWELL_PRODUCER", "stdout")
+        .with_env_var(
+            "MAXWELL_OPTIONS",
+            format!("--port={mysql_host_port} --log_level=WARN"),
+        )
+        .with_network("host");
+
+    image
+        .start()
+        .await
+        .expect("Failed to start Maxwell container")
+}
+
+/// The `users` table for the Maxwell roundtrip test.
+///
+/// MySQL schema: `id BIGINT PRIMARY KEY, name VARCHAR(255), score INT`.
+/// SQLite schema: `id INTEGER PRIMARY KEY, name TEXT, score INTEGER`.
+/// Wire types: id=Int, name=Text, score=Int.
+#[derive(Debug, Clone)]
+pub struct MaxwellUsersTable {
+    inner: SimpleTable,
+}
+
+impl MaxwellUsersTable {
+    /// Build the Maxwell test table schema.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: SimpleTable::new("users", &["id", "name", "score"], &[0]),
+        }
+    }
+}
+
+impl Default for MaxwellUsersTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for MaxwellUsersTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for MaxwellUsersTable {}
+
+impl Hash for MaxwellUsersTable {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.inner.hash(state);
+    }
+}
+
+impl DynTable for MaxwellUsersTable {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn number_of_columns(&self) -> usize {
+        self.inner.number_of_columns()
+    }
+    fn write_pk_flags(&self, buf: &mut [u8]) {
+        self.inner.write_pk_flags(buf);
+    }
+}
+
+impl SchemaWithPK for MaxwellUsersTable {
+    fn number_of_primary_keys(&self) -> usize {
+        self.inner.number_of_primary_keys()
+    }
+    fn primary_key_index(&self, col_idx: usize) -> Option<usize> {
+        self.inner.primary_key_index(col_idx)
+    }
+    fn extract_pk<S, B>(
+        &self,
+        values: &impl IndexableValues<Text = S, Binary = B>,
+    ) -> Vec<Value<S, B>>
+    where
+        S: Clone,
+        B: Clone,
+    {
+        self.inner.extract_pk(values)
+    }
+}
+
+impl NamedColumns for MaxwellUsersTable {
+    fn column_index(&self, column_name: &str) -> Option<usize> {
+        NamedColumns::column_index(&self.inner, column_name)
+    }
+}
+
+impl WireColumnTypes for MaxwellUsersTable {
+    fn column_type(&self, column_index: usize) -> WireType {
+        match column_index {
+            0 => WireType::Int,
+            1 => WireType::Text,
+            2 => WireType::Int,
+            _ => panic!("column index {column_index} out of range for MaxwellUsersTable"),
+        }
+    }
+}
+
+/// Schema container for the Maxwell roundtrip test.
+#[derive(Debug, Clone, Default)]
+pub struct MaxwellAppSchema {
+    /// The users table.
+    pub users: MaxwellUsersTable,
+}
+
+impl WireSchema for MaxwellAppSchema {
+    type Table = MaxwellUsersTable;
     fn get(&self, table_name: &str) -> Option<&Self::Table> {
         (table_name == self.users.name()).then_some(&self.users)
     }

@@ -351,3 +351,106 @@ fn parity_composite_pk() {
         ],
     );
 }
+
+// =============================================================================
+// New validation tests (Phase 1C and 1D)
+// =============================================================================
+
+#[test]
+fn test_explicit_values_shorter_than_column_list() {
+    // INSERT INTO t (a, b) VALUES (1) silently filled b with NULL before this fix.
+    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("INSERT INTO t (a, b) VALUES (1)");
+    assert!(
+        result.is_err(),
+        "expected error for fewer VALUES than column list entries"
+    );
+}
+
+#[test]
+fn test_explicit_values_matching_column_list_accepted() {
+    // Matching counts must still work.
+    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql("INSERT INTO t (a, b) VALUES (1, 2)").unwrap();
+    assert_eq!(ps.len(), 1);
+}
+
+#[test]
+fn test_positional_fewer_values_already_errors() {
+    // The positional form already called expect(Comma) before each value
+    // after the first, so a short list already produced an error before
+    // this change. Confirm it still does.
+    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("INSERT INTO t VALUES (1)");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_atomicity_failure_leaves_builder_untouched() {
+    // The first statement is valid, the second is not. The builder must be
+    // empty after the call, not contain the first operation.
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql(
+        "INSERT INTO t (id, v) VALUES (1, 'ok'); \
+         INSERT INTO unknown_table (id) VALUES (2);",
+    );
+    assert!(result.is_err(), "second statement must fail");
+    assert_eq!(
+        ps.len(),
+        0,
+        "builder must be untouched after a partial failure"
+    );
+}
+
+#[test]
+fn test_or_in_where_delete_rejected() {
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("DELETE FROM t WHERE id = 1 OR id = 2");
+    assert!(result.is_err(), "OR in WHERE must be rejected");
+}
+
+#[test]
+fn test_or_in_where_update_rejected() {
+    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("UPDATE t SET v = 'x' WHERE id = 1 OR id = 2");
+    assert!(result.is_err(), "OR in WHERE must be rejected");
+}
+
+#[test]
+fn test_partial_pk_delete_rejected() {
+    // Two-column primary key, only one column given in WHERE.
+    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("DELETE FROM t WHERE a = 1");
+    assert!(
+        result.is_err(),
+        "partial primary key in WHERE must be rejected"
+    );
+}
+
+#[test]
+fn test_partial_pk_update_rejected() {
+    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let mut ps = patchset_with(&[t]);
+    let result = ps.digest_sql("UPDATE t SET v = 'x' WHERE a = 1");
+    assert!(
+        result.is_err(),
+        "partial primary key in WHERE must be rejected"
+    );
+}
+
+#[test]
+fn test_complete_composite_pk_where_accepted() {
+    // Both PK columns given: must succeed.
+    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let mut ps = patchset_with(&[t]);
+    ps.digest_sql("DELETE FROM t WHERE a = 1 AND b = 2")
+        .unwrap();
+    assert_eq!(ps.len(), 1);
+}

@@ -32,10 +32,18 @@
 //! Two changesets or patchsets can be merged using the `|` (BitOr) operator,
 //! which is equivalent to SQLite's `sqlite3changeset_concat()`:
 //!
-//! ```ignore
-//! let combined = changeset_a | changeset_b;
-//! // or in-place:
-//! changeset_a |= changeset_b;
+//! ```
+//! use sqlite_diff_rs::{ChangeSet, SimpleTable};
+//!
+//! let schema = SimpleTable::new("t", &["id"], &[0]);
+//! let mut a: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+//! a.add_table(&schema);
+//! let b: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+//! let _combined = a | b;
+//! // in-place variant:
+//! let mut x: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+//! let y: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
+//! x |= y;
 //! ```
 //!
 //! Operations affecting the same row are consolidated using the rules above.
@@ -214,14 +222,17 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
 ///
 /// Format:
 /// - Table marker byte (`'T'` for changeset, `'P'` for patchset)
-/// - Column count (1 byte)
+/// - Column count (varint)
 /// - PK flags (1 byte per column: non-zero = PK ordinal, 0 = not PK)
 /// - Table name (null-terminated UTF-8)
 fn write_table_header<T: SchemaWithPK>(out: &mut Vec<u8>, marker: u8, table: &T) {
     out.push(marker);
 
     let num_cols = table.number_of_columns();
-    out.push(u8::try_from(num_cols).unwrap());
+    // Lossless on every target Rust supports, since `usize` is at most 64 bits. The assert
+    // fires if that ever stops holding.
+    debug_assert!(u64::try_from(num_cols).is_ok(), "column count exceeds u64");
+    out.extend(crate::encoding::varint::encode_varint(num_cols as u64));
 
     let pk_start = out.len();
     out.resize(pk_start + num_cols, 0);
@@ -268,27 +279,6 @@ fn encode_patchset_delete_values<S: AsRef<str>, B: AsRef<[u8]>>(
             } else {
                 encode_value::<S, B>(out, None);
             }
-        }
-    }
-}
-
-/// Encode patchset UPDATE old values: PK columns only, in column order.
-///
-/// Matches SQLite's session-extension wire layout: the old side of a patchset
-/// UPDATE contains exactly `pk_count` values (no undefined padding for non-PK
-/// columns). The trailing new side (written by the caller) is symmetric and
-/// carries only the `column_count - pk_count` non-PK entries.
-fn encode_patchset_update_old_values<S: AsRef<str>, B: AsRef<[u8]>>(
-    out: &mut Vec<u8>,
-    pk_flags: &[u8],
-    pk_col_to_pk_pos: &[Option<usize>],
-    pk: &[Value<S, B>],
-) {
-    for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-        if pk_flag > 0
-            && let Some(pk_pos) = pk_col_to_pk_pos[col_idx]
-        {
-            encode_defined_value(out, &pk[pk_pos]);
         }
     }
 }
@@ -355,13 +345,20 @@ fn encode_patchset_op<S: AsRef<str>, B: AsRef<[u8]>>(
         Operation::Update { values, indirect } => {
             out.push(op_codes::UPDATE);
             out.push(u8::from(*indirect));
-            encode_patchset_update_old_values(out, pk_flags, pk_col_to_pk_pos, pk);
-            // New side: non-PK columns in column order. Each entry is either the
-            // new column value or `0x00` (undefined) if that non-PK column did not
-            // change. PK columns are skipped entirely, matching SQLite's session
-            // extension patchset output.
+            // Every column, in column order. A primary key column carries its value, any
+            // other column carries its new value or `0x00` when it did not change. This is
+            // one record, not a primary key block followed by a non-primary key block: the
+            // two only look alike when the primary key is the first column.
             for (col_idx, &pk_flag) in pk_flags.iter().enumerate() {
-                if pk_flag == 0 {
+                if pk_flag > 0 {
+                    debug_assert!(
+                        pk_col_to_pk_pos[col_idx].is_some(),
+                        "a primary key column always has a primary key vector position"
+                    );
+                    if let Some(pk_pos) = pk_col_to_pk_pos[col_idx] {
+                        encode_defined_value(out, &pk[pk_pos]);
+                    }
+                } else {
                     encode_value(out, values[col_idx].1.as_ref());
                 }
             }
@@ -831,18 +828,42 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
     /// Digest a SQL string containing INSERT, UPDATE, and DELETE statements
     /// into this patchset builder.
     ///
-    /// The SQL statements are parsed and their effects are directly applied
-    /// to the builder, consolidating operations by primary key as usual.
+    /// The entire input is parsed before any change is applied. A parse
+    /// error on any statement leaves the builder exactly as it was before
+    /// this call.
+    ///
+    /// # Supported subset
+    ///
+    /// Each statement must be one of these forms:
+    ///
+    /// ```text
+    /// INSERT INTO table (col1, col2, ...) VALUES (v1, v2, ...)
+    /// UPDATE table SET col1 = v1, ... WHERE pk1 = v1 AND pk2 = v2 ...
+    /// DELETE FROM table WHERE pk1 = v1 AND pk2 = v2 ...
+    /// ```
+    ///
+    /// A `WHERE` clause is not a filter over stored rows. It is the only
+    /// way the parser can identify which row is targeted, because no table
+    /// data is available. Every `WHERE` must therefore name every primary
+    /// key column with equality predicates joined by `AND`. `OR`, `>`,
+    /// `LIKE`, subqueries, and `IN` are not supported.
+    ///
+    /// Multiple statements can be separated by semicolons.
     ///
     /// # Errors
     ///
-    /// Returns a [`crate::builders::sql::ParseError`] if the SQL cannot be parsed.
+    /// Returns a [`crate::builders::sql::ParseError`] if any statement
+    /// cannot be parsed. The builder is left untouched in that case.
     pub fn digest_sql<'input>(
         &mut self,
         input: &'input str,
     ) -> Result<&mut Self, crate::builders::sql::ParseError<'input>> {
         let mut parser = crate::builders::sql::Parser::new(input, self);
         parser.digest_all()?;
+        let pending = parser.into_pending();
+        for (table, pk, op) in pending {
+            self.add_operation(&table, pk, op);
+        }
         Ok(self)
     }
 }

@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = "0.2"
+sqlite-diff-rs = "0.10"
 ```
 
 ## Quick Start
@@ -50,10 +50,45 @@ let bytes: Vec<u8> = patchset.into();
 
 `builder.digest(&event, &schema, &adapter)` folds one wire event (from `pg_walstream`, `wal2json`, or `maxwell`) into a builder. Same call site for every source.
 
-```rust,ignore
+```rust
+# #![cfg(feature = "maxwell")]
+# use sqlite_diff_rs::{
+#     DynTable, IndexableValues, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
+#     Value, WireColumnTypes, WireSchema, WireType,
+# };
+# use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, parse};
+# #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+# struct UsersTable(SimpleTable);
+# impl DynTable for UsersTable {
+#     fn name(&self) -> &str { self.0.name() }
+#     fn number_of_columns(&self) -> usize { self.0.number_of_columns() }
+#     fn write_pk_flags(&self, buf: &mut [u8]) { self.0.write_pk_flags(buf); }
+# }
+# impl SchemaWithPK for UsersTable {
+#     fn extract_pk<S: Clone, B: Clone>(&self, v: &impl IndexableValues<Text = S, Binary = B>) -> Vec<Value<S, B>> { self.0.extract_pk(v) }
+#     fn number_of_primary_keys(&self) -> usize { self.0.number_of_primary_keys() }
+#     fn primary_key_index(&self, col: usize) -> Option<usize> { self.0.primary_key_index(col) }
+# }
+# impl NamedColumns for UsersTable {
+#     fn column_index(&self, name: &str) -> Option<usize> { self.0.column_index(name) }
+# }
+# impl WireColumnTypes for UsersTable {
+#     fn column_type(&self, i: usize) -> WireType { if i == 0 { WireType::Int } else { WireType::Text } }
+# }
+# struct MySchema { users: UsersTable }
+# impl WireSchema for MySchema {
+#     type Table = UsersTable;
+#     fn get(&self, name: &str) -> Option<&UsersTable> { if name == "users" { Some(&self.users) } else { None } }
+# }
+# let json_ev = r#"{"database":"db","table":"users","type":"insert","ts":0,"data":{"id":1,"name":"Alice"}}"#;
+# let msg = parse(json_ev).unwrap();
+# let schema = MySchema { users: UsersTable(SimpleTable::new("users", &["id", "name"], &[0])) };
+# let types = TypeMap::<Maxwell, String, Vec<u8>>::defaults();
 let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
     .digest(&msg, &schema, &types)?;
 let bytes: Vec<u8> = patchset.build();
+# assert!(!bytes.is_empty());
+# Ok::<_, ConversionError>(())
 ```
 
 The schema type implements `WireSchema` and its tables implement `WireColumnTypes`, declaring each column's semantic `WireType`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, UUID, decimals, temporals, and JSON.
@@ -73,7 +108,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = { version = "0.4", features = ["wal2json"] }
+sqlite-diff-rs = { version = "0.10", features = ["wal2json"] }
 ```
 
 ## Binary Format Reference
@@ -103,7 +138,8 @@ See the [SQLite session extension docs](https://www.sqlite.org/session.html) for
 
 The `diesel` feature turns each op of a `PatchSet` or `ChangeSet` into a backend-generic Diesel query. Downstream implements one `Adapter` per schema (the set of tables), and it maps `(table_name, column_index)` pairs to column identifiers and to per-column `Binder`s. Each `Binder` calls `push_bind_param` with the target `SqlType` the column expects, so values travel as native binary binds and the emitted SQL contains no `CAST` wrappers regardless of backend. The `ApplyOps` extension trait wraps the batch-execute and `conn.transaction` shapes so a full apply reads as one call. A `ChangeSet` additionally renders primary-key changes, including composite keys, because it carries both the old and the new value of every column. A `PatchSet` stores no new primary-key value, so those updates are changeset-only.
 
-```rust,ignore
+```rust,no_run
+# #![cfg(feature = "diesel")]
 use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::query_builder::AstPass;
@@ -140,28 +176,29 @@ impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Pg, S, B> for MyAdapte
     }
 }
 
-let schema = SimpleTable::new("users", &["id", "active"], &[0]);
-let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
-    Insert::from(schema.clone())
-        .set(0, 1_i64)
-        .unwrap()
-        .set(1, 1_i64)
-        .unwrap(),
-);
-
-let mut conn = PgConnection::establish("postgres://...")?;
-patchset
-    .iter()
-    .map(|op| op.with_adapter::<Pg, _>(&MyAdapter))
-    .apply_transactional(&mut conn)?;
-# Ok::<_, diesel::result::Error>(())
+// Pass any Connection<Backend = Pg> (e.g. PgConnection::establish("postgres://...")):
+fn apply<C: Connection<Backend = Pg>>(conn: &mut C) -> QueryResult<usize> {
+    let schema = SimpleTable::new("users", &["id", "active"], &[0]);
+    let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
+        Insert::from(schema.clone())
+            .set(0, 1_i64)
+            .unwrap()
+            .set(1, 1_i64)
+            .unwrap(),
+    );
+    patchset
+        .iter()
+        .map(|op| op.with_adapter::<Pg, _>(&MyAdapter))
+        .apply_transactional(conn)
+}
+# fn main() {}
 ```
 
 Enable via `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlite-diff-rs = { version = "0.1", features = ["diesel"] }
+sqlite-diff-rs = { version = "0.10", features = ["diesel"] }
 diesel = { version = "2", features = ["postgres"] }
 ```
 

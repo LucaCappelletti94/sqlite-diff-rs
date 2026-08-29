@@ -4,11 +4,20 @@
 //! constructs the equivalent wire event for `pg_walstream` and
 //! `wal2json`, digests each through the unified
 //! [`DiffSetBuilder::digest`](sqlite_diff_rs::DiffSetBuilder::digest)
+//! and asserts byte equality.
 //!
 //! This is the static analog of the Postgres-in-docker harness the
 //! plan doc originally sketched. It exercises the same invariant
 //! (same source data through two wire formats produces the same
 //! SQLite session output) without a container dep.
+//!
+//! **Limitation:** these tests compare crate output against crate output.
+//! A consistent bug in the shared encoder (for example, a wrong op code
+//! or a wrong value encoding that affects every source equally) will not
+//! be caught here because both sides go through the same code path.
+//! These tests are cross-source consistency checks, not correctness checks.
+//! Use the oracle comparisons in `digestion_pg_walstream.rs`,
+//! `digestion_wal2json.rs`, and `digestion_maxwell.rs` for correctness.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream"))]
 

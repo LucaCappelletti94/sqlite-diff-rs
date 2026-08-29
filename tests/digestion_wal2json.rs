@@ -14,7 +14,10 @@ use sqlite_diff_rs::wal2json::{
     Action, ChangeV1, Column, ColumnArrays, ConversionError, LogicalMessageV2, MessageV2, OldKeys,
     RowV2, TransactionBoundary, TruncateV2, Wal2Json, parse_v1, parse_v2,
 };
-use sqlite_diff_rs::{ChangeSet, ChangesetOp, DecodeError, PatchSet, TypeMap, Value};
+use sqlite_diff_rs::{
+    ChangeSet, ChangesetOp, DecodeError, DynTable, ParsedDiffSet, PatchSet, PatchsetOp, TypeMap,
+    Value,
+};
 
 mod common;
 use common::{TestUsersTable, test_schema};
@@ -101,7 +104,6 @@ fn all_values(id: i64, name: &str, active: bool) -> Vec<serde_json::Value> {
 fn w2j_v2_changeset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Insert,
         "users",
@@ -109,19 +111,50 @@ fn w2j_v2_changeset_insert() {
         None,
         None,
     );
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Insert { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0], Value::Integer(1), "id");
+            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
+            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+        }
+        other => panic!("expected Insert, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Insert { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[0], Value::Integer(1));
+            assert_eq!(values[1], Value::Text("Alice".to_string()));
+            assert_eq!(values[2], Value::Integer(1));
+        }
+        other => panic!("expected Insert in parsed bytes, got {other:?}"),
+    }
+    #[cfg(feature = "testing")]
+    {
+        let (oracle, _) = sqlite_diff_rs::testing::session_changeset_and_patchset(&[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)",
+            "INSERT INTO users (id, name, active) VALUES (1, 'Alice', 1)",
+        ]);
+        assert_eq!(bytes, oracle, "changeset bytes must match SQLite");
+    }
 }
 
 #[test]
 fn w2j_v2_changeset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Update,
         "users",
@@ -129,19 +162,49 @@ fn w2j_v2_changeset_update() {
         Some(all_columns(1, "Alice", true)),
         None,
     );
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Update { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old id");
+            assert_eq!(
+                values[1].0,
+                Some(Value::Text("Alice".to_string())),
+                "old name"
+            );
+            assert_eq!(
+                values[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+        }
+        other => panic!("expected Update, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[1].0, Some(Value::Text("Alice".to_string())));
+            assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected Update in parsed bytes, got {other:?}"),
+    }
 }
 
 #[test]
 fn w2j_v2_changeset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Delete,
         "users",
@@ -149,12 +212,38 @@ fn w2j_v2_changeset_delete() {
         Some(all_columns(1, "Alice", true)),
         None,
     );
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Delete {
+            table, old_values, ..
+        } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(old_values.len(), 3, "three columns");
+            assert_eq!(old_values[0], Value::Integer(1), "id");
+            assert_eq!(old_values[1], Value::Text("Alice".to_string()), "name");
+            assert_eq!(old_values[2], Value::Integer(1), "active");
+        }
+        other => panic!("expected Delete, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Delete { old_values, .. } => {
+            assert_eq!(old_values.len(), 3, "column count in encoded bytes");
+            assert_eq!(old_values[0], Value::Integer(1));
+            assert_eq!(old_values[1], Value::Text("Alice".to_string()));
+            assert_eq!(old_values[2], Value::Integer(1));
+        }
+        other => panic!("expected Delete in parsed bytes, got {other:?}"),
+    }
 }
 
 // -- MessageV2: PatchsetFormat ---------------------------------------------
@@ -163,7 +252,6 @@ fn w2j_v2_changeset_delete() {
 fn w2j_v2_patchset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Insert,
         "users",
@@ -171,19 +259,50 @@ fn w2j_v2_patchset_insert() {
         None,
         None,
     );
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Insert { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0], Value::Integer(1), "id");
+            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
+            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+        }
+        other => panic!("expected Insert, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Insert { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[0], Value::Integer(1));
+            assert_eq!(values[1], Value::Text("Alice".to_string()));
+            assert_eq!(values[2], Value::Integer(1));
+        }
+        other => panic!("expected Insert in parsed bytes, got {other:?}"),
+    }
+    #[cfg(feature = "testing")]
+    {
+        let (_, oracle) = sqlite_diff_rs::testing::session_changeset_and_patchset(&[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)",
+            "INSERT INTO users (id, name, active) VALUES (1, 'Alice', 1)",
+        ]);
+        assert_eq!(bytes, oracle, "patchset bytes must match SQLite");
+    }
 }
 
 #[test]
 fn w2j_v2_patchset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Update,
         "users",
@@ -191,19 +310,47 @@ fn w2j_v2_patchset_update() {
         Some(all_columns(1, "Alice", true)),
         None,
     );
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Update {
+            table, pk, entries, ..
+        } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(pk, &[Value::Integer(1)], "primary key");
+            assert_eq!(entries.len(), 3, "three column entries");
+            assert_eq!(
+                entries[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+            assert_eq!(entries[2].1, Some(Value::Integer(1)), "new active");
+        }
+        other => panic!("expected Update, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Update { pk, entries, .. } => {
+            assert_eq!(pk, &[Value::Integer(1)]);
+            assert_eq!(entries.len(), 3, "column count in encoded bytes");
+            assert_eq!(entries[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected Update in parsed bytes, got {other:?}"),
+    }
 }
 
 #[test]
 fn w2j_v2_patchset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let msg = v2_row(
         Action::Delete,
         "users",
@@ -211,12 +358,30 @@ fn w2j_v2_patchset_delete() {
         Some(all_columns(1, "Alice", true)),
         None,
     );
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&msg, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Delete { table, pk, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(pk, &[Value::Integer(1)], "primary key of deleted row");
+        }
+        other => panic!("expected Delete, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Delete { pk, .. } => {
+            assert_eq!(pk, &[Value::Integer(1)], "primary key in encoded bytes");
+        }
+        other => panic!("expected Delete in parsed bytes, got {other:?}"),
+    }
 }
 
 // -- ChangeV1: ChangesetFormat ---------------------------------------------
@@ -225,7 +390,6 @@ fn w2j_v2_patchset_delete() {
 fn w2j_v1_changeset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Insert {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -236,19 +400,50 @@ fn w2j_v1_changeset_insert() {
         ),
         pk: None,
     };
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Insert { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0], Value::Integer(1), "id");
+            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
+            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+        }
+        other => panic!("expected Insert, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Insert { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[0], Value::Integer(1));
+            assert_eq!(values[1], Value::Text("Alice".to_string()));
+            assert_eq!(values[2], Value::Integer(1));
+        }
+        other => panic!("expected Insert in parsed bytes, got {other:?}"),
+    }
+    #[cfg(feature = "testing")]
+    {
+        let (oracle, _) = sqlite_diff_rs::testing::session_changeset_and_patchset(&[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)",
+            "INSERT INTO users (id, name, active) VALUES (1, 'Alice', 1)",
+        ]);
+        assert_eq!(bytes, oracle, "changeset bytes must match SQLite");
+    }
 }
 
 #[test]
 fn w2j_v1_changeset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Update {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -261,22 +456,48 @@ fn w2j_v1_changeset_update() {
         oldkeys: v1_oldkeys(
             &["id"],
             &["integer"],
-            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
         ),
     };
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Update { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0].0, Some(Value::Integer(1)), "old id from oldkeys");
+            assert_eq!(values[0].1, Some(Value::Integer(1)), "new id");
+            assert_eq!(values[1].0, None, "name absent from oldkeys");
+            assert_eq!(
+                values[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+        }
+        other => panic!("expected Update, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Update { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected Update in parsed bytes, got {other:?}"),
+    }
 }
 
 #[test]
 fn w2j_v1_changeset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Delete {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -284,15 +505,40 @@ fn w2j_v1_changeset_delete() {
         oldkeys: v1_oldkeys(
             &["id"],
             &["integer"],
-            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
         ),
     };
-
     let cs: ChangeSet<TestUsersTable, String, Vec<u8>> =
         ChangeSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        ChangesetOp::Delete {
+            table, old_values, ..
+        } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(old_values.len(), 3, "three columns");
+            // Only id is in oldkeys; name and active default to Null.
+            assert_eq!(old_values[0], Value::Integer(1), "id from oldkeys");
+            assert_eq!(old_values[1], Value::Null, "name absent from oldkeys");
+            assert_eq!(old_values[2], Value::Null, "active absent from oldkeys");
+        }
+        other => panic!("expected Delete, got {other:?}"),
+    }
     let bytes: Vec<u8> = cs.build();
-    assert!(!bytes.is_empty(), "changeset must contain data");
-    assert_eq!(bytes[0], b'T', "changeset marker must be 'T'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Changeset(parsed_cs) = parsed else {
+        panic!("expected changeset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_cs.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        ChangesetOp::Delete { old_values, .. } => {
+            assert_eq!(old_values.len(), 3, "column count in encoded bytes");
+            assert_eq!(old_values[0], Value::Integer(1));
+        }
+        other => panic!("expected Delete in parsed bytes, got {other:?}"),
+    }
 }
 
 // -- ChangeV1: PatchsetFormat ----------------------------------------------
@@ -301,7 +547,6 @@ fn w2j_v1_changeset_delete() {
 fn w2j_v1_patchset_insert() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Insert {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -312,19 +557,50 @@ fn w2j_v1_patchset_insert() {
         ),
         pk: None,
     };
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Insert { table, values, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(values.len(), 3, "three columns");
+            assert_eq!(values[0], Value::Integer(1), "id");
+            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
+            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+        }
+        other => panic!("expected Insert, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Insert { values, .. } => {
+            assert_eq!(values.len(), 3, "column count in encoded bytes");
+            assert_eq!(values[0], Value::Integer(1));
+            assert_eq!(values[1], Value::Text("Alice".to_string()));
+            assert_eq!(values[2], Value::Integer(1));
+        }
+        other => panic!("expected Insert in parsed bytes, got {other:?}"),
+    }
+    #[cfg(feature = "testing")]
+    {
+        let (_, oracle) = sqlite_diff_rs::testing::session_changeset_and_patchset(&[
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)",
+            "INSERT INTO users (id, name, active) VALUES (1, 'Alice', 1)",
+        ]);
+        assert_eq!(bytes, oracle, "patchset bytes must match SQLite");
+    }
 }
 
 #[test]
 fn w2j_v1_patchset_update() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Update {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -337,22 +613,49 @@ fn w2j_v1_patchset_update() {
         oldkeys: v1_oldkeys(
             &["id"],
             &["integer"],
-            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
         ),
     };
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Update {
+            table, pk, entries, ..
+        } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(pk, &[Value::Integer(1)], "primary key");
+            assert_eq!(entries.len(), 3, "three column entries");
+            assert_eq!(
+                entries[1].1,
+                Some(Value::Text("Alicia".to_string())),
+                "new name"
+            );
+        }
+        other => panic!("expected Update, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Update { pk, entries, .. } => {
+            assert_eq!(pk, &[Value::Integer(1)]);
+            assert_eq!(entries.len(), 3, "column count in encoded bytes");
+            assert_eq!(entries[1].1, Some(Value::Text("Alicia".to_string())));
+        }
+        other => panic!("expected Update in parsed bytes, got {other:?}"),
+    }
 }
 
 #[test]
 fn w2j_v1_patchset_delete() {
     let schema = test_schema();
     let adapter = default_adapter();
-
     let change = ChangeV1::Delete {
         schema: Some("public".to_string()),
         table: "users".to_string(),
@@ -360,15 +663,33 @@ fn w2j_v1_patchset_delete() {
         oldkeys: v1_oldkeys(
             &["id"],
             &["integer"],
-            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64),)],
+            alloc::vec![serde_json::Value::Number(serde_json::Number::from(1_i64))],
         ),
     };
-
     let ps: PatchSet<TestUsersTable, String, Vec<u8>> =
         PatchSet::new().digest(&change, &schema, &adapter).unwrap();
+    let ops: Vec<_> = ps.iter().collect();
+    assert_eq!(ops.len(), 1, "one operation expected");
+    match &ops[0] {
+        PatchsetOp::Delete { table, pk, .. } => {
+            assert_eq!(table.name(), "users");
+            assert_eq!(pk, &[Value::Integer(1)], "primary key of deleted row");
+        }
+        other => panic!("expected Delete, got {other:?}"),
+    }
     let bytes: Vec<u8> = ps.build();
-    assert!(!bytes.is_empty(), "patchset must contain data");
-    assert_eq!(bytes[0], b'P', "patchset marker must be 'P'");
+    let parsed = ParsedDiffSet::parse(&bytes).expect("bytes must re-parse");
+    let ParsedDiffSet::Patchset(parsed_ps) = parsed else {
+        panic!("expected patchset marker");
+    };
+    let parsed_ops: Vec<_> = parsed_ps.iter().collect();
+    assert_eq!(parsed_ops.len(), 1);
+    match &parsed_ops[0] {
+        PatchsetOp::Delete { pk, .. } => {
+            assert_eq!(pk, &[Value::Integer(1)], "primary key in encoded bytes");
+        }
+        other => panic!("expected Delete in parsed bytes, got {other:?}"),
+    }
 }
 
 // -- Error paths -----------------------------------------------------------

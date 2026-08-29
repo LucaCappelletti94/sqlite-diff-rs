@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use super::lexer::{Lexer, LexerError, Token, TokenKind};
 
 /// SQL parser errors.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ParseError<'a> {
     /// Lexer error.
@@ -65,13 +66,44 @@ pub enum ParseError<'a> {
         /// The column name.
         column: &'a str,
     },
+    /// Explicit column list has more entries than the VALUES list.
+    #[error("column list names {expected} columns but VALUES has {found}")]
+    ValuesLengthMismatch {
+        /// Number of columns in the explicit column list.
+        expected: usize,
+        /// Number of values provided in the VALUES clause.
+        found: usize,
+    },
+    /// OR is not supported in a WHERE clause.
+    #[error("OR is not supported in WHERE. Use separate statements for multiple rows")]
+    OrInWhere,
+    /// WHERE clause does not pin every primary key column.
+    #[error("WHERE must name all {expected} primary key columns, but only {found} were provided")]
+    IncompleteWhereKey {
+        /// Total number of primary key columns.
+        expected: usize,
+        /// How many were actually provided.
+        found: usize,
+    },
 }
 
-/// SQL parser.
+/// SQL parser. Collects operations into a pending list without applying
+/// them to the builder, enabling all-or-nothing application via `into_pending`.
 pub(crate) struct Parser<'input, 'builder, T: SchemaWithPK, S> {
     lexer: Lexer<'input>,
-    builder: &'builder mut DiffSetBuilder<PatchsetFormat, T, S, Vec<u8>>,
+    /// Read-only access for schema lookups.
+    builder: &'builder DiffSetBuilder<PatchsetFormat, T, S, Vec<u8>>,
+    /// Parsed operations waiting to be applied.
+    pending: Vec<PendingOp<T, S>>,
 }
+
+/// A parsed operation waiting to be applied: the table, its primary key values, and the
+/// operation itself. Nothing is applied to the builder until every statement has parsed.
+type PendingOp<T, S> = (
+    T,
+    Vec<Value<S, Vec<u8>>>,
+    Operation<PatchsetFormat, S, Vec<u8>>,
+);
 
 impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a> From<&'a str>>
     Parser<'input, 'builder, T, S>
@@ -80,12 +112,18 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     #[must_use]
     pub(crate) fn new(
         input: &'input str,
-        builder: &'builder mut DiffSetBuilder<PatchsetFormat, T, S, Vec<u8>>,
+        builder: &'builder DiffSetBuilder<PatchsetFormat, T, S, Vec<u8>>,
     ) -> Self {
         Self {
             lexer: Lexer::new(input),
             builder,
+            pending: Vec::new(),
         }
+    }
+
+    /// Consume the parser and return all collected operations.
+    pub(crate) fn into_pending(self) -> Vec<PendingOp<T, S>> {
+        self.pending
     }
 
     /// Parse all statements from the input.
@@ -132,13 +170,10 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         let table = self.expect_table()?;
 
-        // There cannot ever possibly be more than i32::MAX columns
-        // and since they are unsigned, we use u16 for column identifiers.
-        // By default, there can be up to 2000 columns in SQLite, so this is more than enough.
-        // If a user employes SQLITE_MAX_COLUMN to set a higher limit, they still cannot exceed
-        // i16::MAX columns, so this is safe.
+        // Column identifiers for the explicit list, empty means positional.
+        // u16 is enough: SQLite's default column limit is 2000, and even with
+        // SQLITE_MAX_COLUMN it cannot exceed i16::MAX.
         let mut column_identifiers: Vec<u16> = Vec::new();
-        // Optional column list
         if self.lexer.peek()?.kind == TokenKind::LParen {
             self.lexer.next()?;
 
@@ -160,7 +195,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let mut pks = vec![Value::Null; table.number_of_primary_keys()];
 
         if column_identifiers.is_empty() {
-            // No explicit column list: values map to all columns in order
+            // Positional form: values map to all columns in order.
             for (col_idx, value_ref) in values.iter_mut().enumerate() {
                 if col_idx > 0 {
                     self.expect(&TokenKind::Comma)?;
@@ -171,29 +206,39 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 }
             }
         } else {
-            for column_index in column_identifiers {
-                values[usize::from(column_index)] = self.parse_value()?;
-                if let Some(primary_key_index) = table.primary_key_index(usize::from(column_index))
+            // Explicit column list: exactly one value per listed column.
+            let expected = column_identifiers.len();
+            let mut parsed = 0usize;
+            for column_index in &column_identifiers {
+                values[usize::from(*column_index)] = self.parse_value()?;
+                if let Some(primary_key_index) = table.primary_key_index(usize::from(*column_index))
                 {
-                    pks[primary_key_index] = values[usize::from(column_index)].clone();
+                    pks[primary_key_index] = values[usize::from(*column_index)].clone();
                 }
+                parsed += 1;
                 if self.lexer.peek()?.kind != TokenKind::Comma {
                     break;
                 }
                 self.lexer.next()?;
             }
+            if parsed != expected {
+                return Err(ParseError::ValuesLengthMismatch {
+                    expected,
+                    found: parsed,
+                });
+            }
         }
 
         self.expect(&TokenKind::RParen)?;
 
-        self.builder.add_operation(
-            &table,
+        self.pending.push((
+            table,
             pks,
             Operation::Insert {
                 values,
                 indirect: false,
             },
-        );
+        ));
 
         Ok(())
     }
@@ -207,7 +252,6 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         let mut new_values = vec![((), None); table.number_of_columns()];
 
-        // Parse SET assignments
         loop {
             let (col_idx, _) = self.expect_column(&table)?;
             self.expect(&TokenKind::Equals)?;
@@ -220,32 +264,42 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             self.lexer.next()?;
         }
 
-        // WHERE clause is required
         if self.lexer.peek()?.kind != TokenKind::Where {
             return Err(ParseError::MissingWhere {
                 statement: "UPDATE",
             });
         }
 
-        let mut pk = vec![Value::Null; table.number_of_primary_keys()];
+        let n_pk = table.number_of_primary_keys();
+        let mut pk = vec![Value::Null; n_pk];
+        let mut pk_seen = vec![false; n_pk];
 
         self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pk[primary_key_index] = val.clone();
+                pk_seen[primary_key_index] = true;
                 Ok(())
             } else {
                 Err(ParseError::WhereNonPKColumn { column: col_name })
             }
         })?;
 
-        self.builder.add_operation(
-            &table,
+        let found = pk_seen.iter().filter(|&&s| s).count();
+        if found != n_pk {
+            return Err(ParseError::IncompleteWhereKey {
+                expected: n_pk,
+                found,
+            });
+        }
+
+        self.pending.push((
+            table,
             pk,
             Operation::Update {
                 values: new_values,
                 indirect: false,
             },
-        );
+        ));
 
         Ok(())
     }
@@ -256,36 +310,49 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::From)?;
 
         let table = self.expect_table()?;
-        let mut pks = vec![Value::Null; table.number_of_primary_keys()];
 
-        // WHERE clause is required
         if self.lexer.peek()?.kind != TokenKind::Where {
             return Err(ParseError::MissingWhere {
                 statement: "DELETE",
             });
         }
+
+        let n_pk = table.number_of_primary_keys();
+        let mut pks = vec![Value::Null; n_pk];
+        let mut pk_seen = vec![false; n_pk];
+
         self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pks[primary_key_index] = val.clone();
+                pk_seen[primary_key_index] = true;
                 Ok(())
             } else {
                 Err(ParseError::WhereNonPKColumn { column: col_name })
             }
         })?;
 
-        self.builder.add_operation(
-            &table,
+        let found = pk_seen.iter().filter(|&&s| s).count();
+        if found != n_pk {
+            return Err(ParseError::IncompleteWhereKey {
+                expected: n_pk,
+                found,
+            });
+        }
+
+        self.pending.push((
+            table,
             pks,
             Operation::Delete {
                 data: (),
                 indirect: false,
             },
-        );
+        ));
 
         Ok(())
     }
 
-    /// Parse a WHERE clause.
+    /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate.
+    /// Returns `OrInWhere` if `OR` appears after a predicate.
     fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<(), ParseError<'input>>
     where
         D: FnMut(u16, &'input str, Value<S, Vec<u8>>) -> Result<(), ParseError<'input>>,
@@ -299,6 +366,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             digestor(col_idx, col_name, val)?;
 
             if self.lexer.peek()?.kind != TokenKind::And {
+                if self.lexer.peek()?.kind == TokenKind::Or {
+                    return Err(ParseError::OrInWhere);
+                }
                 break;
             }
             self.lexer.next()?;
@@ -412,6 +482,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             TokenKind::From => Ok("FROM"),
             TokenKind::Where => Ok("WHERE"),
             TokenKind::And => Ok("AND"),
+            TokenKind::Or => Ok("OR"),
             TokenKind::Primary => Ok("PRIMARY"),
             TokenKind::Key => Ok("KEY"),
             TokenKind::Null => Ok("NULL"),

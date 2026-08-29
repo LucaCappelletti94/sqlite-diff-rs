@@ -34,6 +34,8 @@ pub(super) enum TokenKind<'input> {
     Where,
     /// AND keyword
     And,
+    /// OR keyword
+    Or,
     /// PRIMARY keyword
     Primary,
     /// KEY keyword
@@ -102,6 +104,7 @@ impl TokenKind<'_> {
             TokenKind::From => "FROM",
             TokenKind::Where => "WHERE",
             TokenKind::And => "AND",
+            TokenKind::Or => "OR",
             TokenKind::Primary => "PRIMARY",
             TokenKind::Key => "KEY",
             TokenKind::Null => "NULL",
@@ -139,6 +142,7 @@ impl AsRef<str> for TokenKind<'_> {
             TokenKind::From => "FROM",
             TokenKind::Where => "WHERE",
             TokenKind::And => "AND",
+            TokenKind::Or => "OR",
             TokenKind::Primary => "PRIMARY",
             TokenKind::Key => "KEY",
             TokenKind::Null => "NULL",
@@ -456,6 +460,7 @@ impl<'input> Lexer<'input> {
             "FROM" => TokenKind::From,
             "WHERE" => TokenKind::Where,
             "AND" => TokenKind::And,
+            "OR" => TokenKind::Or,
             "PRIMARY" => TokenKind::Primary,
             "KEY" => TokenKind::Key,
             "NULL" => TokenKind::Null,

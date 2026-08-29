@@ -34,10 +34,12 @@ type UpdateValues = Vec<(MaybeValue<String, Vec<u8>>, MaybeValue<String, Vec<u8>
 /// Type alias for parsed values result.
 type ParsedValues = (Vec<MaybeValue<String, Vec<u8>>>, usize);
 use crate::builders::{ChangesetFormat, DiffSet, DiffSetBuilder, Operation, PatchsetFormat};
+use crate::encoding::varint::decode_varint;
 use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
 
 /// Errors that can occur during parsing.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     /// Unexpected end of input.
@@ -442,11 +444,14 @@ fn parse_table_header(
     };
     pos += 1;
 
-    if pos >= data.len() {
-        return Err(ParseError::UnexpectedEof(base_pos + pos));
-    }
-    let column_count = data[pos] as usize;
-    pos += 1;
+    let (column_count, varint_len) = decode_varint(&data[pos..])
+        .ok_or(ParseError::UnexpectedEof(base_pos + pos))
+        .and_then(|(count, len)| {
+            usize::try_from(count)
+                .map(|count| (count, len))
+                .map_err(|_| ParseError::UnexpectedEof(base_pos + pos))
+        })?;
+    pos += varint_len;
 
     if pos + column_count > data.len() {
         return Err(ParseError::UnexpectedEof(base_pos + pos));
@@ -576,42 +581,30 @@ fn parse_patchset_operation(
             builder.add_operation(schema, pk, Operation::Delete { data: (), indirect });
         }
         op_codes::UPDATE => {
-            // Patchset UPDATE wire layout (matching SQLite's session extension):
-            //   old side: PK-only values, in column order, exactly `pk_count` entries
-            //            (no padding / undefined markers for non-PK columns).
-            //   new side: non-PK columns, in column order, exactly
-            //            `column_count - pk_count` entries; each entry is either the
-            //            new column value or `0x00` (undefined) if that non-PK column
-            //            did not change.
+            // Patchset UPDATE wire layout, matching SQLite's session extension: one record
+            // of exactly `column_count` entries in column order. A primary key column
+            // carries its value, any other column carries its new value or `0x00` when it
+            // did not change. It is NOT a primary key block followed by a non-primary key
+            // block: those only look alike when the primary key is the first column, which
+            // is what hid this for so long.
             //
-            // Internally we rehydrate the operation into a full-width
-            // `Vec<((), MaybeValue)>` of length `column_count` so downstream code
-            // (`extract_pk`, `sql_output`, consolidation, reversal) keeps working
-            // uniformly: PK slots hold `Some(pk_value)`, non-PK slots hold either
-            // `Some(new_value)` or `None` for undefined.
-            let pk_count = schema.pk_flags.iter().filter(|&&b| b > 0).count();
-            let non_pk_count = schema.column_count.saturating_sub(pk_count);
-
-            let (old_pk_values, old_len) = parse_values(&data[pos..], base_pos + pos, pk_count)?;
-            pos += old_len;
-            let (new_non_pk_values, new_len) =
-                parse_values(&data[pos..], base_pos + pos, non_pk_count)?;
-            pos += new_len;
+            // The full-width `Vec<((), MaybeValue)>` keeps downstream code (`extract_pk`,
+            // `sql_output`, consolidation, reversal) uniform: primary key slots hold
+            // `Some(value)`, other slots hold `Some(new_value)` or `None` for undefined.
+            let (record, record_len) =
+                parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
+            pos += record_len;
 
             let mut values: Vec<((), MaybeValue<String, Vec<u8>>)> =
                 alloc::vec![((), None); schema.column_count];
-            let mut old_iter = old_pk_values.into_iter();
-            let mut new_iter = new_non_pk_values.into_iter();
-            for (col_idx, &pk_flag) in schema.pk_flags.iter().enumerate() {
+            for (col_idx, (&pk_flag, entry)) in schema.pk_flags.iter().zip(record).enumerate() {
                 if pk_flag > 0 {
-                    // PK columns always carry a defined value on the old side; a
-                    // stray undefined marker is normalized to Null to stay lenient
-                    // for fuzz-generated inputs (matches `expand_pk_values` in the
-                    // DELETE path).
-                    let old = old_iter.next().flatten().unwrap_or(Value::Null);
-                    values[col_idx] = ((), Some(old));
+                    // A primary key column always carries a defined value. A stray
+                    // undefined marker is normalised to Null to stay lenient for
+                    // fuzz-generated input, matching `expand_pk_values` in the DELETE path.
+                    values[col_idx] = ((), Some(entry.unwrap_or(Value::Null)));
                 } else {
-                    values[col_idx] = ((), new_iter.next().flatten());
+                    values[col_idx] = ((), entry);
                 }
             }
 

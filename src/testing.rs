@@ -725,50 +725,6 @@ pub fn get_all_rows(conn: &Connection, table_name: &str) -> Vec<Vec<String>> {
     rows
 }
 
-/// Assert that two database connections have identical contents across all given tables.
-///
-/// # Panics
-///
-/// Panics if any table has different rows in the two connections.
-pub fn compare_db_states(conn1: &Connection, conn2: &Connection, create_table_sqls: &[String]) {
-    for create_sql in create_table_sqls {
-        let table_name = extract_table_name(create_sql);
-
-        let rows1 = get_all_rows(conn1, &table_name);
-        let rows2 = get_all_rows(conn2, &table_name);
-
-        assert_eq!(
-            rows1, rows2,
-            "Database state mismatch for table '{table_name}'!\nDB1: {rows1:?}\nDB2: {rows2:?}"
-        );
-    }
-}
-
-/// Extract the table name from a `CREATE TABLE` SQL string.
-///
-/// # Panics
-///
-/// Panics if the input does not contain a valid `CREATE TABLE` statement.
-#[must_use]
-pub fn extract_table_name(create_sql: &str) -> String {
-    let lower = create_sql.to_lowercase();
-    let start = lower.find("create table").unwrap() + "create table".len();
-    let rest = &create_sql[start..].trim_start();
-
-    // Handle optional "IF NOT EXISTS"
-    let rest = if rest.to_lowercase().starts_with("if not exists") {
-        rest["if not exists".len()..].trim_start()
-    } else {
-        rest
-    };
-
-    // Extract the table name (up to first space or paren)
-    let end = rest
-        .find(|c: char| c.is_whitespace() || c == '(')
-        .unwrap_or(rest.len());
-    rest[..end].to_string()
-}
-
 /// Run all crash files in a directory through a test function, with timing
 /// and auto-copy from the fuzz workspace.
 ///

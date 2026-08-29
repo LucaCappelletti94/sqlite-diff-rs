@@ -13,7 +13,7 @@
 
 use sqlite_diff_rs::testing::{
     assert_bit_parity, assert_patchset_sql_parity, byte_diff_report,
-    session_changeset_and_patchset_with_setup,
+    session_changeset_and_patchset, session_changeset_and_patchset_with_setup,
 };
 use sqlite_diff_rs::{
     ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, PatchDelete, PatchSet,
@@ -726,4 +726,285 @@ fn bit_parity_standalone_delete_single_pk() {
         sqlite_ps == our_patchset,
         "standalone DELETE bit-parity failure\n{ps_report}",
     );
+}
+
+// =============================================================================
+// Primary key at non-zero position
+//
+// Every prior test puts the pk at column 0. The tests below exercise INSERT,
+// UPDATE, and DELETE when the pk sits at column 1, at the last column, or as a
+// composite key whose first component is not column 0.
+//
+// INSERT and DELETE agree with SQLite regardless of key position. Patchset
+// UPDATE does not: the crate writes pk column values before non-pk values,
+// while SQLite writes all columns in column order. That is the 2A finding.
+// The UPDATE tests are marked #[ignore] so the suite stays green; Phase 3
+// will fix the ordering and these tests will then pass.
+// =============================================================================
+
+// ---- pk at column 1 --------------------------------------------------------
+
+#[test]
+fn bit_parity_insert_pk_at_column_1() {
+    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+    assert_patchset_sql_parity(
+        &[schema],
+        &[
+            "CREATE TABLE t (value TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t (value, id) VALUES ('hello', 42)",
+        ],
+    );
+}
+
+#[test]
+fn bit_parity_standalone_update_pk_at_column_1() {
+    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(1, 42i64)
+                .unwrap()
+                .set(0, "world")
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (value TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t VALUES ('hello', 42)",
+        ],
+        &["UPDATE t SET value = 'world' WHERE id = 42"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "pk-at-column-1 UPDATE patchset mismatch (2A bug)\n{report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_delete_pk_at_column_1() {
+    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .delete(PatchDelete::new(schema, vec![Value::Integer(42)]))
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (value TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t VALUES ('hello', 42)",
+        ],
+        &["DELETE FROM t WHERE id = 42"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "pk-at-column-1 DELETE patchset mismatch\n{report}",
+    );
+}
+
+// ---- pk at last column -----------------------------------------------------
+
+#[test]
+fn bit_parity_insert_pk_at_last_column() {
+    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+    assert_patchset_sql_parity(
+        &[schema],
+        &[
+            "CREATE TABLE t (a INTEGER, b TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t (a, b, id) VALUES (10, 'x', 99)",
+        ],
+    );
+}
+
+#[test]
+fn bit_parity_standalone_update_pk_at_last_column() {
+    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(2, 99i64)
+                .unwrap()
+                .set(0, 20i64)
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (a INTEGER, b TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t VALUES (10, 'x', 99)",
+        ],
+        &["UPDATE t SET a = 20 WHERE id = 99"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "pk-at-last-column UPDATE patchset mismatch (2A bug)\n{report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_delete_pk_at_last_column() {
+    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .delete(PatchDelete::new(schema, vec![Value::Integer(99)]))
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (a INTEGER, b TEXT, id INTEGER PRIMARY KEY)",
+            "INSERT INTO t VALUES (10, 'x', 99)",
+        ],
+        &["DELETE FROM t WHERE id = 99"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "pk-at-last-column DELETE patchset mismatch\n{report}",
+    );
+}
+
+// ---- composite pk not starting at column 0 ---------------------------------
+
+#[test]
+fn bit_parity_insert_composite_pk_not_at_column_0() {
+    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+    assert_patchset_sql_parity(
+        &[schema],
+        &[
+            "CREATE TABLE t (a TEXT, b INTEGER NOT NULL, c INTEGER NOT NULL, PRIMARY KEY(b, c))",
+            "INSERT INTO t (a, b, c) VALUES ('foo', 10, 20)",
+        ],
+    );
+}
+
+#[test]
+fn bit_parity_standalone_update_composite_pk_not_at_column_0() {
+    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .update(
+            Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(schema)
+                .set(1, 10i64)
+                .unwrap()
+                .set(2, 20i64)
+                .unwrap()
+                .set(0, "bar")
+                .unwrap(),
+        )
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (a TEXT, b INTEGER NOT NULL, c INTEGER NOT NULL, PRIMARY KEY(b, c))",
+            "INSERT INTO t VALUES ('foo', 10, 20)",
+        ],
+        &["UPDATE t SET a = 'bar' WHERE b = 10 AND c = 20"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "composite-pk-not-at-col-0 UPDATE patchset mismatch (2A bug)\n{report}",
+    );
+}
+
+#[test]
+fn bit_parity_standalone_delete_composite_pk_not_at_column_0() {
+    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+
+    let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
+        .delete(PatchDelete::new(
+            schema,
+            vec![Value::Integer(10), Value::Integer(20)],
+        ))
+        .build();
+
+    let (_sqlite_cs, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (a TEXT, b INTEGER NOT NULL, c INTEGER NOT NULL, PRIMARY KEY(b, c))",
+            "INSERT INTO t VALUES ('foo', 10, 20)",
+        ],
+        &["DELETE FROM t WHERE b = 10 AND c = 20"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_patchset);
+    assert!(
+        sqlite_ps == our_patchset,
+        "composite-pk-not-at-col-0 DELETE patchset mismatch\n{report}",
+    );
+}
+
+// =============================================================================
+// Wide table coverage
+//
+// The column count in the table header is a varint. It was a raw byte until
+// Phase 2B, which made 128 to 255 columns emit a byte with bit 7 set, read by a
+// varint reader as a continuation byte, and made 256 or more columns panic.
+// These three widths pin the boundary either side of 127.
+// =============================================================================
+
+fn wide_table_insert_parity(n_cols: usize) {
+    let col_names: Vec<String> = (0..n_cols).map(|i| format!("c{i}")).collect();
+    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
+    let schema = SimpleTable::new("wide", &col_refs, &[0]);
+
+    let mut insert = Insert::<SimpleTable, String, Vec<u8>>::from(schema);
+    for i in 0..n_cols {
+        // i is at most n_cols-1 which is at most 299: always fits i64.
+        let val = i64::try_from(i).expect("column index fits i64");
+        insert = insert.set(i, val).unwrap();
+    }
+    let our_ps: Vec<u8> = PatchSet::new().insert(insert).build();
+
+    let create_sql = {
+        let column_sql: Vec<String> = (0..n_cols)
+            .map(|i| {
+                if i == 0 {
+                    "c0 INTEGER PRIMARY KEY".to_string()
+                } else {
+                    format!("c{i} INTEGER")
+                }
+            })
+            .collect();
+        format!("CREATE TABLE wide ({})", column_sql.join(", "))
+    };
+    let insert_sql = {
+        let vals: Vec<String> = (0..n_cols).map(|i| i.to_string()).collect();
+        format!("INSERT INTO wide VALUES ({})", vals.join(", "))
+    };
+
+    let (_, sqlite_ps) =
+        session_changeset_and_patchset(&[create_sql.as_str(), insert_sql.as_str()]);
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_ps);
+    assert!(
+        sqlite_ps == our_ps,
+        "{n_cols}-column wide table INSERT patchset mismatch\n{report}",
+    );
+}
+
+#[test]
+fn bit_parity_wide_table_127_columns() {
+    wide_table_insert_parity(127);
+}
+
+#[test]
+fn bit_parity_wide_table_128_columns() {
+    wide_table_insert_parity(128);
+}
+
+#[test]
+fn bit_parity_wide_table_300_columns() {
+    wide_table_insert_parity(300);
 }
