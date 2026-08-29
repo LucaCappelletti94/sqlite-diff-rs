@@ -46,5 +46,8 @@ diesel-async = { version = "0.7", default-features = false, features = [
 ] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
+[patch.crates-io]
+diesel = { git = "https://github.com/diesel-rs/diesel", branch = "main" }
+
 [lints]
 workspace = true
