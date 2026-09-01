@@ -29,14 +29,15 @@ use crate::schema::NamedColumns;
 /// [`ConversionError::TableNotFound`] when the schema has no such table.
 pub(crate) fn resolve_table<'a, Sch>(
     schema: &'a Sch,
-    name: &str,
+    source_schema: Option<&str>,
+    table_name: &str,
 ) -> Result<&'a Sch::Table, ConversionError>
 where
     Sch: WireSchema,
 {
     schema
-        .get(name)
-        .ok_or_else(|| ConversionError::TableNotFound(String::from(name)))
+        .get(source_schema, table_name)
+        .ok_or_else(|| ConversionError::TableNotFound(String::from(table_name)))
 }
 /// One column of a CDC event, abstracting the per-source payload shape.
 ///

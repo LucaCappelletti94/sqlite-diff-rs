@@ -219,7 +219,7 @@ pub struct AppSchema {
 
 impl WireSchema for AppSchema {
     type Table = UsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+    fn get(&self, _source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table> {
         (table_name == self.users.name()).then_some(&self.users)
     }
 }
@@ -384,7 +384,7 @@ pub struct MaxwellAppSchema {
 
 impl WireSchema for MaxwellAppSchema {
     type Table = MaxwellUsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+    fn get(&self, _source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table> {
         (table_name == self.users.name()).then_some(&self.users)
     }
 }

@@ -15,15 +15,47 @@ use sqlite_diff_rs::wal2json::{
     RowV2, TransactionBoundary, TruncateV2, Wal2Json, parse_v1, parse_v2,
 };
 use sqlite_diff_rs::{
-    ChangeSet, ChangesetOp, DecodeError, DynTable, ParsedDiffSet, PatchSet, PatchsetOp, TypeMap,
-    Value,
+    ChangeSet, ChangesetOp, DecodeError, DynTable, ParsedDiffSet, PatchSet, PatchsetOp,
+    SimpleTable, TypeMap, Value, WireSchema,
 };
 
 mod common;
-use common::{TestUsersTable, test_schema};
+use common::{TestUsersTable, source_scoped_test_schema, test_schema};
 
 fn default_adapter() -> TypeMap<Wal2Json, String, Vec<u8>> {
     TypeMap::defaults()
+}
+
+struct DuplicateNameSchema {
+    public: TestUsersTable,
+    private: TestUsersTable,
+}
+
+impl WireSchema for DuplicateNameSchema {
+    type Table = TestUsersTable;
+
+    fn get(&self, source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table> {
+        match (source_schema, table_name) {
+            (Some("public"), "users") => Some(&self.public),
+            (Some("private"), "users") => Some(&self.private),
+            _ => None,
+        }
+    }
+}
+
+fn duplicate_name_schema() -> DuplicateNameSchema {
+    DuplicateNameSchema {
+        public: TestUsersTable(SimpleTable::new(
+            "public.users",
+            &["id", "name", "active"],
+            &[0],
+        )),
+        private: TestUsersTable(SimpleTable::new(
+            "private.users",
+            &["id", "other", "active"],
+            &[0],
+        )),
+    }
 }
 
 fn column(name: &str, type_name: &str, value: serde_json::Value) -> Column {
@@ -96,6 +128,47 @@ fn all_values(id: i64, name: &str, active: bool) -> Vec<serde_json::Value> {
         serde_json::Value::String(name.to_string()),
         serde_json::Value::Bool(active),
     ]
+}
+
+#[test]
+fn w2j_v2_uses_source_schema_for_equal_table_names() {
+    let schema = duplicate_name_schema();
+    let msg = v2_row(
+        Action::Insert,
+        "users",
+        Some(all_columns(1, "Alice", true)),
+        None,
+        None,
+    );
+    let patchset: PatchSet<TestUsersTable, String, Vec<u8>> = PatchSet::new()
+        .digest(&msg, &schema, &default_adapter())
+        .unwrap();
+    let operations: Vec<_> = patchset.iter().collect();
+
+    match operations.as_slice() {
+        [PatchsetOp::Insert { table, .. }] => assert_eq!(*table, &schema.public),
+        other => panic!("expected one public.users insert, got {other:?}"),
+    }
+}
+
+#[test]
+fn w2j_v1_uses_source_schema_for_lookup() {
+    let schema = source_scoped_test_schema("public");
+    let change = ChangeV1::Insert {
+        schema: Some("public".to_string()),
+        table: "users".to_string(),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alice", true),
+        ),
+        pk: None,
+    };
+    let patchset: PatchSet<TestUsersTable, String, Vec<u8>> = PatchSet::new()
+        .digest(&change, &schema, &default_adapter())
+        .unwrap();
+
+    assert_eq!(patchset.iter().count(), 1);
 }
 
 // -- MessageV2: ChangesetFormat --------------------------------------------

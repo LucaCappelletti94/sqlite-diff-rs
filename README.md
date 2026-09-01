@@ -78,7 +78,7 @@ let bytes: Vec<u8> = patchset.into();
 # struct MySchema { users: UsersTable }
 # impl WireSchema for MySchema {
 #     type Table = UsersTable;
-#     fn get(&self, name: &str) -> Option<&UsersTable> { if name == "users" { Some(&self.users) } else { None } }
+#     fn get(&self, source_schema: Option<&str>, name: &str) -> Option<&UsersTable> { if source_schema == Some("db") && name == "users" { Some(&self.users) } else { None } }
 # }
 # let json_ev = r#"{"database":"db","table":"users","type":"insert","ts":0,"data":{"id":1,"name":"Alice"}}"#;
 # let msg = parse(json_ev).unwrap();

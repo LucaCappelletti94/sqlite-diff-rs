@@ -34,13 +34,13 @@ pub trait WireColumnTypes {
     fn column_type(&self, column_index: usize) -> WireType;
 }
 
-/// Table-name lookup for the [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest) entry point.
+/// Source-qualified table lookup for [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest).
 pub trait WireSchema {
     /// Concrete schema type for one table.
     type Table: crate::schema::NamedColumns + WireColumnTypes;
 
-    /// Resolve a table name to its schema entry.
-    fn get(&self, table_name: &str) -> Option<&Self::Table>;
+    /// Resolve a source schema and table name to one schema entry.
+    fn get(&self, source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table>;
 }
 
 /// One CDC wire event digested via [`DiffSetBuilder::digest`](crate::DiffSetBuilder::digest).

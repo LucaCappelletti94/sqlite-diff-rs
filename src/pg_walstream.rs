@@ -120,29 +120,34 @@ where
     {
         match self {
             EventType::Insert {
-                table: name, data, ..
+                schema: source_schema,
+                table: name,
+                data,
+                ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let insert = build_insert_from_pg(data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
             EventType::Update {
+                schema: source_schema,
                 table: name,
                 old_data,
                 new_data,
                 ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let update =
                     build_changeset_update_from_pg(old_data.as_ref(), new_data, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
             EventType::Delete {
+                schema: source_schema,
                 table: name,
                 old_data,
                 ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let delete = build_changeset_delete_from_pg(old_data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
@@ -172,27 +177,32 @@ where
     {
         match self {
             EventType::Insert {
-                table: name, data, ..
+                schema: source_schema,
+                table: name,
+                data,
+                ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let insert = build_insert_from_pg(data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
             EventType::Update {
+                schema: source_schema,
                 table: name,
                 new_data,
                 ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let update = build_patchset_update_from_pg(new_data, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
             EventType::Delete {
+                schema: source_schema,
                 table: name,
                 old_data,
                 ..
             } => {
-                let table = resolve_table(schema, name.as_ref())?;
+                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
                 let delete = build_patch_delete_from_pg(old_data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }

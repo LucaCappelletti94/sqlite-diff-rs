@@ -21,6 +21,12 @@ pub struct TestSchema {
     pub users: TestUsersTable,
 }
 
+#[derive(Debug, Clone)]
+pub struct SourceScopedTestSchema {
+    pub users: TestUsersTable,
+    source_schema: &'static str,
+}
+
 /// The `users` table: `id INT PK`, `name TEXT`, `active BOOL`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TestUsersTable(pub SimpleTable);
@@ -72,7 +78,7 @@ impl WireColumnTypes for TestUsersTable {
 
 impl WireSchema for TestSchema {
     type Table = TestUsersTable;
-    fn get(&self, table_name: &str) -> Option<&Self::Table> {
+    fn get(&self, _source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table> {
         if table_name == "users" {
             Some(&self.users)
         } else {
@@ -81,9 +87,24 @@ impl WireSchema for TestSchema {
     }
 }
 
+impl WireSchema for SourceScopedTestSchema {
+    type Table = TestUsersTable;
+
+    fn get(&self, source_schema: Option<&str>, table_name: &str) -> Option<&Self::Table> {
+        (source_schema == Some(self.source_schema) && table_name == "users").then_some(&self.users)
+    }
+}
+
 /// Constructs the canonical three-column `users` test schema.
 pub fn test_schema() -> TestSchema {
     TestSchema {
         users: TestUsersTable(SimpleTable::new("users", &["id", "name", "active"], &[0])),
+    }
+}
+
+pub fn source_scoped_test_schema(source_schema: &'static str) -> SourceScopedTestSchema {
+    SourceScopedTestSchema {
+        users: TestUsersTable(SimpleTable::new("users", &["id", "name", "active"], &[0])),
+        source_schema,
     }
 }

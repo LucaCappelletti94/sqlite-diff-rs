@@ -147,12 +147,12 @@ where
     {
         match self {
             Message::Insert(row) | Message::BootstrapInsert(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
             Message::Update(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let update = build_changeset_update_from_maxwell(
                     &row.data,
                     row.old.as_ref(),
@@ -162,7 +162,7 @@ where
                 Ok(DiffOps::update(builder, update))
             }
             Message::Delete(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let delete = build_changeset_delete_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
@@ -194,17 +194,17 @@ where
     {
         match self {
             Message::Insert(row) | Message::BootstrapInsert(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
             Message::Update(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let update = build_patchset_update_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
             Message::Delete(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
                 let delete = build_patch_delete_from_maxwell(&row.data, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
