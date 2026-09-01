@@ -18,7 +18,7 @@ use sqlite_diff_rs::{
 };
 
 mod common;
-use common::{TestUsersTable, test_schema};
+use common::{TestUsersTable, source_scoped_test_schema, test_schema};
 
 fn default_adapter() -> TypeMap<PgWalstream, String, Vec<u8>> {
     TypeMap::defaults()
@@ -33,6 +33,22 @@ fn row_data(id: i64, name: &str, active: bool) -> RowData {
         ColumnValue::text(if active { "t" } else { "f" }),
     );
     data
+}
+
+#[test]
+fn pgoutput_uses_schema_for_lookup() {
+    let schema = source_scoped_test_schema("public");
+    let event = EventType::Insert {
+        schema: Arc::from("public"),
+        table: Arc::from("users"),
+        relation_oid: 1,
+        data: row_data(1, "Alice", true),
+    };
+    let patchset: PatchSet<TestUsersTable, String, Vec<u8>> = PatchSet::new()
+        .digest(&event, &schema, &default_adapter())
+        .unwrap();
+
+    assert_eq!(patchset.iter().count(), 1);
 }
 
 // -- ChangesetFormat: Insert, Update, Delete --------------------------------

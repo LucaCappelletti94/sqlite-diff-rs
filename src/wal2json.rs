@@ -138,7 +138,7 @@ where
     {
         match self {
             MessageV2::Insert(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let columns = row
                     .columns
                     .as_deref()
@@ -147,7 +147,7 @@ where
                 Ok(DiffOps::insert(builder, insert))
             }
             MessageV2::Update(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let columns = row
                     .columns
                     .as_deref()
@@ -161,7 +161,7 @@ where
                 Ok(DiffOps::update(builder, update))
             }
             MessageV2::Delete(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let identity = row
                     .identity
                     .as_deref()
@@ -198,7 +198,7 @@ where
     {
         match self {
             MessageV2::Insert(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let columns = row
                     .columns
                     .as_deref()
@@ -207,7 +207,7 @@ where
                 Ok(DiffOps::insert(builder, insert))
             }
             MessageV2::Update(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let columns = row
                     .columns
                     .as_deref()
@@ -216,7 +216,7 @@ where
                 Ok(DiffOps::update(builder, update))
             }
             MessageV2::Delete(row) => {
-                let table = resolve_table(schema, row.table.as_str())?;
+                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
                 let identity = row
                     .identity
                     .as_deref()
@@ -252,23 +252,34 @@ where
         A: WireAdapter<Wal2Json, S, B>,
     {
         match self {
-            ChangeV1::Insert { table, columns, .. } => {
-                let table = resolve_table(schema, table.as_str())?;
+            ChangeV1::Insert {
+                schema: source_schema,
+                table,
+                columns,
+                ..
+            } => {
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let insert = build_insert_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
             ChangeV1::Update {
+                schema: source_schema,
                 table,
                 columns,
                 oldkeys,
                 ..
             } => {
-                let table = resolve_table(schema, table.as_str())?;
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let update = build_changeset_update_from_v1(columns, oldkeys, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            ChangeV1::Delete { table, oldkeys, .. } => {
-                let table = resolve_table(schema, table.as_str())?;
+            ChangeV1::Delete {
+                schema: source_schema,
+                table,
+                oldkeys,
+                ..
+            } => {
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let delete = build_changeset_delete_from_v1(oldkeys, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }
@@ -297,18 +308,33 @@ where
         A: WireAdapter<Wal2Json, S, B>,
     {
         match self {
-            ChangeV1::Insert { table, columns, .. } => {
-                let table = resolve_table(schema, table.as_str())?;
+            ChangeV1::Insert {
+                schema: source_schema,
+                table,
+                columns,
+                ..
+            } => {
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let insert = build_insert_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::insert(builder, insert))
             }
-            ChangeV1::Update { table, columns, .. } => {
-                let table = resolve_table(schema, table.as_str())?;
+            ChangeV1::Update {
+                schema: source_schema,
+                table,
+                columns,
+                ..
+            } => {
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let update = build_patchset_update_from_v1(columns, table, adapter)?;
                 Ok(DiffOps::update(builder, update))
             }
-            ChangeV1::Delete { table, oldkeys, .. } => {
-                let table = resolve_table(schema, table.as_str())?;
+            ChangeV1::Delete {
+                schema: source_schema,
+                table,
+                oldkeys,
+                ..
+            } => {
+                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
                 let delete = build_patch_delete_from_v1(oldkeys, table, adapter)?;
                 Ok(DiffOps::delete(builder, delete))
             }

@@ -21,7 +21,7 @@ use sqlite_diff_rs::{
 };
 
 mod common;
-use common::{TestUsersTable, test_schema};
+use common::{TestUsersTable, source_scoped_test_schema, test_schema};
 
 fn default_adapter() -> TypeMap<Maxwell, String, Vec<u8>> {
     TypeMap::defaults()
@@ -95,6 +95,17 @@ fn minimal_table_definition(database: &str, table: &str) -> TableDefinition {
             column_length: None,
         }],
     }
+}
+
+#[test]
+fn maxwell_uses_database_for_schema_lookup() {
+    let schema = source_scoped_test_schema("testdb");
+    let message = message(OpType::Insert, data_map(1, "Alice", true), None);
+    let patchset: PatchSet<TestUsersTable, String, Vec<u8>> = PatchSet::new()
+        .digest(&message, &schema, &default_adapter())
+        .unwrap();
+
+    assert_eq!(patchset.iter().count(), 1);
 }
 
 // -- ChangesetFormat: Insert, Update, Delete --------------------------------
