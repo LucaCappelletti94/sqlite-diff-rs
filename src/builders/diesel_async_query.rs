@@ -11,7 +11,6 @@
 
 use diesel::query_builder::{QueryFragment, QueryId};
 use diesel::result::{Error as DieselError, QueryResult};
-use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl as _};
 
 /// Async counterpart of [`ApplyOps`](super::diesel_query::ApplyOps): run every
@@ -110,6 +109,6 @@ where
         Self: Send + 'a,
         Self::Item: QueryFragment<Conn::Backend> + QueryId + Send,
     {
-        conn.transaction::<usize, DieselError, _>(move |conn| self.apply_async(conn).scope_boxed())
+        conn.transaction::<usize, DieselError, _>(async move |conn| self.apply_async(conn).await)
     }
 }

@@ -39,7 +39,7 @@ testcontainers-modules = { version = "0.15", features = [
 	"mysql",
 	"blocking",
 ] }
-diesel-async = { version = "0.7", default-features = false, features = [
+diesel-async = { version = "0.9", default-features = false, features = [
 	"postgres",
 	"mysql",
 	"sqlite",
