@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   asan:
     name: AddressSanitizer (memory + leaks)
@@ -29,7 +32,7 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # ubuntu-24.04 runners ship vm.mmap_rnd_bits=32, which collides with
       # AddressSanitizer's shadow memory layout ("Shadow memory range
@@ -46,7 +49,7 @@ jobs:
           components: rust-src
 
       - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: asan
 
