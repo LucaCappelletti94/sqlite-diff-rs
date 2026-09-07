@@ -4,7 +4,13 @@
 
 ### Added
 
-`DiffFormat<S, B>` is a public, nameable bound for a diff format, either changeset or patchset. It is a supertrait marker over the crate-private `Format` trait with a blanket impl, so only `ChangesetFormat` and `PatchsetFormat` satisfy it and the `Old`/`DeleteData` associated types stay private. Downstream code can now write one function generic over `F: DiffFormat<String, Vec<u8>>` that folds a batch of wire events into either format through `DiffSetBuilder::new`, `digest`, and `build`, instead of duplicating the body once per format. `DiffSetBuilder` and `Digestable` are unchanged; their existing `Format` bound is implied by the new supertrait.
+`DiffFormat<S, B>` is a public, nameable bound for a diff format, either changeset or patchset. It is a supertrait marker over the crate-private `Format` trait with a blanket impl, so only `ChangesetFormat` and `PatchsetFormat` satisfy it and the `Old`/`DeleteData` associated types stay private. `DiffSetBuilder::build` and `DiffSet::build` are now single generic methods rather than one per format, so downstream code can write one function generic over `F: DiffFormat<String, Vec<u8>>` that folds a batch of wire events and serializes through `new`, `digest` and `build`, instead of duplicating the body once per format. The two formats stay semantically distinct: a changeset carries full old-row data and is reversible, while a patchset carries only primary keys for deletes and only changed columns for updates and is forward-only. `DiffSetBuilder` and `Digestable` keep their existing `Format` bound, which the new supertrait implies, so no existing code changes.
+
+## 0.11.0
+
+### Breaking
+
+`WireSchema::get` now takes the source schema as its first argument, `get(&self, source_schema: Option<&str>, table_name: &str)`, so a table lookup can disambiguate names that repeat across schemas or databases. Existing implementations must accept and honor the new parameter.
 
 ## 0.10.0
 
