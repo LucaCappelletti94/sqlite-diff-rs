@@ -1,6 +1,10 @@
 //! Format trait defining changeset vs patchset behavior.
 
+use crate::builders::Operation;
+use crate::builders::change::{encode_changeset_op, encode_patchset_op, patchset_pk_mapping};
+use crate::encoding::markers;
 use crate::encoding::{MaybeValue, Value};
+use crate::schema::SchemaWithPK;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
@@ -22,6 +26,31 @@ pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static
     /// - Changeset: `Vec<Value<S, B>>` (full old-row values)
     /// - Patchset: `()` (only the PK matters, stored externally)
     type DeleteData: Clone + Debug + Default;
+
+    /// One-byte table-section marker written before each table's rows:
+    /// `b'T'` for a changeset, `b'P'` for a patchset.
+    const TABLE_MARKER: u8;
+
+    /// Per-table state precomputed once and reused for every row during
+    /// [`build`](crate::DiffSetBuilder::build).
+    ///
+    /// Changeset needs none (`()`); patchset needs the primary-key column
+    /// mapping used to project each record.
+    type BuildState;
+
+    /// Precompute the per-table [`BuildState`](Self::BuildState).
+    fn build_state<T: SchemaWithPK>(table: &T) -> Self::BuildState;
+
+    /// Encode one operation's record into `out`, using `pk` (the row's
+    /// primary-key values) and the precomputed `state`.
+    fn encode_op(
+        out: &mut Vec<u8>,
+        op: &Operation<Self, S, B>,
+        pk: &[Value<S, B>],
+        state: &Self::BuildState,
+    ) where
+        S: AsRef<str>,
+        B: AsRef<[u8]>;
 }
 
 /// Public, nameable bound for a diff format, either changeset or patchset.
@@ -50,6 +79,22 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Format<S, B>
 {
     type Old = MaybeValue<S, B>;
     type DeleteData = Vec<Value<S, B>>;
+    const TABLE_MARKER: u8 = markers::CHANGESET;
+    type BuildState = ();
+
+    fn build_state<T: SchemaWithPK>(_table: &T) -> Self::BuildState {}
+
+    fn encode_op(
+        out: &mut Vec<u8>,
+        op: &Operation<Self, S, B>,
+        _pk: &[Value<S, B>],
+        _state: &Self::BuildState,
+    ) where
+        S: AsRef<str>,
+        B: AsRef<[u8]>,
+    {
+        encode_changeset_op(out, op);
+    }
 }
 
 /// Patchset format marker.
@@ -59,4 +104,22 @@ pub struct PatchsetFormat;
 impl<S, B> Format<S, B> for PatchsetFormat {
     type Old = ();
     type DeleteData = ();
+    const TABLE_MARKER: u8 = markers::PATCHSET;
+    type BuildState = (Vec<u8>, Vec<Option<usize>>);
+
+    fn build_state<T: SchemaWithPK>(table: &T) -> Self::BuildState {
+        patchset_pk_mapping(table)
+    }
+
+    fn encode_op(
+        out: &mut Vec<u8>,
+        op: &Operation<Self, S, B>,
+        pk: &[Value<S, B>],
+        state: &Self::BuildState,
+    ) where
+        S: AsRef<str>,
+        B: AsRef<[u8]>,
+    {
+        encode_patchset_op(out, op, pk, &state.0, &state.1);
+    }
 }
