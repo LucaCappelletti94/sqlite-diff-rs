@@ -27,8 +27,8 @@ pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static
 /// Public, nameable bound for a diff format, either changeset or patchset.
 ///
 /// This is the downstream-visible counterpart to the crate-private
-/// [`Format`] trait. It carries no items of its own; the associated types
-/// live on the sealed supertrait and stay private. Because [`Format`] is
+/// `Format` trait. It carries no items of its own; the associated types
+/// live on the sealed supertrait and stay private. Because `Format` is
 /// crate-private, no external type can satisfy this bound, so it is sealed
 /// in the same sense as a sealed trait: only [`ChangesetFormat`] and
 /// [`PatchsetFormat`] implement it.
