@@ -33,8 +33,8 @@ pub use builders::{
 };
 pub use builders::{
     ChangeDelete, ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePair, ColumnNames,
-    DiffOps, DiffSet, DiffSetBuilder, Indirect, Insert, PatchDelete, PatchSet, PatchsetFormat,
-    PatchsetOp, PatchsetUpdateEntry, Reverse, Update,
+    DiffFormat, DiffOps, DiffSet, DiffSetBuilder, Indirect, Insert, PatchDelete, PatchSet,
+    PatchsetFormat, PatchsetOp, PatchsetUpdateEntry, Reverse, Update,
 };
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
