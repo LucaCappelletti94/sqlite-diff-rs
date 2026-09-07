@@ -23,7 +23,7 @@ pub use diesel_query::{
     Adapter, ApplyOps, Binder, BoundChangesetOp, BoundOp, BoundPatchsetOp, DefaultBinder,
 };
 pub(crate) use format::Format;
-pub use format::{ChangesetFormat, PatchsetFormat};
+pub use format::{ChangesetFormat, DiffFormat, PatchsetFormat};
 pub use insert_operation::Insert;
 pub(crate) use operation::Operation;
 pub use operation::{Indirect, Reverse};
