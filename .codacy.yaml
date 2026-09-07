@@ -1,0 +1,15 @@
+---
+exclude_paths:
+  - "benches/**"
+  - "compile-bench/**"
+  - "fuzz/**"
+# Excluded from duplication and complexity only, so Opengrep and Trivy still scan tests.
+engines:
+  duplication:
+    exclude_paths:
+      - "integration-tests/**"
+      - "tests/**"
+  metric:
+    exclude_paths:
+      - "integration-tests/**"
+      - "tests/**"

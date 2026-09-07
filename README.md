@@ -5,6 +5,7 @@
 [![CI](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/ci.yml)
 [![AddressSanitizer](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/asan.yml/badge.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/asan.yml)
 [![Codecov](https://codecov.io/gh/LucaCappelletti94/sqlite-diff-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/LucaCappelletti94/sqlite-diff-rs)
+[![Codacy](https://app.codacy.com/project/badge/Grade/e5365dc2d816465fb8eb120c738c0405)](https://app.codacy.com/gh/LucaCappelletti94/sqlite-diff-rs/dashboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE)
 
 A Rust library for building SQLite [changeset and patchset](https://www.sqlite.org/sessionintro.html) binary formats programmatically.
