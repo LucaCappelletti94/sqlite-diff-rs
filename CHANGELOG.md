@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+
+### Added
+
+`DiffFormat<S, B>` is a public, nameable bound for a diff format, either changeset or patchset. It is a supertrait marker over the crate-private `Format` trait with a blanket impl, so only `ChangesetFormat` and `PatchsetFormat` satisfy it and the `Old`/`DeleteData` associated types stay private. Downstream code can now write one function generic over `F: DiffFormat<String, Vec<u8>>` that folds a batch of wire events into either format through `DiffSetBuilder::new`, `digest`, and `build`, instead of duplicating the body once per format. `DiffSetBuilder` and `Digestable` are unchanged; their existing `Format` bound is implied by the new supertrait.
+
 ## 0.10.0
 
 ### Fixed
