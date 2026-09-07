@@ -62,7 +62,7 @@ use crate::{
         ChangeDelete, ChangesetFormat, ChangesetOp, Insert, Operation, PatchDelete, PatchsetFormat,
         PatchsetOp, Update, format::Format,
     },
-    encoding::{MaybeValue, Value, encode_defined_value, encode_value, markers, op_codes},
+    encoding::{MaybeValue, Value, encode_defined_value, encode_value, op_codes},
 };
 
 /// `IndexMap` alias using hashbrown's default hasher for `no_std` compatibility.
@@ -246,7 +246,7 @@ fn write_table_header<T: SchemaWithPK>(out: &mut Vec<u8>, marker: u8, table: &T)
 ///
 /// Returns `(pk_flags, pk_col_to_pk_pos)` where `pk_col_to_pk_pos[col_idx]`
 /// gives the index into the PK vector for PK columns, or `None` for non-PK columns.
-fn patchset_pk_mapping<T: SchemaWithPK>(table: &T) -> (Vec<u8>, Vec<Option<usize>>) {
+pub(crate) fn patchset_pk_mapping<T: SchemaWithPK>(table: &T) -> (Vec<u8>, Vec<Option<usize>>) {
     let num_cols = table.number_of_columns();
     let mut pk_flags = alloc::vec![0u8; num_cols];
     table.write_pk_flags(&mut pk_flags);
@@ -284,7 +284,7 @@ fn encode_patchset_delete_values<S: AsRef<str>, B: AsRef<[u8]>>(
 }
 
 /// Encode a single changeset operation (op_code, indirect byte, then row payload).
-fn encode_changeset_op<S: AsRef<str> + Clone + Debug, B: AsRef<[u8]> + Clone + Debug>(
+pub(crate) fn encode_changeset_op<S: AsRef<str> + Clone + Debug, B: AsRef<[u8]> + Clone + Debug>(
     out: &mut Vec<u8>,
     op: &Operation<ChangesetFormat, S, B>,
 ) {
@@ -322,7 +322,7 @@ fn encode_changeset_op<S: AsRef<str> + Clone + Debug, B: AsRef<[u8]> + Clone + D
 /// Encode a single patchset operation. The PK and per-table PK mapping are
 /// supplied because DELETE/UPDATE rows in patchset format derive their old-value
 /// section from the row's PK rather than from data carried on the operation.
-fn encode_patchset_op<S: AsRef<str>, B: AsRef<[u8]>>(
+pub(crate) fn encode_patchset_op<S: AsRef<str>, B: AsRef<[u8]>>(
     out: &mut Vec<u8>,
     op: &Operation<PatchsetFormat, S, B>,
     pk: &[Value<S, B>],
@@ -872,20 +872,18 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
 // Unified build implementation
 // ============================================================================
 
-impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSetBuilder<ChangesetFormat, T, S, B>
-{
-    /// Build the changeset binary data.
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>> DiffSetBuilder<F, T, S, B> {
+    /// Build the changeset or patchset binary data.
     ///
-    /// Returns the binary representation compatible with `SQLite`'s session extension.
+    /// Returns the binary representation compatible with `SQLite`'s session
+    /// extension. The marker and per-record encoding are chosen by `F`, so
+    /// this one method serves both formats and can be called from code
+    /// generic over [`DiffFormat`](crate::DiffFormat).
     ///
     /// # Panics
     ///
-    /// This function does not panic under normal usage. Internal indexing is guaranteed
-    /// to be within bounds.
+    /// This function does not panic under normal usage. Internal indexing is
+    /// guaranteed to be within bounds.
     #[must_use]
     pub fn build(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -895,11 +893,12 @@ impl<
                 continue;
             }
 
-            write_table_header(&mut out, markers::CHANGESET, table);
+            write_table_header(&mut out, F::TABLE_MARKER, table);
 
+            let state = F::build_state(table);
             for idx in session_row_order(rows) {
-                let (_pk, op) = rows.get_index(idx).unwrap();
-                encode_changeset_op(&mut out, op);
+                let (pk, op) = rows.get_index(idx).unwrap();
+                F::encode_op(&mut out, op, pk, &state);
             }
         }
 
@@ -935,40 +934,6 @@ impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u
                 },
             })
         })
-    }
-}
-
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
-    DiffSetBuilder<PatchsetFormat, T, S, B>
-{
-    /// Build the patchset binary data.
-    ///
-    /// Returns the binary representation compatible with `SQLite`'s session extension.
-    ///
-    /// # Panics
-    ///
-    /// This function does not panic under normal usage. Internal indexing is guaranteed
-    /// to be within bounds.
-    #[must_use]
-    pub fn build(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-
-        for (table, rows) in &self.tables {
-            if rows.is_empty() {
-                continue;
-            }
-
-            write_table_header(&mut out, markers::PATCHSET, table);
-
-            let (pk_flags, pk_col_to_pk_pos) = patchset_pk_mapping(table);
-
-            for idx in session_row_order(rows) {
-                let (pk, op) = rows.get_index(idx).unwrap();
-                encode_patchset_op(&mut out, op, pk, &pk_flags, &pk_col_to_pk_pos);
-            }
-        }
-
-        out
     }
 }
 
@@ -1232,17 +1197,14 @@ impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
     }
 }
 
-// -- Changeset build (DiffSet) ------------------------------------------------
+// -- Build (DiffSet) ----------------------------------------------------------
 
-impl<
-    T: SchemaWithPK,
-    S: Clone + Debug + Hash + Eq + AsRef<str>,
-    B: Clone + Debug + Hash + Eq + AsRef<[u8]>,
-> DiffSet<ChangesetFormat, T, S, B>
-{
-    /// Serialize the changeset to binary.
+impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>> DiffSet<F, T, S, B> {
+    /// Serialize the changeset or patchset to binary.
     ///
-    /// Rows are emitted in stored order (no hash simulation).
+    /// Rows are emitted in stored order (no hash simulation). The marker and
+    /// per-record encoding are chosen by `F`, so this one method serves both
+    /// formats.
     #[must_use]
     pub fn build(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -1252,40 +1214,11 @@ impl<
                 continue;
             }
 
-            write_table_header(&mut out, markers::CHANGESET, table);
+            write_table_header(&mut out, F::TABLE_MARKER, table);
 
-            for (_pk, op) in rows {
-                encode_changeset_op(&mut out, op);
-            }
-        }
-
-        out
-    }
-}
-
-// -- Patchset build (DiffSet) -------------------------------------------------
-
-impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + AsRef<[u8]>>
-    DiffSet<PatchsetFormat, T, S, B>
-{
-    /// Serialize the patchset to binary.
-    ///
-    /// Rows are emitted in stored order (no hash simulation).
-    #[must_use]
-    pub fn build(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-
-        for (table, rows) in &self.tables {
-            if rows.is_empty() {
-                continue;
-            }
-
-            write_table_header(&mut out, markers::PATCHSET, table);
-
-            let (pk_flags, pk_col_to_pk_pos) = patchset_pk_mapping(table);
-
+            let state = F::build_state(table);
             for (pk, op) in rows {
-                encode_patchset_op(&mut out, op, pk, &pk_flags, &pk_col_to_pk_pos);
+                F::encode_op(&mut out, op, pk, &state);
             }
         }
 

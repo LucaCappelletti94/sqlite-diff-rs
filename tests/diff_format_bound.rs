@@ -75,6 +75,17 @@ where
     Ok(builder)
 }
 
+/// Build binary output through a `DiffFormat`-bound parameter.
+///
+/// Before `build` was generic this function could not be written: `build`
+/// existed only on the concrete `ChangesetFormat` and `PatchsetFormat`
+/// builders, so a caller holding a generic `F` could not serialize.
+fn build_generic<F: DiffFormat<String, Vec<u8>>>(
+    builder: &DiffSetBuilder<F, TestUsersTable, String, Vec<u8>>,
+) -> Vec<u8> {
+    builder.build()
+}
+
 #[test]
 fn one_function_folds_both_formats() {
     let schema = test_schema();
@@ -93,8 +104,8 @@ fn one_function_folds_both_formats() {
     assert_eq!(changeset.len(), 2, "both events folded into the changeset");
     assert_eq!(patchset.len(), 2, "both events folded into the patchset");
 
-    let changeset_bytes = changeset.build();
-    let patchset_bytes = patchset.build();
+    let changeset_bytes = build_generic(&changeset);
+    let patchset_bytes = build_generic(&patchset);
 
     // A DELETE encodes every column in a changeset but only the PK in a
     // patchset, so the two builds genuinely differ: the one function really
