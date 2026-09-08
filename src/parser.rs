@@ -1229,73 +1229,40 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pk_flags_all_zero_is_valid() {
-        let data = [b'T', 3, 0, 0, 0, b't', 0];
-        assert!(ParsedDiffSet::parse(&data).is_ok());
+    fn header_with_flags(flags: &[u8]) -> Vec<u8> {
+        let mut data = vec![b'T', u8::try_from(flags.len()).unwrap()];
+        data.extend_from_slice(flags);
+        data.extend_from_slice(&[b't', 0]);
+        data
     }
 
     #[test]
-    fn pk_flags_dense_single_key_is_valid() {
-        let data = [b'T', 2, 1, 0, b't', 0];
-        assert!(ParsedDiffSet::parse(&data).is_ok());
-    }
-
-    #[test]
-    fn pk_flags_dense_composite_key_is_valid() {
-        let data = [b'T', 3, 1, 2, 0, b't', 0];
-        assert!(ParsedDiffSet::parse(&data).is_ok());
-    }
-
-    #[test]
-    fn pk_flags_composite_key_reversed_column_order_is_valid() {
-        let data = [b'T', 3, 2, 1, 0, b't', 0];
-        assert!(ParsedDiffSet::parse(&data).is_ok());
-    }
-
-    #[test]
-    fn pk_flags_gap_is_rejected() {
-        let data = [b'T', 2, 2, 0, b't', 0];
-        let err = ParsedDiffSet::parse(&data).unwrap_err();
-        assert!(
-            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
-            "gapped flags must be rejected, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn pk_flags_value_exceeds_key_count_is_rejected() {
-        let data = [b'T', 2, 3, 0, b't', 0];
-        let err = ParsedDiffSet::parse(&data).unwrap_err();
-        assert!(
-            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
-            "out-of-range ordinal must be rejected, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn pk_flags_duplicate_ordinals_are_rejected() {
-        let data = [b'T', 3, 1, 1, 0, b't', 0];
-        let err = ParsedDiffSet::parse(&data).unwrap_err();
-        assert!(
-            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
-            "duplicate ordinals must be rejected, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn pk_flags_from_fuzz_crash_inputs_are_rejected() {
+    fn pk_flags_dense_sequences_parse() {
         for flags in [
+            [0, 0, 0].as_slice(),
+            [1, 0].as_slice(),
+            [1, 2, 0].as_slice(),
+            [2, 1, 0].as_slice(),
+            [3, 2, 0, 1].as_slice(),
+        ] {
+            let result = ParsedDiffSet::parse(&header_with_flags(flags));
+            assert!(result.is_ok(), "flags {flags:?} must parse: {result:?}");
+        }
+    }
+
+    #[test]
+    fn pk_flags_that_are_not_dense_ordinals_are_refused() {
+        for flags in [
+            [2, 0].as_slice(),
+            [3, 0].as_slice(),
+            [1, 1, 0].as_slice(),
             [255, 64, 0].as_slice(),
             [15, 0, 63, 215, 61, 58, 56, 56, 50].as_slice(),
         ] {
-            let mut data = vec![b'P', u8::try_from(flags.len()).unwrap()];
-            data.extend_from_slice(flags);
-            data.extend_from_slice(&[b't', 0]);
-            let err = ParsedDiffSet::parse(&data).unwrap_err();
+            let err = ParsedDiffSet::parse(&header_with_flags(flags)).unwrap_err();
             assert!(
                 matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
-                "crash-file flags {flags:?} must be rejected, got {err:?}"
+                "flags {flags:?} must be refused, got {err:?}"
             );
         }
     }
