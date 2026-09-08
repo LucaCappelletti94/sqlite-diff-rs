@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0
+
+### Breaking
+
+`SchemaWithPK::primary_key_columns` returns `impl Iterator<Item = usize>` instead of `Vec<usize>`, so a caller that indexed or measured the result now collects it first. It is the crate's single answer to which columns form the primary key and in what key order, and it selects the column holding key position 0, then 1, up to the key width, so it allocates nothing and costs `O(k*n)` for a key of width `k` over `n` columns. `SimpleTable::pk_indices` is removed, and `primary_key_columns().collect()` replaces it.
+
+The parser refuses a table header whose nonzero primary-key flag bytes are not the dense key ordinals `1..=n`, with a new `ParseError::InvalidPrimaryKeyFlags` carrying the table name and the byte offset of the flags. Bytes that parsed before can now error. Every header SQLite writes is a dense sequence by construction, so this refuses only input SQLite would not produce, such as the flag bytes `[255, 64, 0]` and `[15, 0, 63, 215, 61, 58, 56, 56, 50]` that two fuzz inputs carry. `TableSchema::new` panics on the same input, because a schema whose flags are not ordinals claims a key that no consumer can read and every encoder path assumes the invariant.
+
+### Added
+
+`ChangesetUpdatePairExt::is_changed` reads what an `(old, new)` pair means on the changeset wire, and `ChangesetOp::changed_column_indices` applies it across an UPDATE. A changeset UPDATE carries the old image of the key columns and of the changed columns, and the new image of the changed columns only, so undefined on both sides is a column outside the diff, an old-only pair is the row identity that SQLite writes for every key column of every UPDATE, both sides present differ exactly when the values do, and a new value without an old one counts as changed. The diesel changeset renderer calls the same method rather than restating the rule, so the published interpretation cannot drift from the SQL the crate emits.
+
 ## 0.12.0
 
 ### Added
