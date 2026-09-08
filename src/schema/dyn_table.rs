@@ -179,12 +179,14 @@ pub trait SchemaWithPK: DynTable + Clone + Hash {
     /// column indices in key order. The ordering matches
     /// [`extract_pk`](Self::extract_pk), so the two agree on which cell is which
     /// key component.
-    fn primary_key_columns(&self) -> Vec<usize> {
-        let mut pairs: Vec<(usize, usize)> = (0..self.number_of_columns())
-            .filter_map(|col| self.primary_key_index(col).map(|pos| (pos, col)))
-            .collect();
-        pairs.sort_by_key(|&(pos, _)| pos);
-        pairs.into_iter().map(|(_, col)| col).collect()
+    ///
+    /// The walk selects the column holding key position `0`, then `1`, up to the
+    /// key width, so it allocates nothing and costs `O(k*n)` for a key of width
+    /// `k` over `n` columns.
+    fn primary_key_columns(&self) -> impl Iterator<Item = usize> {
+        (0..self.number_of_primary_keys()).filter_map(move |position| {
+            (0..self.number_of_columns()).find(|&col| self.primary_key_index(col) == Some(position))
+        })
     }
 }
 
@@ -249,8 +251,8 @@ mod tests {
             );
         }
         assert_eq!(
-            <&SimpleTable as SchemaWithPK>::primary_key_columns(&r),
-            t.primary_key_columns()
+            <&SimpleTable as SchemaWithPK>::primary_key_columns(&r).collect::<Vec<usize>>(),
+            t.primary_key_columns().collect::<Vec<usize>>()
         );
         let values: Vec<Value<String, Vec<u8>>> = vec![
             Value::Integer(1),

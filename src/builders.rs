@@ -29,4 +29,6 @@ pub(crate) use operation::Operation;
 pub use operation::{Indirect, Reverse};
 pub use sql_output::ColumnNames;
 pub use update_operation::Update;
-pub use view::{ChangesetOp, ChangesetUpdatePair, PatchsetOp, PatchsetUpdateEntry};
+pub use view::{
+    ChangesetOp, ChangesetUpdatePair, ChangesetUpdatePairExt, PatchsetOp, PatchsetUpdateEntry,
+};

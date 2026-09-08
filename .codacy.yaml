@@ -3,6 +3,8 @@ exclude_paths:
   - "benches/**"
   - "compile-bench/**"
   - "fuzz/**"
+# Counting allocations needs a global allocator, and implementing one cannot be safe.
+  - "tests/changeset_wire_semantics_alloc.rs"
 # Tests duplicate by design; every other tool and metric still covers them.
 engines:
   duplication:

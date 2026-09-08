@@ -526,8 +526,9 @@ let undo_bytes: Vec<u8> = reversed.build();
    and bucket-chain prepend semantics. Any change to insertion logic must preserve this.
 
 2. **PK flags vs PK indices**: PK flags are 1-based ordinals (stored in binary format).
-   PK indices are 0-based column indices sorted by ordinal. `TableSchema::pk_indices()`
-   converts between them.
+   PK indices are 0-based column indices in key order. `SchemaWithPK::primary_key_columns()`
+   converts between them with an allocation-free selection walk, and the parser refuses a
+   header whose nonzero flags are not the dense ordinals `1..=n`.
 
 3. **Empty table serialization**: Tables with no operations are NOT serialized
    (matching SQLite behavior). `DiffSetBuilder::PartialEq` ignores empty tables.
