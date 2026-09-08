@@ -3,13 +3,11 @@ exclude_paths:
   - "benches/**"
   - "compile-bench/**"
   - "fuzz/**"
+# Counting allocations needs a global allocator, and implementing one cannot be safe.
+  - "tests/changeset_wire_semantics_alloc.rs"
 # Tests duplicate by design; every other tool and metric still covers them.
 engines:
   duplication:
     exclude_paths:
       - "integration-tests/**"
       - "tests/**"
-# The allocation contract test installs a global allocator, which cannot be safe.
-  semgrep:
-    exclude_paths:
-      - "tests/changeset_wire_semantics_alloc.rs"
