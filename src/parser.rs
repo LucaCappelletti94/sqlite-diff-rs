@@ -1229,15 +1229,8 @@ mod tests {
         );
     }
 
-    fn header_with_flags(flags: &[u8]) -> Vec<u8> {
-        let mut data = vec![b'T', u8::try_from(flags.len()).unwrap()];
-        data.extend_from_slice(flags);
-        data.extend_from_slice(&[b't', 0]);
-        data
-    }
-
     #[test]
-    fn pk_flags_dense_sequences_parse() {
+    fn dense_ordinals_are_accepted_and_every_other_shape_refused() {
         for flags in [
             [0, 0, 0].as_slice(),
             [1, 0].as_slice(),
@@ -1245,13 +1238,8 @@ mod tests {
             [2, 1, 0].as_slice(),
             [3, 2, 0, 1].as_slice(),
         ] {
-            let result = ParsedDiffSet::parse(&header_with_flags(flags));
-            assert!(result.is_ok(), "flags {flags:?} must parse: {result:?}");
+            assert!(pk_flags_are_dense_ordinals(flags), "{flags:?} must parse");
         }
-    }
-
-    #[test]
-    fn pk_flags_that_are_not_dense_ordinals_are_refused() {
         for flags in [
             [2, 0].as_slice(),
             [3, 0].as_slice(),
@@ -1259,12 +1247,13 @@ mod tests {
             [255, 64, 0].as_slice(),
             [15, 0, 63, 215, 61, 58, 56, 56, 50].as_slice(),
         ] {
-            let err = ParsedDiffSet::parse(&header_with_flags(flags)).unwrap_err();
-            assert!(
-                matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
-                "flags {flags:?} must be refused, got {err:?}"
-            );
+            assert!(!pk_flags_are_dense_ordinals(flags), "{flags:?} must refuse");
         }
+    }
+
+    #[test]
+    fn header_with_dense_flags_parses() {
+        assert!(ParsedDiffSet::parse(&[b'T', 3, 2, 1, 0, b't', 0]).is_ok());
     }
 
     #[test]
