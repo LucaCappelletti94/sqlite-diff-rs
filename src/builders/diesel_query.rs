@@ -88,7 +88,7 @@ use diesel::serialize::ToSql;
 use diesel::sql_types::{BigInt, Binary, Double, HasSqlType, Text};
 
 use super::sql_output::ColumnNames;
-use super::view::{ChangesetOp, PatchsetOp};
+use super::view::{ChangesetOp, ChangesetUpdatePairExt, PatchsetOp};
 use crate::encoding::Value;
 use crate::{DynTable, SchemaWithPK};
 
@@ -224,12 +224,12 @@ where
     T: SchemaWithPK,
     F: FnMut(usize, usize) -> Result<&'a Value<S, B>, RenderError>,
 {
-    let pk_columns = table.primary_key_columns();
-    if pk_columns.is_empty() {
+    let key_width = table.number_of_primary_keys();
+    if key_width == 0 {
         return Err(RenderError::EmptyRowPredicate);
     }
-    let mut predicate = Vec::with_capacity(pk_columns.len());
-    for (pk_ordinal, col_idx) in pk_columns.into_iter().enumerate() {
+    let mut predicate = Vec::with_capacity(key_width);
+    for (pk_ordinal, col_idx) in table.primary_key_columns().enumerate() {
         predicate.push((col_idx, value_for(pk_ordinal, col_idx)?));
     }
     Ok(predicate)
@@ -307,9 +307,9 @@ where
                 // A changed PK column lands here, an unchanged one does not,
                 // so the UPDATE never rewrites a column that did not move.
                 let mut set = Vec::new();
-                for (col_idx, (old, new)) in values.iter().enumerate() {
-                    if let Some(new_value) = new.as_ref()
-                        && old.as_ref() != Some(new_value)
+                for (col_idx, pair) in values.iter().enumerate() {
+                    if let Some(new_value) = pair.1.as_ref()
+                        && pair.is_changed()
                     {
                         set.push((col_idx, new_value));
                     }

@@ -11,7 +11,7 @@
 //! Table Header:
 //! ├── Marker: 'T' (0x54) for changeset, 'P' (0x50) for patchset
 //! ├── Column count (1 byte)
-//! ├── PK flags (1 byte per column: 0x01 = PK, 0x00 = not)
+//! ├── PK flags (1 byte per column: 0 = not part of the key, k = k-th key column)
 //! └── Table name (null-terminated UTF-8)
 //!
 //! Change Records (repeated):
@@ -76,6 +76,21 @@ pub enum ParseError {
         /// The position where the mismatch occurred.
         position: usize,
     },
+
+    /// Primary-key flags in a table header are not a unique dense 1-based sequence.
+    ///
+    /// The nonzero bytes must form exactly `{1, 2, ..., n}` where `n` is the count
+    /// of nonzero bytes. All-zero flags (no primary key) are valid.
+    #[error(
+        "Invalid primary-key flags for table {table_name:?} at position {position}: \
+         nonzero bytes must be a unique dense 1-based sequence"
+    )]
+    InvalidPrimaryKeyFlags {
+        /// The table whose header contained invalid flags.
+        table_name: String,
+        /// Byte position of the pk_flags region in the input.
+        position: usize,
+    },
 }
 
 /// The detected format marker.
@@ -108,10 +123,21 @@ pub struct TableSchema<S> {
 
 impl<S> TableSchema<S> {
     /// Create a new parsed table schema.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pk_flags` is not one byte per column, or if its nonzero bytes
+    /// are not the dense key ordinals `1..=n`. Byte input reaching the same
+    /// invariant through the parser is refused with
+    /// [`ParseError::InvalidPrimaryKeyFlags`] instead.
     #[inline]
     #[must_use]
     pub fn new(name: S, column_count: usize, pk_flags: Vec<u8>) -> Self {
-        debug_assert_eq!(pk_flags.len(), column_count);
+        assert_eq!(pk_flags.len(), column_count);
+        assert!(
+            pk_flags_are_dense_ordinals(&pk_flags),
+            "pk_flags must hold the dense key ordinals 1..=n"
+        );
         Self {
             name,
             column_count,
@@ -134,27 +160,6 @@ impl<S> TableSchema<S> {
     #[must_use]
     pub fn pk_flags(&self) -> &[u8] {
         &self.pk_flags
-    }
-
-    /// Get the indices of primary key columns, in PK order.
-    #[must_use]
-    pub(crate) fn pk_indices(&self) -> Vec<usize> {
-        // Collect (col_idx, pk_ordinal) pairs for non-zero entries
-        let mut pk_cols: Vec<(usize, u8)> = self
-            .pk_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &pk_ordinal)| {
-                if pk_ordinal > 0 {
-                    Some((i, pk_ordinal))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        // Sort by pk_ordinal to get correct PK order
-        pk_cols.sort_by_key(|(_, ordinal)| *ordinal);
-        pk_cols.into_iter().map(|(idx, _)| idx).collect()
     }
 }
 
@@ -201,8 +206,7 @@ impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWit
         S: Clone,
         B: Clone,
     {
-        self.pk_indices()
-            .into_iter()
+        self.primary_key_columns()
             .map(|i| {
                 values
                     .get(i)
@@ -456,6 +460,7 @@ fn parse_table_header(
     if pos + column_count > data.len() {
         return Err(ParseError::UnexpectedEof(base_pos + pos));
     }
+    let pk_flags_pos = base_pos + pos;
     let pk_flags: Vec<u8> = data[pos..pos + column_count].to_vec();
     pos += column_count;
 
@@ -470,7 +475,40 @@ fn parse_table_header(
         .map_err(|_| ParseError::InvalidTableName(base_pos + name_start))?;
     pos += 1;
 
+    if !pk_flags_are_dense_ordinals(&pk_flags) {
+        return Err(ParseError::InvalidPrimaryKeyFlags {
+            table_name: name,
+            position: pk_flags_pos,
+        });
+    }
+
     Ok((TableSchema::new(name, column_count, pk_flags), format, pos))
+}
+
+/// Whether the nonzero flag bytes are the dense key ordinals `1..=n`.
+///
+/// All-zero flags describe a table with no primary key and are accepted.
+fn pk_flags_are_dense_ordinals(flags: &[u8]) -> bool {
+    let key_count = flags.iter().filter(|&&flag| flag != 0).count();
+    if key_count > usize::from(u8::MAX) {
+        return false;
+    }
+    let mut seen: [u64; 4] = [0; 4];
+    for &flag in flags {
+        if flag == 0 {
+            continue;
+        }
+        let ordinal = usize::from(flag);
+        if ordinal > key_count {
+            return false;
+        }
+        let mask = 1u64 << (ordinal % 64);
+        if seen[ordinal / 64] & mask != 0 {
+            return false;
+        }
+        seen[ordinal / 64] |= mask;
+    }
+    true
 }
 
 /// Parse operation header (`op_code` + indirect flag).
@@ -1119,8 +1157,8 @@ mod tests {
             );
         }
         assert_eq!(
-            parsed.primary_key_columns(),
-            simple.primary_key_columns(),
+            parsed.primary_key_columns().collect::<Vec<usize>>(),
+            simple.primary_key_columns().collect::<Vec<usize>>(),
             "primary_key_columns",
         );
         assert_eq!(
@@ -1151,7 +1189,7 @@ mod tests {
         let simple = SimpleTable::new("kv", &["id", "val"], &[0]);
         let row: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Text("x".into())];
         assert_schema_pk_parity(parsed, &simple, &row);
-        assert_eq!(parsed.primary_key_columns(), vec![0]);
+        assert_eq!(parsed.primary_key_columns().collect::<Vec<usize>>(), [0]);
     }
 
     #[test]
@@ -1183,11 +1221,103 @@ mod tests {
         ];
         assert_schema_pk_parity(parsed, &simple, &row);
         // Key order is (b, a): column 1 first, column 0 second.
-        assert_eq!(parsed.primary_key_columns(), vec![1, 0]);
+        assert_eq!(parsed.primary_key_columns().collect::<Vec<usize>>(), [1, 0]);
         // `extract_pk` follows key order: b's value, then a's value.
         assert_eq!(
             parsed.extract_pk(&row),
             vec![Value::Integer(20), Value::Integer(10)]
         );
+    }
+
+    #[test]
+    fn pk_flags_all_zero_is_valid() {
+        let data = [b'T', 3, 0, 0, 0, b't', 0];
+        assert!(ParsedDiffSet::parse(&data).is_ok());
+    }
+
+    #[test]
+    fn pk_flags_dense_single_key_is_valid() {
+        let data = [b'T', 2, 1, 0, b't', 0];
+        assert!(ParsedDiffSet::parse(&data).is_ok());
+    }
+
+    #[test]
+    fn pk_flags_dense_composite_key_is_valid() {
+        let data = [b'T', 3, 1, 2, 0, b't', 0];
+        assert!(ParsedDiffSet::parse(&data).is_ok());
+    }
+
+    #[test]
+    fn pk_flags_composite_key_reversed_column_order_is_valid() {
+        let data = [b'T', 3, 2, 1, 0, b't', 0];
+        assert!(ParsedDiffSet::parse(&data).is_ok());
+    }
+
+    #[test]
+    fn pk_flags_gap_is_rejected() {
+        let data = [b'T', 2, 2, 0, b't', 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
+            "gapped flags must be rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pk_flags_value_exceeds_key_count_is_rejected() {
+        let data = [b'T', 2, 3, 0, b't', 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
+            "out-of-range ordinal must be rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pk_flags_duplicate_ordinals_are_rejected() {
+        let data = [b'T', 3, 1, 1, 0, b't', 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(
+            matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
+            "duplicate ordinals must be rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pk_flags_from_fuzz_crash_inputs_are_rejected() {
+        for flags in [
+            [255, 64, 0].as_slice(),
+            [15, 0, 63, 215, 61, 58, 56, 56, 50].as_slice(),
+        ] {
+            let mut data = vec![b'P', u8::try_from(flags.len()).unwrap()];
+            data.extend_from_slice(flags);
+            data.extend_from_slice(&[b't', 0]);
+            let err = ParsedDiffSet::parse(&data).unwrap_err();
+            assert!(
+                matches!(err, ParseError::InvalidPrimaryKeyFlags { .. }),
+                "crash-file flags {flags:?} must be rejected, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pk_flags_error_carries_table_name_and_position() {
+        let data = [b'T', 2, 2, 0, b'm', b'y', b't', b'b', b'l', 0];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        let ParseError::InvalidPrimaryKeyFlags {
+            table_name,
+            position,
+        } = err
+        else {
+            panic!("expected InvalidPrimaryKeyFlags, got {err:?}");
+        };
+        assert_eq!(table_name, "mytbl");
+        assert_eq!(position, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "pk_flags must hold the dense key ordinals")]
+    fn table_schema_new_refuses_flags_the_parser_would_refuse() {
+        let _ = TableSchema::new("t", 3, vec![255, 64, 0]);
     }
 }

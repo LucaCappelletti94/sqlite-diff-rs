@@ -137,11 +137,8 @@ fn format_delete_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     write!(sql, "DELETE FROM {}", quote_identifier(table.name())).unwrap();
     sql.push_str(" WHERE ");
 
-    // Get PK column indices in order
-    let pk_indices = table.primary_key_columns();
-
     let mut first = true;
-    for (pk_ordinal, &col_idx) in pk_indices.iter().enumerate() {
+    for (pk_ordinal, col_idx) in table.primary_key_columns().enumerate() {
         if !first {
             sql.push_str(" AND ");
         }
@@ -243,12 +240,9 @@ fn format_update_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
         }
     }
 
-    // WHERE clause: use PK values
     sql.push_str(" WHERE ");
-    let pk_indices = table.primary_key_columns();
-
     let mut first_where = true;
-    for (pk_ordinal, &col_idx) in pk_indices.iter().enumerate() {
+    for (pk_ordinal, col_idx) in table.primary_key_columns().enumerate() {
         if !first_where {
             sql.push_str(" AND ");
         }

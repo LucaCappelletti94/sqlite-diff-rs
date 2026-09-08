@@ -32,9 +32,10 @@ pub use builders::{
     Adapter, ApplyOps, Binder, BoundChangesetOp, BoundOp, BoundPatchsetOp, DefaultBinder,
 };
 pub use builders::{
-    ChangeDelete, ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePair, ColumnNames,
-    DiffFormat, DiffOps, DiffSet, DiffSetBuilder, Indirect, Insert, PatchDelete, PatchSet,
-    PatchsetFormat, PatchsetOp, PatchsetUpdateEntry, Reverse, Update,
+    ChangeDelete, ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePair,
+    ChangesetUpdatePairExt, ColumnNames, DiffFormat, DiffOps, DiffSet, DiffSetBuilder, Indirect,
+    Insert, PatchDelete, PatchSet, PatchsetFormat, PatchsetOp, PatchsetUpdateEntry, Reverse,
+    Update,
 };
 pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};

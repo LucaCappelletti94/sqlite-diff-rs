@@ -87,12 +87,6 @@ impl SimpleTable {
         self.columns.iter().position(|c| c == name)
     }
 
-    /// Get the indices of primary key columns, in PK order.
-    #[must_use]
-    pub fn pk_indices(&self) -> Vec<usize> {
-        self.schema.pk_indices()
-    }
-
     /// Get the inner `TableSchema`.
     #[must_use]
     pub fn inner(&self) -> &TableSchema<String> {

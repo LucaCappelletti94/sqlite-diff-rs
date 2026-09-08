@@ -19,10 +19,41 @@ use alloc::vec::Vec;
 use crate::encoding::Value;
 use crate::schema::SchemaWithPK;
 
-/// `(old, new)` value pair stored per column in a changeset UPDATE.
-/// Either slot may be `None`, which means the column was not part of
-/// the diff.
+/// `(old, new)` values for one changeset UPDATE column, where `None` is the
+/// undefined wire marker.
+///
+/// A changeset UPDATE carries the old image of the key columns and of the
+/// changed columns, and the new image of the changed columns only, so the four
+/// pair shapes are distinct. [`ChangesetUpdatePairExt::is_changed`] reads them.
 pub type ChangesetUpdatePair<S, B> = (Option<Value<S, B>>, Option<Value<S, B>>);
+
+/// Reads changeset UPDATE pair wire semantics.
+pub trait ChangesetUpdatePairExt {
+    /// Whether the wire says this column's value changed.
+    ///
+    /// Undefined on both sides is a column outside the diff. Old-only is the
+    /// row identity, which SQLite writes for every key column of every UPDATE,
+    /// so it did not change. Both sides present changed exactly when the values
+    /// differ, which is how an unchanged key column encoded by this crate
+    /// reads. New without old carries no old image to compare, so it counts as
+    /// changed.
+    #[must_use]
+    fn is_changed(&self) -> bool;
+}
+
+impl<S, B> ChangesetUpdatePairExt for ChangesetUpdatePair<S, B>
+where
+    Value<S, B>: PartialEq,
+{
+    #[inline]
+    fn is_changed(&self) -> bool {
+        match self {
+            (_, None) => false,
+            (Some(old), Some(new)) => old != new,
+            (None, Some(_)) => true,
+        }
+    }
+}
 
 /// Entry stored per column in a patchset UPDATE: a unit (the format
 /// does not carry the old value) plus the new value (or `None` for
@@ -84,6 +115,24 @@ impl<'a, T, S, B> ChangesetOp<'a, T, S, B> {
     }
 }
 
+impl<T, S, B> ChangesetOp<'_, T, S, B>
+where
+    Value<S, B>: PartialEq,
+{
+    /// Returns the indices of the columns whose pairs are
+    /// [`ChangesetUpdatePairExt::is_changed`], and nothing for a non-UPDATE.
+    pub fn changed_column_indices(&self) -> impl Iterator<Item = usize> {
+        let values: &[ChangesetUpdatePair<S, B>] = match self {
+            Self::Update { values, .. } => values,
+            Self::Insert { .. } | Self::Delete { .. } => &[],
+        };
+        values
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pair)| pair.is_changed().then_some(index))
+    }
+}
+
 impl<T: SchemaWithPK, S: Clone, B: Clone> ChangesetOp<'_, T, S, B> {
     /// Returns the primary-key cells of this operation, in key order.
     ///
@@ -102,7 +151,6 @@ impl<T: SchemaWithPK, S: Clone, B: Clone> ChangesetOp<'_, T, S, B> {
             } => table.extract_pk(&old_values),
             Self::Update { table, values, .. } => table
                 .primary_key_columns()
-                .into_iter()
                 .map(|col_idx| {
                     let (old, new) = &values[col_idx];
                     old.clone().or_else(|| new.clone()).unwrap_or(Value::Null)

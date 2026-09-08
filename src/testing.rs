@@ -26,6 +26,7 @@ use std::io::Cursor;
 use crate::DynTable;
 use crate::PatchSet;
 use crate::Reverse;
+use crate::SchemaWithPK;
 use crate::differential_testing::run_differential_test;
 use crate::parser::ParsedDiffSet;
 use crate::schema::SimpleTable;
@@ -170,7 +171,7 @@ impl fmt::Display for TypedSimpleTable {
     /// For a single-column PK the `PRIMARY KEY` clause is inlined on the column.
     /// For composite PKs a trailing `PRIMARY KEY(...)` constraint is appended.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let pk_indices = self.table.pk_indices();
+        let pk_indices: Vec<usize> = self.table.primary_key_columns().collect();
         let columns = self.table.column_names();
         let single_pk = pk_indices.len() == 1;
 
