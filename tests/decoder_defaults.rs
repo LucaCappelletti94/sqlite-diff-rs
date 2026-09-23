@@ -201,7 +201,7 @@ fn pg_defaults_numeric_produces_text() {
 #[test]
 fn pg_defaults_timestamp_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::Timestamp -> TimestampVerbatimDecoder
+    // WireType::Timestamp -> TimestampDecoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
@@ -211,15 +211,15 @@ fn pg_defaults_timestamp_produces_text() {
         .unwrap();
     assert_eq!(
         val,
-        Value::Text("2024-01-15 10:30:00".into()),
-        "PG timestamp -> verbatim"
+        Value::Text("2024-01-15 10:30:00.000000".into()),
+        "PG timestamp -> microseconds"
     );
 }
 
 #[test]
 fn pg_defaults_timestamptz_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::TimestampTz -> TimestampTzVerbatimDecoder
+    // WireType::TimestampTz -> TimestampTzDecoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
@@ -229,15 +229,15 @@ fn pg_defaults_timestamptz_produces_text() {
         .unwrap();
     assert_eq!(
         val,
-        Value::Text("2024-01-15 10:30:00+00".into()),
-        "PG timestamptz -> verbatim with offset"
+        Value::Text("2024-01-15 10:30:00.000000+00:00".into()),
+        "PG timestamptz -> UTC"
     );
 }
 
 #[test]
 fn pg_defaults_date_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::Date -> DateVerbatimDecoder
+    // WireType::Date -> DateDecoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
@@ -245,13 +245,13 @@ fn pg_defaults_date_produces_text() {
             data: &ColumnValue::text("2024-01-15"),
         })
         .unwrap();
-    assert_eq!(val, Value::Text("2024-01-15".into()), "PG date -> verbatim");
+    assert_eq!(val, Value::Text("2024-01-15".into()), "PG date -> ISO date");
 }
 
 #[test]
 fn pg_defaults_time_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::Time -> TimeVerbatimDecoder
+    // WireType::Time -> TimeDecoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
@@ -259,13 +259,17 @@ fn pg_defaults_time_produces_text() {
             data: &ColumnValue::text("10:30:00"),
         })
         .unwrap();
-    assert_eq!(val, Value::Text("10:30:00".into()), "PG time -> verbatim");
+    assert_eq!(
+        val,
+        Value::Text("10:30:00.000000".into()),
+        "PG time -> microseconds"
+    );
 }
 
 #[test]
 fn pg_defaults_interval_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::Interval -> IntervalVerbatimDecoder
+    // WireType::Interval -> IntervalDecoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",
@@ -273,7 +277,7 @@ fn pg_defaults_interval_produces_text() {
             data: &ColumnValue::text("1 day"),
         })
         .unwrap();
-    assert_eq!(val, Value::Text("1 day".into()), "PG interval -> verbatim");
+    assert_eq!(val, Value::Text("P1D".into()), "PG interval -> ISO 8601");
 }
 
 #[test]
@@ -484,8 +488,8 @@ fn w2j_defaults_timestamp_produces_text() {
         .unwrap();
     assert_eq!(
         val,
-        Value::Text("2024-01-15 10:30:00".into()),
-        "wal2json timestamp -> verbatim"
+        Value::Text("2024-01-15 10:30:00.000000".into()),
+        "wal2json timestamp -> microseconds"
     );
 }
 
@@ -674,8 +678,8 @@ fn maxwell_defaults_datetime_produces_text() {
         .unwrap();
     assert_eq!(
         val,
-        Value::Text("2024-01-15 10:30:00".into()),
-        "maxwell datetime -> verbatim"
+        Value::Text("2024-01-15 10:30:00.000000".into()),
+        "maxwell datetime -> microseconds"
     );
 }
 

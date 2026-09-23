@@ -1,8 +1,9 @@
 //! Tests for the `PgBinary` wire source: decoding PostgreSQL binary
 //! result fields straight into `Value` via the crate's decoder vocabulary.
 //!
-//! Covers the v1 supported set (bool, int, real, text, bytea, uuid),
-//! NULL short-circuit, malformed-input errors, and `TypeMap` dispatch.
+//! Covers bool, int, real, text, bytea and uuid, NULL short-circuit,
+//! malformed-input errors, and `TypeMap` dispatch. The numeric, temporal
+//! and JSON types are pinned against pgoutput in `decoder_pg_binary_parity.rs`.
 
 extern crate alloc;
 
@@ -10,9 +11,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::{
-    BoolDecoder, DecimalTextDecoder, DecodeError, IntDecoder, PgBinary, PgBinaryColumn,
-    PgByteaBinaryDecoder, RealDecoder, TextDecoder, TypeMap, UuidBlob16Decoder, Value, WireAdapter,
-    WireType,
+    BoolDecoder, DecodeError, IntDecoder, PgBinary, PgBinaryColumn, PgByteaBinaryDecoder,
+    RealDecoder, TextDecoder, TypeMap, UuidBlob16Decoder, Value, WireAdapter, WireType,
 };
 
 /// The 16 raw bytes of `550e8400-e29b-41d4-a716-446655440000`.
@@ -129,45 +129,30 @@ fn bytea_empty_slice_yields_empty_blob() {
     assert_eq!(b, Value::Blob(Vec::new()));
 }
 
-// -- Deferred types: registered but not yet implemented ----------------------
-
 #[test]
-fn deferred_decoder_present_bytes_is_not_yet_implemented() {
-    let err = col(WireType::Decimal, Some(b"1.5"))
-        .decoded_by::<_, String, Vec<u8>>(&DecimalTextDecoder)
-        .unwrap_err();
-    assert!(matches!(err, DecodeError::NotYetImplemented { .. }));
-}
-
-#[test]
-fn deferred_decoder_null_still_short_circuits() {
-    let got: Value<String, Vec<u8>> = col(WireType::Decimal, None)
-        .decoded_by(&DecimalTextDecoder)
-        .unwrap();
-    assert_eq!(got, Value::Null);
-}
-
-#[test]
-fn defaults_route_deferred_types_to_not_yet_implemented() {
+fn malformed_numeric_temporal_and_jsonb_bytes_error() {
     let types: TypeMap<PgBinary, String, Vec<u8>> = TypeMap::defaults();
-    for wt in [
-        WireType::Decimal,
-        WireType::Timestamp,
-        WireType::TimestampTz,
-        WireType::Date,
-        WireType::Time,
-        WireType::Interval,
-        WireType::Json,
-        WireType::Jsonb,
+    for (wt, raw) in [
+        (WireType::Decimal, &[0x00, 0x01][..]),
+        // One base-10000 digit declared, none sent.
+        (WireType::Decimal, &[0, 1, 0, 0, 0, 0, 0, 0][..]),
+        // Digit 10000 is outside base 10000.
+        (WireType::Decimal, &[0, 1, 0, 0, 0, 0, 0, 0, 0x27, 0x10][..]),
+        (WireType::Decimal, &[0, 0, 0, 0, 0x12, 0x34, 0, 0][..]),
+        (WireType::Timestamp, &[0; 4][..]),
+        (WireType::TimestampTz, &[0; 9][..]),
+        (WireType::Date, &[0; 8][..]),
+        (WireType::Time, &[0; 4][..]),
+        (WireType::Time, &[0xff; 8][..]),
+        (WireType::Interval, &[0; 12][..]),
+        (WireType::Jsonb, &[0x02, b'{', b'}'][..]),
+        (WireType::Jsonb, &[][..]),
     ] {
-        // Registered (not NoDecoderForType) but returns NotYetImplemented.
-        let err = types.decode(col(wt, Some(b"x"))).unwrap_err();
+        let got = types.decode(col(wt, Some(raw)));
         assert!(
-            matches!(err, DecodeError::NotYetImplemented { .. }),
-            "wire type {wt:?} should be registered as not-yet-implemented, got {err:?}"
+            matches!(got, Err(DecodeError::WrongPayloadKind { .. })),
+            "{wt:?} {raw:02x?} gave {got:?}"
         );
-        // NULL still short-circuits through the deferred decoder.
-        assert_eq!(types.decode(col(wt, None)).unwrap(), Value::Null);
     }
 }
 
@@ -182,7 +167,8 @@ fn uuid_16_raw_bytes() {
 // -- NULL short-circuit ------------------------------------------------------
 
 #[test]
-fn null_raw_yields_null_for_every_v1_type() {
+fn null_raw_yields_null_for_every_type() {
+    let types: TypeMap<PgBinary, String, Vec<u8>> = TypeMap::defaults();
     for wt in [
         WireType::Bool,
         WireType::Int,
@@ -190,8 +176,15 @@ fn null_raw_yields_null_for_every_v1_type() {
         WireType::Text,
         WireType::Bytes,
         WireType::Uuid,
+        WireType::Decimal,
+        WireType::Timestamp,
+        WireType::TimestampTz,
+        WireType::Date,
+        WireType::Time,
+        WireType::Interval,
+        WireType::Json,
+        WireType::Jsonb,
     ] {
-        let types: TypeMap<PgBinary, String, Vec<u8>> = TypeMap::defaults();
         let got = types.decode(col(wt, None)).unwrap();
         assert_eq!(got, Value::Null, "wire type {wt:?} null mismatch");
     }

@@ -30,9 +30,22 @@ pub(crate) fn decode_json_text<P: AsJsonValue, S, B>(
 where
     S: From<String>,
 {
+    decode_json_str_with(payload, |s| Ok(Value::Text(S::from(s.to_string()))))
+}
+
+/// Hands a JSON string column to `decode`, and maps JSON null to [`Value::Null`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::WrongPayloadKind`] if the JSON value is not a string or null,
+/// and propagates `decode`'s error.
+pub(crate) fn decode_json_str_with<P: AsJsonValue, S, B>(
+    payload: &P,
+    decode: impl FnOnce(&str) -> Result<Value<S, B>, DecodeError>,
+) -> Result<Value<S, B>, DecodeError> {
     match payload.json_value() {
         serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::String(s) => Ok(Value::Text(S::from(s.clone()))),
+        serde_json::Value::String(s) => decode(s),
         serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
             column: payload.column_name().to_string(),
             expected: "JSON string",

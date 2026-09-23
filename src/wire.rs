@@ -37,6 +37,7 @@ mod sealed;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod shared_builders;
 mod source;
+mod temporal;
 mod type_map;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod uuid_helpers;
@@ -55,11 +56,10 @@ pub use adapter::WireAdapter;
 pub use conversion_error::ConversionError;
 pub use decoder::Decoder;
 pub use decoder::{
-    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Int64OverflowToTextDecoder, IntDecoder,
-    IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder,
-    NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder,
-    TimeVerbatimDecoder, TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, UuidBlob16Decoder,
-    UuidText36Decoder,
+    BoolDecoder, DateDecoder, DecimalTextDecoder, Int64OverflowToTextDecoder, IntDecoder,
+    IntervalDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 pub use error::DecodeError;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]

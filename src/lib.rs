@@ -41,13 +41,12 @@ pub use encoding::Value;
 pub use parser::{FormatMarker, ParseError, ParsedDiffSet, TableSchema};
 pub use schema::{DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable};
 pub use wire::{
-    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, DecodeError, Decoder, Digestable,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder,
+    BoolDecoder, DateDecoder, DecimalTextDecoder, DecodeError, Decoder, Digestable,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
     JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgBinary, PgBinaryColumn,
-    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeVerbatimDecoder,
-    TimestampTzVerbatimDecoder, TimestampVerbatimDecoder, TypeMap, TypeMapDefaults,
-    UuidBlob16Decoder, UuidText36Decoder, WireAdapter, WireColumnTypes, WireSchema, WireSource,
-    WireType,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, TypeMap, TypeMapDefaults, UuidBlob16Decoder,
+    UuidText36Decoder, WireAdapter, WireColumnTypes, WireSchema, WireSource, WireType,
 };
 
 // Type aliases for common use cases
