@@ -97,6 +97,17 @@ pub enum DecodeError {
         actual: &'static str,
     },
 
+    /// Temporal value outside the replica's text form, which is `infinity`,
+    /// `-infinity`, a year outside 1 to 9999 (BC included), a `time` of
+    /// `24:00:00`, or an infinite `interval`.
+    #[error("column {column:?} carried {value}, which a replica cannot hold")]
+    UnrepresentableTemporal {
+        /// Offending column name.
+        column: String,
+        /// The value as received, or its binary rendering.
+        value: String,
+    },
+
     /// Free-form failure emitted by user-supplied decoders.
     #[error("column {column:?}: {message}")]
     Custom {

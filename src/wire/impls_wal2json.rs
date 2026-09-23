@@ -4,14 +4,14 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use super::decoder::{
-    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder,
-    IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder,
-    MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder,
-    TextDecoder, TimeVerbatimDecoder, TimestampTzVerbatimDecoder, TimestampVerbatimDecoder,
-    UuidBlob16Decoder, UuidText36Decoder,
+    BoolDecoder, DateDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder, IntDecoder,
+    IntervalDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
 use super::scalar_helpers::normalize_real;
+use super::temporal::{Temporal, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
 use crate::encoding::Value;
@@ -277,28 +277,26 @@ where
     }
 }
 
-// ------------------------------------------------------------------
-// Temporal verbatim decoders
-// ------------------------------------------------------------------
-
-macro_rules! verbatim_impl {
-    ($decoder:ty) => {
+macro_rules! temporal_impl {
+    ($decoder:ty, $kind:expr) => {
         impl<S, B> Decoder<Wal2Json, S, B> for $decoder
         where
             S: From<alloc::string::String>,
         {
             fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-                super::json_decoders::decode_json_text(&payload)
+                super::json_decoders::decode_json_str_with(&payload, |text| {
+                    decode_temporal_text(payload.column_name, $kind, text)
+                })
             }
         }
     };
 }
 
-verbatim_impl!(TimestampVerbatimDecoder);
-verbatim_impl!(TimestampTzVerbatimDecoder);
-verbatim_impl!(DateVerbatimDecoder);
-verbatim_impl!(TimeVerbatimDecoder);
-verbatim_impl!(IntervalVerbatimDecoder);
+temporal_impl!(DateDecoder, Temporal::Date);
+temporal_impl!(TimeDecoder, Temporal::Time);
+temporal_impl!(TimestampDecoder, Temporal::Timestamp);
+temporal_impl!(TimestampTzDecoder, Temporal::TimestampTz);
+temporal_impl!(IntervalDecoder, Temporal::Interval);
 
 // ------------------------------------------------------------------
 // JsonVerbatimDecoder / JsonCanonicalDecoder
@@ -347,11 +345,11 @@ where
             .with(WireType::Bytes, PgByteaTextModeDecoder)
             .with(WireType::Uuid, UuidText36Decoder)
             .with(WireType::Decimal, DecimalTextDecoder)
-            .with(WireType::Timestamp, TimestampVerbatimDecoder)
-            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
-            .with(WireType::Date, DateVerbatimDecoder)
-            .with(WireType::Time, TimeVerbatimDecoder)
-            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Timestamp, TimestampDecoder)
+            .with(WireType::TimestampTz, TimestampTzDecoder)
+            .with(WireType::Date, DateDecoder)
+            .with(WireType::Time, TimeDecoder)
+            .with(WireType::Interval, IntervalDecoder)
             .with(WireType::Json, JsonVerbatimDecoder)
             .with(WireType::Jsonb, JsonVerbatimDecoder)
     }

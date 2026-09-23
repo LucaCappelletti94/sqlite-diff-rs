@@ -77,31 +77,35 @@ pub struct UuidBlob16Decoder;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UuidText36Decoder;
 
-/// Decoder for `numeric`/`decimal` columns, preserving precision as
-/// `Value::Text`.
+/// Decoder for `numeric`/`decimal` columns, storing Postgres's `numeric`
+/// text (`-5000.0000`, `NaN`) as `Value::Text`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DecimalTextDecoder;
 
-/// Decoder for `timestamp` (without time zone). Preserves the wire text
-/// verbatim.
+/// Decoder for `timestamp` (without time zone), storing
+/// `YYYY-MM-DD HH:MM:SS.ffffff` as `Value::Text`.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TimestampVerbatimDecoder;
+pub struct TimestampDecoder;
 
-/// Decoder for `timestamptz`. Preserves the wire text verbatim.
+/// Decoder for `timestamptz`, storing the instant in UTC as
+/// `YYYY-MM-DD HH:MM:SS.ffffff+00:00`, which orders as text and which
+/// SQLite's date functions read.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TimestampTzVerbatimDecoder;
+pub struct TimestampTzDecoder;
 
-/// Decoder for `date`. Preserves the wire text verbatim.
+/// Decoder for `date`, storing `YYYY-MM-DD` as `Value::Text`.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DateVerbatimDecoder;
+pub struct DateDecoder;
 
-/// Decoder for `time`/`timetz`. Preserves the wire text verbatim.
+/// Decoder for `time`, storing `HH:MM:SS.ffffff`, and for `timetz`,
+/// storing the UTC time `HH:MM:SS.ffffff+00:00`.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TimeVerbatimDecoder;
+pub struct TimeDecoder;
 
-/// Decoder for `interval`. Preserves the wire text verbatim.
+/// Decoder for `interval`, storing the ISO 8601 duration Postgres prints
+/// under `IntervalStyle = iso_8601`, such as `P1Y2M3DT4H5M6.789S`.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IntervalVerbatimDecoder;
+pub struct IntervalDecoder;
 
 /// Decoder for `json`/`jsonb`. Preserves the wire form verbatim as
 /// `Value::Text`.
