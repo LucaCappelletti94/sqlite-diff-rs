@@ -1,9 +1,10 @@
-//! Tests for the temporal verbatim decoders.
+//! Replica text of the temporal decoders on the text-carrying sources.
 //!
-//! All five (`TimestampVerbatimDecoder`, `TimestampTzVerbatimDecoder`,
-//! `DateVerbatimDecoder`, `TimeVerbatimDecoder`, `IntervalVerbatimDecoder`)
-//! share one contract: preserve wire text verbatim as `Value::Text`.
-//! Null pass-through. Non-string inputs are rejected.
+//! `TimestampTzDecoder` stores UTC as `YYYY-MM-DD HH:MM:SS.ffffff+00:00`,
+//! `TimestampDecoder` stores `YYYY-MM-DD HH:MM:SS.ffffff`, `DateDecoder`
+//! stores `YYYY-MM-DD`, `TimeDecoder` stores `HH:MM:SS.ffffff` or, for a
+//! `timetz`, UTC `HH:MM:SS.ffffff+00:00`, and `IntervalDecoder` stores the
+//! ISO 8601 duration Postgres prints under `IntervalStyle = iso_8601`.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
@@ -15,174 +16,237 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{
-    DateVerbatimDecoder, IntervalVerbatimDecoder, TimeVerbatimDecoder, TimestampTzVerbatimDecoder,
-    TimestampVerbatimDecoder, TypeMap, Value, WireAdapter, WireType,
-};
+use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireType};
 
-// -- Timestamp ---------------------------------------------------------------
+type Decoded = Result<Value<String, Vec<u8>>, DecodeError>;
 
-#[test]
-fn timestamp_verbatim_pg_walstream_and_wal2json() {
-    let wire = "2024-01-15 10:30:00.123456";
+fn pgoutput(wire_type: WireType, text: &str) -> Decoded {
+    let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
+    types.decode(PgWalstreamColumn {
+        column_name: "c",
+        wire_type,
+        data: &ColumnValue::text(text),
+    })
+}
 
-    let cv = ColumnValue::text(wire);
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "t",
-        wire_type: WireType::Timestamp,
-        data: &cv,
-    }
-    .decoded_by(&TimestampVerbatimDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
+fn wal2json(wire_type: WireType, text: &str) -> Decoded {
+    let types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
+    types.decode(Wal2JsonColumn {
+        column_name: "c",
+        wire_type,
+        value: &serde_json::Value::String(text.into()),
+    })
+}
 
-    let s = serde_json::Value::String(wire.into());
-    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
-        column_name: "t",
-        wire_type: WireType::Timestamp,
-        value: &s,
-    }
-    .decoded_by(&TimestampVerbatimDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
+fn maxwell(wire_type: WireType, text: &str) -> Decoded {
+    let types: TypeMap<Maxwell, String, Vec<u8>> = TypeMap::defaults();
+    types.decode(MaxwellColumn {
+        column_name: "c",
+        wire_type,
+        value: &serde_json::Value::String(text.into()),
+    })
+}
+
+fn text(s: &str) -> Value<String, Vec<u8>> {
+    Value::Text(String::from(s))
+}
+
+fn is_malformed(got: &Decoded) -> bool {
+    matches!(got, Err(DecodeError::WrongPayloadKind { column, .. }) if column == "c")
+}
+
+fn is_unrepresentable(got: &Decoded) -> bool {
+    matches!(got, Err(DecodeError::UnrepresentableTemporal { column, .. }) if column == "c")
 }
 
 #[test]
-fn timestamptz_verbatim_preserves_offset() {
-    let wire = "2024-01-15 10:30:00.123456+02:00";
-    let cv = ColumnValue::text(wire);
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "t",
-        wire_type: WireType::TimestampTz,
-        data: &cv,
+fn timestamptz_offsets_become_utc_on_every_source() {
+    for (wire, replica) in [
+        (
+            "2026-09-23 13:42:07.957522+00",
+            "2026-09-23 13:42:07.957522+00:00",
+        ),
+        ("2026-09-23 15:42:07+02", "2026-09-23 13:42:07.000000+00:00"),
+        (
+            "2026-09-23 19:12:07.5+05:30",
+            "2026-09-23 13:42:07.500000+00:00",
+        ),
+        ("2026-09-23 13:42:07Z", "2026-09-23 13:42:07.000000+00:00"),
+        (
+            "2026-09-23 08:42:07-05:00",
+            "2026-09-23 13:42:07.000000+00:00",
+        ),
+        (
+            "2026-09-24 01:12:07+11:30",
+            "2026-09-23 13:42:07.000000+00:00",
+        ),
+        ("2026-01-01 00:30:00+01", "2025-12-31 23:30:00.000000+00:00"),
+    ] {
+        assert_eq!(
+            pgoutput(WireType::TimestampTz, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+        assert_eq!(
+            wal2json(WireType::TimestampTz, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+        assert_eq!(
+            maxwell(WireType::TimestampTz, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
     }
-    .decoded_by(&TimestampTzVerbatimDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
 }
 
-// -- Date / Time / Interval --------------------------------------------------
-
 #[test]
-fn date_time_interval_verbatim() {
-    let dates = ("2024-05-14", DateVerbatimDecoder);
-    let times = ("15:30:45.123", TimeVerbatimDecoder);
-    let intervals = ("1 year 2 months 3 days", IntervalVerbatimDecoder);
-
-    let (wire, decoder) = dates;
-    let cv = ColumnValue::text(wire);
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "d",
-        wire_type: WireType::Date,
-        data: &cv,
-    }
-    .decoded_by(&decoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
-
-    let cv = ColumnValue::text(times.0);
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "t",
-        wire_type: WireType::Time,
-        data: &cv,
-    }
-    .decoded_by(&times.1)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(times.0)));
-
-    let cv = ColumnValue::text(intervals.0);
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "i",
-        wire_type: WireType::Interval,
-        data: &cv,
-    }
-    .decoded_by(&intervals.1)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(intervals.0)));
+fn timestamptz_without_offset_is_utc_only_on_maxwell() {
+    let bare = "2026-09-23 13:42:07.5";
+    assert_eq!(
+        maxwell(WireType::TimestampTz, bare),
+        Ok(text("2026-09-23 13:42:07.500000+00:00"))
+    );
+    assert!(is_malformed(&pgoutput(WireType::TimestampTz, bare)));
+    assert!(is_malformed(&wal2json(WireType::TimestampTz, bare)));
 }
 
-// -- Maxwell -----------------------------------------------------------------
-
 #[test]
-fn maxwell_datetime_verbatim() {
-    let wire = "2024-01-15 10:30:00";
-    let s = serde_json::Value::String(wire.into());
-    let got: Value<String, Vec<u8>> = MaxwellColumn {
-        column_name: "t",
-        wire_type: WireType::Timestamp,
-        value: &s,
+fn timestamp_fraction_is_padded_to_microseconds() {
+    for (wire, replica) in [
+        ("2024-01-15 10:30:00", "2024-01-15 10:30:00.000000"),
+        ("2024-01-15 10:30:00.123456", "2024-01-15 10:30:00.123456"),
+        ("2024-01-15 10:30:00.1", "2024-01-15 10:30:00.100000"),
+    ] {
+        assert_eq!(
+            pgoutput(WireType::Timestamp, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+        assert_eq!(
+            wal2json(WireType::Timestamp, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+        assert_eq!(
+            maxwell(WireType::Timestamp, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
     }
-    .decoded_by(&TimestampVerbatimDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
 }
 
-// -- Null pass-through -------------------------------------------------------
-
 #[test]
-fn temporal_null_pass_through() {
-    let cv = ColumnValue::Null;
-    let got: Value<String, Vec<u8>> = PgWalstreamColumn {
-        column_name: "t",
-        wire_type: WireType::Timestamp,
-        data: &cv,
+fn date_time_and_timetz_on_every_source() {
+    for (wire_type, wire, replica) in [
+        (WireType::Date, "2024-05-14", "2024-05-14"),
+        (WireType::Time, "15:30:45.123", "15:30:45.123000"),
+        (WireType::Time, "15:30:45", "15:30:45.000000"),
+        (WireType::Time, "15:30:45+02", "13:30:45.000000+00:00"),
+    ] {
+        assert_eq!(pgoutput(wire_type, wire), Ok(text(replica)), "{wire}");
+        assert_eq!(wal2json(wire_type, wire), Ok(text(replica)), "{wire}");
+        assert_eq!(maxwell(wire_type, wire), Ok(text(replica)), "{wire}");
     }
-    .decoded_by(&TimestampVerbatimDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Null);
 }
 
-// -- Defaults ----------------------------------------------------------------
+#[test]
+fn interval_postgres_style_becomes_iso_8601() {
+    for (wire, replica) in [
+        ("1 year 2 mons 3 days 04:05:06.789", "P1Y2M3DT4H5M6.789S"),
+        ("1 day", "P1D"),
+        ("2 years", "P2Y"),
+        ("00:00:00", "PT0S"),
+    ] {
+        assert_eq!(
+            pgoutput(WireType::Interval, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+        assert_eq!(
+            wal2json(WireType::Interval, wire),
+            Ok(text(replica)),
+            "{wire}"
+        );
+    }
+}
 
 #[test]
-fn defaults_route_temporal_types() {
-    let pg: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    let w2j: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::defaults();
-    let mx: TypeMap<Maxwell, String, Vec<u8>> = TypeMap::defaults();
+fn interval_in_another_interval_style_is_refused() {
+    for wire in [
+        "P1Y2M3DT4H5M6.789S",
+        "@ 1 year 2 mons",
+        "1-2 3 4:05:06.789",
+        "1 year 2 months",
+        "1 day ago",
+    ] {
+        assert!(is_malformed(&pgoutput(WireType::Interval, wire)), "{wire}");
+    }
+}
 
-    let wire = "2024-01-15 10:30:00";
+#[test]
+fn malformed_temporal_text_is_refused() {
+    for (wire_type, wire) in [
+        (WireType::Date, "2024-02-30"),
+        (WireType::Date, "2024-13-01"),
+        (WireType::Date, "24-01-01"),
+        (WireType::Date, "2024-01-01 "),
+        (WireType::Timestamp, "2024-01-15T10:30:00"),
+        (WireType::Timestamp, "2024-01-15 10:60:00"),
+        (WireType::Timestamp, "2024-01-15 10:30:00.1234567"),
+        (WireType::Timestamp, "2024-01-15 10:30:00+00"),
+        (WireType::TimestampTz, "2024-01-15 10:30:00+24"),
+        (WireType::TimestampTz, "2024-01-15 10:30:00+0200"),
+        (WireType::Time, "25:00:00"),
+        (WireType::Time, "-01:00:00"),
+        (WireType::Time, "10:30"),
+    ] {
+        assert!(
+            is_malformed(&pgoutput(wire_type, wire)),
+            "{wire_type:?} {wire}"
+        );
+    }
+}
 
-    // pg_walstream timestamp
-    let cv = ColumnValue::text(wire);
-    let got = pg
-        .decode(PgWalstreamColumn {
-            column_name: "t",
-            wire_type: WireType::Timestamp,
-            data: &cv,
-        })
-        .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
+#[test]
+fn temporal_values_a_replica_cannot_hold_are_refused() {
+    for (wire_type, wire) in [
+        (WireType::Date, "infinity"),
+        (WireType::Date, "-infinity"),
+        (WireType::Date, "0044-03-15 BC"),
+        (WireType::Date, "10000-01-01"),
+        (WireType::Date, "0000-01-01"),
+        (WireType::Timestamp, "infinity"),
+        (WireType::Timestamp, "10000-01-01 00:00:00"),
+        (WireType::TimestampTz, "0001-01-01 00:30:00+01"),
+        (WireType::TimestampTz, "9999-12-31 23:30:00-01"),
+        (WireType::TimestampTz, "-infinity"),
+        (WireType::Time, "24:00:00"),
+        (WireType::Interval, "infinity"),
+        (WireType::Interval, "-infinity"),
+    ] {
+        assert!(
+            is_unrepresentable(&pgoutput(wire_type, wire)),
+            "{wire_type:?} {wire}"
+        );
+    }
+}
 
-    // wal2json timestamp
-    let s = serde_json::Value::String(wire.into());
-    let got = w2j
-        .decode(Wal2JsonColumn {
-            column_name: "t",
-            wire_type: WireType::Timestamp,
-            value: &s,
-        })
-        .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
-
-    // maxwell datetime
-    let got = mx
-        .decode(MaxwellColumn {
-            column_name: "t",
-            wire_type: WireType::Timestamp,
-            value: &s,
-        })
-        .unwrap();
-    assert_eq!(got, Value::Text(String::from(wire)));
-
-    // pg_walstream date
-    let d = "2024-05-14";
-    let cv = ColumnValue::text(d);
-    let got = pg
-        .decode(PgWalstreamColumn {
-            column_name: "d",
-            wire_type: WireType::Date,
-            data: &cv,
-        })
-        .unwrap();
-    assert_eq!(got, Value::Text(String::from(d)));
+#[test]
+fn temporal_null_passes_through() {
+    let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
+    for wire_type in [
+        WireType::Date,
+        WireType::Time,
+        WireType::Timestamp,
+        WireType::TimestampTz,
+        WireType::Interval,
+    ] {
+        let got = types.decode(PgWalstreamColumn {
+            column_name: "c",
+            wire_type,
+            data: &ColumnValue::Null,
+        });
+        assert_eq!(got, Ok(Value::Null), "{wire_type:?}");
+    }
 }

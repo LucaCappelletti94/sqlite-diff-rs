@@ -4,21 +4,24 @@
 //!
 //! The Postgres binary send format is the same whether it arrives over
 //! logical replication in binary mode or as a binary query result, so
-//! these decoders mirror the binary arms of the `PgWalstream` impls and
+//! these decoders share the binary arms of the `PgWalstream` impls and
 //! produce byte-identical [`Value`]s.
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::decoder::{
-    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, IntDecoder,
-    IntervalVerbatimDecoder, JsonVerbatimDecoder, NullDecoder, PgByteaBinaryDecoder, RealDecoder,
-    TextDecoder, TimeVerbatimDecoder, TimestampTzVerbatimDecoder, TimestampVerbatimDecoder,
-    UuidBlob16Decoder,
+    BoolDecoder, DateDecoder, DecimalTextDecoder, Decoder, IntDecoder, IntervalDecoder,
+    JsonVerbatimDecoder, NullDecoder, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder,
 };
 use super::error::DecodeError;
-use super::scalar_helpers::{decode_pg_bool_binary, decode_pg_int_binary, decode_pg_real_binary};
+use super::scalar_helpers::{
+    decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
+    decode_pg_real_binary,
+};
 use super::source::{PgBinary, PgBinaryColumn};
+use super::temporal::{Temporal, decode_temporal_binary};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
 use crate::encoding::Value;
@@ -131,41 +134,55 @@ where
     }
 }
 
-// ------------------------------------------------------------------
-// Deferred set. Their binary layouts are numeric and must be rendered
-// back to text byte-identically to the verbatim/decimal CDC decoders
-// before they can be enabled. Until then they return a clear error
-// rather than a lossy or diverging value. The `defaults()` map already
-// routes each deferred WireType to its eventual decoder so enabling one
-// later is a body change, not a wiring change.
-// ------------------------------------------------------------------
+impl<S, B> Decoder<PgBinary, S, B> for DecimalTextDecoder
+where
+    S: From<String>,
+{
+    fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.raw {
+            None => Ok(Value::Null),
+            Some(bytes) => decode_pg_numeric_binary(payload.column_name, bytes),
+        }
+    }
+}
 
-macro_rules! not_yet_impl {
-    ($decoder:ty) => {
-        impl<S, B> Decoder<PgBinary, S, B> for $decoder {
+impl<S, B> Decoder<PgBinary, S, B> for JsonVerbatimDecoder
+where
+    S: From<String>,
+{
+    fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        match payload.raw {
+            None => Ok(Value::Null),
+            Some(bytes) => decode_pg_json_binary(payload.column_name, payload.wire_type, bytes),
+        }
+    }
+}
+
+macro_rules! temporal_impl {
+    ($decoder:ty, $kind:expr) => {
+        impl<S, B> Decoder<PgBinary, S, B> for $decoder
+        where
+            S: From<String>,
+        {
             fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-                if payload.raw.is_none() {
-                    return Ok(Value::Null);
+                match payload.raw {
+                    None => Ok(Value::Null),
+                    Some(bytes) => decode_temporal_binary(payload.column_name, $kind, bytes),
                 }
-                Err(DecodeError::NotYetImplemented {
-                    decoder: stringify!($decoder),
-                })
             }
         }
     };
 }
 
-not_yet_impl!(DecimalTextDecoder);
-not_yet_impl!(TimestampVerbatimDecoder);
-not_yet_impl!(TimestampTzVerbatimDecoder);
-not_yet_impl!(DateVerbatimDecoder);
-not_yet_impl!(TimeVerbatimDecoder);
-not_yet_impl!(IntervalVerbatimDecoder);
-not_yet_impl!(JsonVerbatimDecoder);
+temporal_impl!(DateDecoder, Temporal::Date);
+temporal_impl!(TimeDecoder, Temporal::Time);
+temporal_impl!(TimestampDecoder, Temporal::Timestamp);
+temporal_impl!(TimestampTzDecoder, Temporal::TimestampTz);
+temporal_impl!(IntervalDecoder, Temporal::Interval);
 
 impl<S, B> TypeMapDefaults<S, B> for PgBinary
 where
-    S: From<alloc::string::String>,
+    S: From<String>,
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
@@ -177,11 +194,11 @@ where
             .with(WireType::Bytes, PgByteaBinaryDecoder)
             .with(WireType::Uuid, UuidBlob16Decoder)
             .with(WireType::Decimal, DecimalTextDecoder)
-            .with(WireType::Timestamp, TimestampVerbatimDecoder)
-            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
-            .with(WireType::Date, DateVerbatimDecoder)
-            .with(WireType::Time, TimeVerbatimDecoder)
-            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Timestamp, TimestampDecoder)
+            .with(WireType::TimestampTz, TimestampTzDecoder)
+            .with(WireType::Date, DateDecoder)
+            .with(WireType::Time, TimeDecoder)
+            .with(WireType::Interval, IntervalDecoder)
             .with(WireType::Json, JsonVerbatimDecoder)
             .with(WireType::Jsonb, JsonVerbatimDecoder)
     }

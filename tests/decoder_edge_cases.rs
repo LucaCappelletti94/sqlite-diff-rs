@@ -347,7 +347,7 @@ fn pg_decimal_text_decoder_invalid_utf8() {
 }
 
 #[test]
-fn pg_decimal_text_decoder_binary_rejected() {
+fn pg_decimal_malformed_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
@@ -361,11 +361,11 @@ fn pg_decimal_text_decoder_binary_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// pg_walstream — verbatim decoder binary rejection
+// pg_walstream — malformed binary payloads
 // ---------------------------------------------------------------------------
 
 #[test]
-fn pg_timestamp_decoder_binary_rejected() {
+fn pg_timestamp_malformed_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
@@ -379,7 +379,7 @@ fn pg_timestamp_decoder_binary_rejected() {
 }
 
 #[test]
-fn pg_timestamptz_decoder_binary_rejected() {
+fn pg_timestamptz_malformed_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
@@ -393,21 +393,21 @@ fn pg_timestamptz_decoder_binary_rejected() {
 }
 
 #[test]
-fn pg_json_decoder_binary_rejected() {
+fn pg_json_non_utf8_binary_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",
         wire_type: WireType::Json,
-        data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0x00, 0x01])),
+        data: &ColumnValue::Binary(Bytes::copy_from_slice(&[0xff, 0xfe])),
     });
     match result {
-        Err(DecodeError::WrongPayloadKind { column, .. }) => assert_eq!(column, "c"),
-        other => panic!("expected WrongPayloadKind, got {other:?}"),
+        Err(DecodeError::InvalidUtf8 { column }) => assert_eq!(column, "c"),
+        other => panic!("expected InvalidUtf8, got {other:?}"),
     }
 }
 
 #[test]
-fn pg_jsonb_decoder_binary_rejected() {
+fn pg_jsonb_unknown_binary_version_rejected() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let result = types.decode(PgWalstreamColumn {
         column_name: "c",

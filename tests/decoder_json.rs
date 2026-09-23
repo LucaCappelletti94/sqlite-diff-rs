@@ -100,6 +100,22 @@ fn json_canonical_sorts_keys() {
 }
 
 #[test]
+fn json_canonical_pg_walstream_binary_jsonb_matches_text() {
+    let text = ColumnValue::text("{\"z\": 1, \"a\": 2}");
+    let binary = ColumnValue::Binary(bytes::Bytes::from_static(b"\x01{\"z\": 1, \"a\": 2}"));
+    for data in [&text, &binary] {
+        let got: Value<String, Vec<u8>> = PgWalstreamColumn {
+            column_name: "data",
+            wire_type: WireType::Jsonb,
+            data,
+        }
+        .decoded_by(&JsonCanonicalDecoder)
+        .unwrap();
+        assert_eq!(got, Value::Text(String::from("{\"a\":2,\"z\":1}")));
+    }
+}
+
+#[test]
 fn json_canonical_recurses_into_nested_objects() {
     let src: serde_json::Value =
         serde_json::from_str("{\"z\": {\"b\": 1, \"a\": 2}, \"a\": [3, 4]}").unwrap();

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+`TimestampVerbatimDecoder`, `TimestampTzVerbatimDecoder`, `DateVerbatimDecoder`, `TimeVerbatimDecoder` and `IntervalVerbatimDecoder` are renamed `TimestampDecoder`, `TimestampTzDecoder`, `DateDecoder`, `TimeDecoder` and `IntervalDecoder`, and each stores one text form per type on every source, so a replica holds the same string whether a value arrived as pgoutput text, a pgoutput binary payload, wal2json, Maxwell or a `PgBinary` query result. A `timestamptz` is the UTC instant `YYYY-MM-DD HH:MM:SS.ffffff+00:00`, which orders as text and which SQLite's date functions and diesel's SQLite chrono types read. A `timestamp` is `YYYY-MM-DD HH:MM:SS.ffffff`, a `date` is `YYYY-MM-DD`, a `time` is `HH:MM:SS.ffffff`, and a `timetz` is its UTC time followed by `+00:00`. An `interval` is the ISO 8601 duration Postgres prints under `IntervalStyle = iso_8601`, such as `P1Y2M3DT4H5M6.789S`. Text sources read Postgres's output under the default `DateStyle = ISO` and `IntervalStyle = postgres`, and Maxwell's offset-less `TIMESTAMP` reads as UTC. Other text is a `DecodeError::WrongPayloadKind`, and `infinity`, `-infinity`, a year outside 1 to 9999, a `time` of `24:00:00` and an infinite `interval` are the new `DecodeError::UnrepresentableTemporal`, because no replica reader can hold them.
+
+A `timetz` value carries a `+00:00` offset, so an upload path that parses the replica's `time` text as plain `HH:MM:SS[.f]` refuses it, and such a column replicates but does not upload until that parser accepts the offset. Interval text in an `IntervalStyle` other than `postgres`, such as `postgres_verbose`, `sql_standard` or `iso_8601`, is a `WrongPayloadKind` error rather than stored as received, so on a server configured that way every text-mode change event carrying an `interval` fails. `PgBinary` snapshots and binary-mode pgoutput read the binary form and do not depend on the setting.
+
+### Added
+
+`PgBinary` decodes `numeric`, `timestamp`, `timestamptz`, `date`, `time`, `timetz`, `interval`, `json` and `jsonb` through `TypeMap::defaults()`, and a binary-mode `PgWalstream` payload of those types decodes through the same code, so a snapshot and a live change of one row store byte-identical values. A `numeric` is the text Postgres prints for it, `NaN` and `Infinity` included, and a `jsonb` is its normalized text.
+
 ## 0.13.0
 
 ### Breaking

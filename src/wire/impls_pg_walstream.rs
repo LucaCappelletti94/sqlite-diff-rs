@@ -4,16 +4,17 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use super::decoder::{
-    BoolDecoder, DateVerbatimDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder,
-    IntDecoder, IntervalVerbatimDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder,
-    MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder,
-    TextDecoder, TimeVerbatimDecoder, TimestampTzVerbatimDecoder, TimestampVerbatimDecoder,
-    UuidBlob16Decoder, UuidText36Decoder,
+    BoolDecoder, DateDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder, IntDecoder,
+    IntervalDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
 use super::scalar_helpers::{
-    decode_pg_bool_binary, decode_pg_int_binary, decode_pg_real_binary, normalize_real,
+    decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
+    decode_pg_real_binary, normalize_real, pg_json_binary_text,
 };
+use super::temporal::{Temporal, decode_temporal_binary, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
 use crate::encoding::Value;
@@ -334,9 +335,15 @@ where
     }
 }
 
-// ------------------------------------------------------------------
-// DecimalTextDecoder
-// ------------------------------------------------------------------
+/// The UTF-8 text of a text-mode payload.
+fn text_of<'a>(payload: &PgWalstreamColumn<'a>) -> Result<&'a str, DecodeError> {
+    payload
+        .data
+        .as_str()
+        .ok_or_else(|| DecodeError::InvalidUtf8 {
+            column: payload.column_name.to_string(),
+        })
+}
 
 impl<S, B> Decoder<PgWalstream, S, B> for DecimalTextDecoder
 where
@@ -345,20 +352,8 @@ where
     fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
         match payload.data {
             ColumnValue::Null => Ok(Value::Null),
-            ColumnValue::Text(_) => {
-                let s = payload
-                    .data
-                    .as_str()
-                    .ok_or_else(|| DecodeError::InvalidUtf8 {
-                        column: payload.column_name.to_string(),
-                    })?;
-                Ok(Value::Text(S::from(s.to_string())))
-            }
-            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "text-mode numeric",
-                actual: "binary payload",
-            }),
+            ColumnValue::Text(_) => Ok(Value::Text(S::from(text_of(&payload)?.to_string()))),
+            ColumnValue::Binary(b) => decode_pg_numeric_binary(payload.column_name, b),
         }
     }
 }
@@ -379,84 +374,60 @@ macro_rules! not_yet_impl {
     };
 }
 
-// ------------------------------------------------------------------
-// Temporal verbatim decoders
-//
-// Preserve wire text form as `Value::Text`. Null pass-through.
-// Reject binary payloads.
-// ------------------------------------------------------------------
-
-fn decode_pg_text_verbatim<S, B>(payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError>
-where
-    S: From<alloc::string::String>,
-{
-    match payload.data {
-        ColumnValue::Null => Ok(Value::Null),
-        ColumnValue::Text(_) => {
-            let s = payload
-                .data
-                .as_str()
-                .ok_or_else(|| DecodeError::InvalidUtf8 {
-                    column: payload.column_name.to_string(),
-                })?;
-            Ok(Value::Text(S::from(s.to_string())))
-        }
-        ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
-            column: payload.column_name.to_string(),
-            expected: "text form",
-            actual: "binary payload",
-        }),
-    }
-}
-
-macro_rules! verbatim_impl {
-    ($decoder:ty) => {
+macro_rules! temporal_impl {
+    ($decoder:ty, $kind:expr) => {
         impl<S, B> Decoder<PgWalstream, S, B> for $decoder
         where
             S: From<alloc::string::String>,
         {
             fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-                decode_pg_text_verbatim(payload)
+                match payload.data {
+                    ColumnValue::Null => Ok(Value::Null),
+                    ColumnValue::Text(_) => {
+                        decode_temporal_text(payload.column_name, $kind, text_of(&payload)?)
+                    }
+                    ColumnValue::Binary(b) => decode_temporal_binary(payload.column_name, $kind, b),
+                }
             }
         }
     };
 }
 
-verbatim_impl!(TimestampVerbatimDecoder);
-verbatim_impl!(TimestampTzVerbatimDecoder);
-verbatim_impl!(DateVerbatimDecoder);
-verbatim_impl!(TimeVerbatimDecoder);
-verbatim_impl!(IntervalVerbatimDecoder);
+temporal_impl!(DateDecoder, Temporal::Date);
+temporal_impl!(TimeDecoder, Temporal::Time);
+temporal_impl!(TimestampDecoder, Temporal::Timestamp);
+temporal_impl!(TimestampTzDecoder, Temporal::TimestampTz);
+temporal_impl!(IntervalDecoder, Temporal::Interval);
 
-verbatim_impl!(JsonVerbatimDecoder);
-
-// For pg_walstream, JSON canonical is the same as verbatim because
-// the wire carries JSON as opaque text; canonicalization requires
-// re-parsing which lives in the JSON helpers on the wal2json /
-// maxwell paths.
-impl<S, B> Decoder<PgWalstream, S, B> for JsonCanonicalDecoder
+impl<S, B> Decoder<PgWalstream, S, B> for JsonVerbatimDecoder
 where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
         match payload.data {
             ColumnValue::Null => Ok(Value::Null),
-            ColumnValue::Text(_) => {
-                let s = payload
-                    .data
-                    .as_str()
-                    .ok_or_else(|| DecodeError::InvalidUtf8 {
-                        column: payload.column_name.to_string(),
-                    })?;
-                let canon = crate::wire::json_helpers::canonicalize_string(s);
-                Ok(Value::Text(S::from(canon)))
+            ColumnValue::Text(_) => Ok(Value::Text(S::from(text_of(&payload)?.to_string()))),
+            ColumnValue::Binary(b) => {
+                decode_pg_json_binary(payload.column_name, payload.wire_type, b)
             }
-            ColumnValue::Binary(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "text-mode JSON",
-                actual: "binary payload",
-            }),
         }
+    }
+}
+
+impl<S, B> Decoder<PgWalstream, S, B> for JsonCanonicalDecoder
+where
+    S: From<alloc::string::String>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let text = match payload.data {
+            ColumnValue::Null => return Ok(Value::Null),
+            ColumnValue::Text(_) => text_of(&payload)?,
+            ColumnValue::Binary(b) => {
+                pg_json_binary_text(payload.column_name, payload.wire_type, b)?
+            }
+        };
+        let canon = crate::wire::json_helpers::canonicalize_string(text);
+        Ok(Value::Text(S::from(canon)))
     }
 }
 
@@ -477,11 +448,11 @@ where
             .with(WireType::Bytes, PgByteaBinaryDecoder)
             .with(WireType::Uuid, UuidText36Decoder)
             .with(WireType::Decimal, DecimalTextDecoder)
-            .with(WireType::Timestamp, TimestampVerbatimDecoder)
-            .with(WireType::TimestampTz, TimestampTzVerbatimDecoder)
-            .with(WireType::Date, DateVerbatimDecoder)
-            .with(WireType::Time, TimeVerbatimDecoder)
-            .with(WireType::Interval, IntervalVerbatimDecoder)
+            .with(WireType::Timestamp, TimestampDecoder)
+            .with(WireType::TimestampTz, TimestampTzDecoder)
+            .with(WireType::Date, DateDecoder)
+            .with(WireType::Time, TimeDecoder)
+            .with(WireType::Interval, IntervalDecoder)
             .with(WireType::Json, JsonVerbatimDecoder)
             .with(WireType::Jsonb, JsonVerbatimDecoder)
     }
