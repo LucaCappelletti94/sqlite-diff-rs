@@ -1,0 +1,5 @@
+name: sqlite-diff-rs
+
+# Test assertion messages print decoded values, which the Rust queries read as secrets written to a log.
+paths-ignore:
+  - tests/**
