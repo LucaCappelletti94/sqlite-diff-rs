@@ -44,7 +44,7 @@ jobs:
       # rust-src is required so -Zbuild-std can recompile the standard library
       # with the sanitizer enabled.
       - name: Install Rust nightly with rust-src
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
         with:
           components: rust-src
 
