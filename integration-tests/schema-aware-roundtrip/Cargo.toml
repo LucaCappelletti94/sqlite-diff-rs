@@ -33,7 +33,7 @@ testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
 tokio-util = "0.7"
-pg_walstream = "0.8"
+pg_walstream = "0.9"
 
 [lints]
 workspace = true

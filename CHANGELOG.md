@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+The optional `pg_walstream` dependency moves from 0.8 to 0.9, so the `pg_walstream` and `pg_walstream_reverse` module re-exports resolve to `pg_walstream` 0.9 types, and a consumer of the `pg-walstream` feature that also depends on `pg_walstream` directly must move to 0.9 with it. `pg_walstream` 0.9 decodes a pgoutput timestamp before 1970 into the right instant and clamps one beyond chrono's range to `DateTime::<Utc>::MIN_UTC` or `MAX_UTC`, so `PgOutputDecoder::decode_message` returns an event for every `BEGIN`, `COMMIT` or `PREPARE` message whatever timestamp it carries.
+
 ## 0.14.0
 
 ### Breaking
