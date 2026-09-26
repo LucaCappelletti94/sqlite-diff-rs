@@ -507,8 +507,8 @@ dependencies = [
 
 [[package]]
 name = "diesel"
-version = "2.3.12"
-source = "git+https://github.com/diesel-rs/diesel#728f9df49e0a739746a758752ac064453a4c79b2"
+version = "2.3.13"
+source = "git+https://github.com/diesel-rs/diesel#9cca182377c40918a93120181b54c94317d68359"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -526,7 +526,7 @@ dependencies = [
 [[package]]
 name = "diesel-sqlite-session"
 version = "0.1.0"
-source = "git+https://github.com/LucaCappelletti94/diesel-sqlite-session#f6aba483a6a031c735a63639a7c13380b3b696ac"
+source = "git+https://github.com/LucaCappelletti94/diesel-sqlite-session#e5a5ce7f34dc7a41fd6350e32f19c7ea3593f43b"
 dependencies = [
  "diesel",
  "libsqlite3-sys",
@@ -537,7 +537,7 @@ dependencies = [
 [[package]]
 name = "diesel_attribute_parser"
 version = "0.1.0"
-source = "git+https://github.com/diesel-rs/diesel#728f9df49e0a739746a758752ac064453a4c79b2"
+source = "git+https://github.com/diesel-rs/diesel#9cca182377c40918a93120181b54c94317d68359"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -546,8 +546,8 @@ dependencies = [
 
 [[package]]
 name = "diesel_derives"
-version = "2.3.9"
-source = "git+https://github.com/diesel-rs/diesel#728f9df49e0a739746a758752ac064453a4c79b2"
+version = "2.3.10"
+source = "git+https://github.com/diesel-rs/diesel#9cca182377c40918a93120181b54c94317d68359"
 dependencies = [
  "diesel_attribute_parser",
  "diesel_table_macro_syntax",
@@ -560,7 +560,7 @@ dependencies = [
 [[package]]
 name = "diesel_table_macro_syntax"
 version = "0.3.0"
-source = "git+https://github.com/diesel-rs/diesel#728f9df49e0a739746a758752ac064453a4c79b2"
+source = "git+https://github.com/diesel-rs/diesel#9cca182377c40918a93120181b54c94317d68359"
 dependencies = [
  "syn 3.0.4",
 ]
@@ -608,7 +608,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 [[package]]
 name = "dsl_auto_type"
 version = "0.2.0"
-source = "git+https://github.com/diesel-rs/diesel#728f9df49e0a739746a758752ac064453a4c79b2"
+source = "git+https://github.com/diesel-rs/diesel#9cca182377c40918a93120181b54c94317d68359"
 dependencies = [
  "darling 0.24.1",
  "either",
