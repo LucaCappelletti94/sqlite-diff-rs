@@ -239,7 +239,7 @@ See fuzz regressions #2 and #4.
 | `dyn_table.rs` | `DynTable` trait | Object-safe: `name()`, `number_of_columns()`, `write_pk_flags()` |
 | `dyn_table.rs` | `SchemaWithPK` trait | Extends `DynTable` with `extract_pk()`, `number_of_primary_keys()`, `primary_key_index()` |
 | `dyn_table.rs` | `IndexableValues` trait | Internal: get a `Value` by column index from various collection types |
-| `simple_table.rs` | `SimpleTable` struct | Schema with column names, per-column `Affinity` and an optional rowid alias; wraps `TableSchema<String>` |
+| `simple_table.rs` | `SimpleTable` struct | Schema with column names, per-column `Affinity` and an optional rowid alias, wrapping `TableSchema<String>` |
 | `simple_table.rs` | `NamedColumns` trait | `column_index(name)`, `column_affinity(index)`, `rowid_alias()`, needed for SQL digestion |
 
 **PK flags format**: Each byte is the 1-based ordinal position in the composite PK
@@ -255,7 +255,7 @@ DynTable (object-safe, basic schema)
 
 Concrete implementors:
 - `TableSchema<S>` — from binary parser, no column names (implements `DynTable`, `SchemaWithPK`)
-- `SimpleTable` — wraps `TableSchema<String>` + column names and affinities (implements all three traits)
+- `SimpleTable` wraps `TableSchema<String>` with column names and affinities (implements all three traits)
 
 ---
 
@@ -360,7 +360,7 @@ Parse errors are in `parser::ParseError` and `builders::sql::ParseError`.
 | Helper | Purpose |
 |--------|---------|
 | `SqlType` | Declared column types (`Integer`, `Text`, `Real`, `Blob`, `Numeric`, `Untyped`) |
-| `TypedSimpleTable` | `SimpleTable` + column types; a lone `INTEGER` key is a rowid alias; `Display` emits `CREATE TABLE` DDL; implements `Arbitrary` |
+| `TypedSimpleTable` | `SimpleTable` plus column types. A lone `INTEGER` key is a rowid alias. `Display` emits `CREATE TABLE` DDL, and it implements `Arbitrary` |
 | `session_changeset_and_patchset(sqls)` | Execute SQL in rusqlite, capture raw changeset + patchset bytes |
 | `byte_diff_report(label, expected, actual)` | Human-readable byte-level diff |
 | `assert_bit_parity(sqls, our_cs, our_ps)` | Assert byte-equality with rusqlite output |

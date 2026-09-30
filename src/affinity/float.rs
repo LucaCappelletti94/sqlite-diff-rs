@@ -460,6 +460,7 @@ pub(super) fn atoi64(text: &[u8]) -> (i32, i64) {
     reason = "truncation toward zero is the conversion SQLite applies"
 )]
 fn real_to_i64(r: f64) -> i64 {
+    debug_assert!(!r.is_nan(), "callers map NaN to NULL before converting");
     if r < -9_223_372_036_854_774_784.0 {
         i64::MIN
     } else if r > 9_223_372_036_854_774_784.0 {

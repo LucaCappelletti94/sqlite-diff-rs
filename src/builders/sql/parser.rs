@@ -103,6 +103,17 @@ pub enum ParseError<'a> {
         /// Index of the rowid alias column.
         column: usize,
     },
+    /// `INSERT` leaves the rowid alias column `NULL` or out, so SQLite assigns
+    /// a rowid the statement does not state.
+    #[error(
+        "column {column} of table '{table}' aliases the rowid and needs a value, because SQLite would assign one"
+    )]
+    MissingRowid {
+        /// The table name.
+        table: &'a str,
+        /// Index of the rowid alias column.
+        column: usize,
+    },
 }
 
 /// SQL parser. Collects operations into a pending list without applying
@@ -259,16 +270,22 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         self.expect(&TokenKind::RParen)?;
 
-        if let Some(alias) = table.rowid_alias()
-            && matches!(
-                values[alias],
-                Value::Text(_) | Value::Real(_) | Value::Blob(_)
-            )
-        {
-            return Err(ParseError::DatatypeMismatch {
-                table: table_name,
-                column: alias,
-            });
+        if let Some(alias) = table.rowid_alias() {
+            match values[alias] {
+                Value::Integer(_) => {}
+                Value::Null => {
+                    return Err(ParseError::MissingRowid {
+                        table: table_name,
+                        column: alias,
+                    });
+                }
+                Value::Text(_) | Value::Real(_) | Value::Blob(_) => {
+                    return Err(ParseError::DatatypeMismatch {
+                        table: table_name,
+                        column: alias,
+                    });
+                }
+            }
         }
 
         self.pending.push((
@@ -885,6 +902,29 @@ mod tests {
             assert_eq!(
                 err,
                 ParseError::DatatypeMismatch {
+                    table: "k",
+                    column: 1
+                },
+                "{sql}"
+            );
+            assert_eq!(builder.build(), before, "{sql}");
+        }
+    }
+
+    #[test]
+    fn test_digest_rowid_alias_refuses_null_or_omitted_key() {
+        let k = SimpleTable::with_rowid_alias("k", &[("v", ""), ("id", "INTEGER")], 1);
+        let mut builder = make_builder(&[k]);
+        builder.digest_sql("INSERT INTO k VALUES (1, 1)").unwrap();
+        let before = builder.build();
+        for sql in [
+            "INSERT INTO k VALUES (1, NULL)",
+            "INSERT INTO k (v) VALUES (1)",
+        ] {
+            let err = builder.digest_sql(sql).unwrap_err();
+            assert_eq!(
+                err,
+                ParseError::MissingRowid {
                     table: "k",
                     column: 1
                 },

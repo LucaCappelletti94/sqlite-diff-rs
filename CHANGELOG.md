@@ -12,7 +12,7 @@ A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and
 
 `SimpleTable::new` takes each column as a `(name, declared type)` pair, with `""` for an untyped column, and `SimpleTable::with_rowid_alias` builds a rowid table whose single `INTEGER PRIMARY KEY` column aliases the rowid. `NamedColumns` gains the required methods `column_affinity` and `rowid_alias`. `testing::SqlType` gains `Numeric` and `Untyped`, and `TypedSimpleTable` treats a lone `INTEGER` key as a rowid alias, as the DDL it emits makes it.
 
-`digest_sql` returns the new `ParseError::DatatypeMismatch` when an `INSERT` gives a rowid alias a value that does not convert to an integer, which SQLite refuses.
+`digest_sql` returns the new `ParseError::DatatypeMismatch` when an `INSERT` gives a rowid alias a value that does not convert to an integer, which SQLite refuses, and the new `ParseError::MissingRowid` when an `INSERT` leaves the rowid alias `NULL` or out, because SQLite would assign a rowid the statement does not state.
 
 ### Added
 

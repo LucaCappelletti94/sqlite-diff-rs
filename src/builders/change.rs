@@ -859,10 +859,12 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
     /// as SQLite converts a value before storing or comparing it, so an
     /// integer written into a `TEXT` column is recorded as text. A table built
     /// with [`SimpleTable::with_rowid_alias`](crate::SimpleTable::with_rowid_alias)
-    /// accepts only a key that converts to an integer and returns
+    /// accepts only a key that converts to an integer, returning
     /// [`ParseError::DatatypeMismatch`](crate::builders::sql::ParseError::DatatypeMismatch)
-    /// otherwise. A `WHERE` no row can satisfy, a `NULL` key or a non-integer
-    /// rowid key, records nothing.
+    /// otherwise, and an `INSERT` must give that key, returning
+    /// [`ParseError::MissingRowid`](crate::builders::sql::ParseError::MissingRowid)
+    /// for a `NULL` or omitted key whose rowid SQLite would choose. A `WHERE`
+    /// no row can satisfy, a `NULL` key or a non-integer rowid key, records nothing.
     ///
     /// Multiple statements must be separated by semicolons.
     ///
