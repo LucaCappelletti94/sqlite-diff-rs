@@ -56,7 +56,7 @@
 //!     }
 //! }
 //!
-//! let table = SimpleTable::new("users", &["id", "active"], &[0]);
+//! let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
 //! let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
 //!     Insert::from(table.clone())
 //!         .set(0, 1_i64)

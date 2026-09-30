@@ -202,7 +202,7 @@ Re-exports the main public API. Key re-exports:
 | `TableSchema` | `parser` | Schema parsed from binary data |
 | `DynTable` | `schema::dyn_table` | Dynamic table trait |
 | `SchemaWithPK` | `schema::dyn_table` | Schema trait with PK extraction |
-| `SimpleTable` | `schema::simple_table` | Schema with column names (for SQL) |
+| `SimpleTable` | `schema::simple_table` | Schema with column names, declared types and rowid alias (for SQL) |
 | `Error` | `errors` | Crate error type |
 
 ### Feature flags
@@ -239,8 +239,8 @@ See fuzz regressions #2 and #4.
 | `dyn_table.rs` | `DynTable` trait | Object-safe: `name()`, `number_of_columns()`, `write_pk_flags()` |
 | `dyn_table.rs` | `SchemaWithPK` trait | Extends `DynTable` with `extract_pk()`, `number_of_primary_keys()`, `primary_key_index()` |
 | `dyn_table.rs` | `IndexableValues` trait | Internal: get a `Value` by column index from various collection types |
-| `simple_table.rs` | `SimpleTable` struct | Schema with column names; wraps `TableSchema<String>` |
-| `simple_table.rs` | `NamedColumns` trait | `column_index(name) -> Option<usize>` — needed for SQL digestion |
+| `simple_table.rs` | `SimpleTable` struct | Schema with column names, per-column `Affinity` and an optional rowid alias; wraps `TableSchema<String>` |
+| `simple_table.rs` | `NamedColumns` trait | `column_index(name)`, `column_affinity(index)`, `rowid_alias()`, needed for SQL digestion |
 
 **PK flags format**: Each byte is the 1-based ordinal position in the composite PK
 (e.g., `[2, 1, 0]` means col 0 is 2nd PK, col 1 is 1st PK, col 2 is not PK).
@@ -255,7 +255,7 @@ DynTable (object-safe, basic schema)
 
 Concrete implementors:
 - `TableSchema<S>` — from binary parser, no column names (implements `DynTable`, `SchemaWithPK`)
-- `SimpleTable` — wraps `TableSchema<String>` + column names (implements all three traits)
+- `SimpleTable` — wraps `TableSchema<String>` + column names and affinities (implements all three traits)
 
 ---
 
@@ -463,7 +463,7 @@ Also includes:
 ```rust
 use sqlite_diff_rs::{ChangeSet, Insert, ChangeDelete, Update, ChangesetFormat, SimpleTable};
 
-let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 let mut cs: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
 
 // Insert
@@ -488,7 +488,7 @@ let bytes: Vec<u8> = cs.build();
 ```rust
 use sqlite_diff_rs::{PatchSet, SimpleTable};
 
-let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
 ps.add_table(&schema);
 ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')").unwrap();

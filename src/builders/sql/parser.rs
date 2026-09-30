@@ -545,7 +545,8 @@ mod tests {
 
     #[test]
     fn test_digest_insert() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')")
@@ -556,7 +557,8 @@ mod tests {
 
     #[test]
     fn test_digest_insert_positional() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("INSERT INTO users VALUES (1, 'Alice')")
@@ -566,7 +568,8 @@ mod tests {
 
     #[test]
     fn test_digest_update() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("UPDATE users SET name = 'Bob' WHERE id = 1")
@@ -577,7 +580,8 @@ mod tests {
 
     #[test]
     fn test_digest_delete() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("DELETE FROM users WHERE id = 1")
@@ -588,7 +592,11 @@ mod tests {
 
     #[test]
     fn test_digest_delete_rejects_non_pk_in_where() {
-        let users = SimpleTable::new("users", &["id", "name", "status"], &[0]);
+        let users = SimpleTable::with_rowid_alias(
+            "users",
+            &[("id", "INTEGER"), ("name", "TEXT"), ("status", "TEXT")],
+            0,
+        );
         let mut builder = make_builder(&[users]);
         let result = builder.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
         assert!(result.is_err());
@@ -596,7 +604,8 @@ mod tests {
 
     #[test]
     fn test_digest_multiple_dml() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql(
@@ -620,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_digest_blob_value() {
-        let t = SimpleTable::new("t", &["data"], &[0]);
+        let t = SimpleTable::new("t", &[("data", "BLOB")], &[0]);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (data) VALUES (X'DEADBEEF')")
@@ -630,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_digest_null_value() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (id, v) VALUES (1, NULL)")
@@ -640,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_digest_negative_numbers() {
-        let t = SimpleTable::new("t", &["a", "b"], &[0]);
+        let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "REAL")], &[0]);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (a, b) VALUES (-42, -3.14)")
@@ -653,9 +662,25 @@ mod tests {
         // Each reserved keyword is a column name. This forces expect_identifier
         // to take every keyword arm. The names registered on the schema match
         // the uppercase constants the parser returns for those arms.
-        let cols = [
-            "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "FROM", "WHERE", "AND",
-            "PRIMARY", "KEY", "NULL", "INTEGER", "INT", "REAL", "TEXT", "BLOB", "NOT",
+        let cols: [(&str, &str); 18] = [
+            ("INSERT", "INTEGER"),
+            ("INTO", "INTEGER"),
+            ("VALUES", "INTEGER"),
+            ("UPDATE", "INTEGER"),
+            ("SET", "INTEGER"),
+            ("DELETE", "INTEGER"),
+            ("FROM", "INTEGER"),
+            ("WHERE", "INTEGER"),
+            ("AND", "INTEGER"),
+            ("PRIMARY", "INTEGER"),
+            ("KEY", "INTEGER"),
+            ("NULL", "INTEGER"),
+            ("INTEGER", "INTEGER"),
+            ("INT", "INTEGER"),
+            ("REAL", "INTEGER"),
+            ("TEXT", "INTEGER"),
+            ("BLOB", "INTEGER"),
+            ("NOT", "INTEGER"),
         ];
         let t = SimpleTable::new("kwords", &cols, &[0]);
         let mut builder = make_builder(&[t]);
@@ -674,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_digest_insert_missing_into() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("INSERT FROM t").unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));
@@ -682,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_digest_insert_unknown_table() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO unknown_table VALUES (1)")
@@ -692,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_missing_where() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("UPDATE t SET v = 1").unwrap_err();
         assert!(matches!(
@@ -705,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_digest_delete_missing_where() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("DELETE FROM t").unwrap_err();
         assert!(matches!(
@@ -718,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_where_non_pk_column() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("UPDATE t SET v = 2 WHERE v = 1")
@@ -728,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_digest_unexpected_top_level_token() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("SELECT 1").unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));
@@ -736,7 +761,7 @@ mod tests {
 
     #[test]
     fn test_digest_expect_identifier_rejects_value_token() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         // Integer literal where a table name is expected.
         let err = builder.digest_sql("INSERT INTO 42 VALUES (1)").unwrap_err();
@@ -745,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_changing_key_refused() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         builder.digest_sql("INSERT INTO t VALUES (5, 1)").unwrap();
         let before = builder.build();
@@ -758,7 +783,11 @@ mod tests {
 
     #[test]
     fn test_digest_update_changing_one_composite_key_column_refused() {
-        let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+        let t = SimpleTable::new(
+            "t",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("v", "INTEGER")],
+            &[0, 1],
+        );
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("UPDATE t SET v = 0, b = 9 WHERE a = 1 AND b = 2")
@@ -769,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_digest_unterminated_comment_swallows_closing_paren() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO t VALUES (1, 2 /* never closed)")
@@ -780,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_digest_statements_need_a_separator() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO t VALUES (1, 2) INSERT INTO t VALUES (3, 4)")

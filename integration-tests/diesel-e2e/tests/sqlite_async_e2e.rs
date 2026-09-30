@@ -248,7 +248,8 @@ async fn adapter_bind_error_surfaces_through_apply_async() {
 
     // Column 1 carries an Integer, but the adapter models it as a UUID column
     // and rejects the mapping; the async execute must fail and land nothing.
-    let schema = SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let schema =
+        SimpleTable::with_rowid_alias("accounts", &[("id", "INTEGER"), ("session", "TEXT")], 0);
     let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
         Insert::from(schema)
             .set(0, 1_i64)
@@ -286,7 +287,15 @@ async fn changeset_composite_pk_move_via_apply_async() {
 
     // Move (1, 20) -> (2, 99) and change the value. A patchset has no slot for
     // the new key, so this is changeset-only and exercises `ChangesetOp` async.
-    let schema = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let schema = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(schema)
             .set(0, 1_i64, 2_i64)

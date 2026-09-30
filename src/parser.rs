@@ -1197,7 +1197,7 @@ mod tests {
         let (parsed, _rows) = set.tables.first().expect("one table");
         assert_eq!(parsed.pk_flags(), &[1, 0]);
 
-        let simple = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let simple = SimpleTable::with_rowid_alias("kv", &[("id", "INTEGER"), ("val", "TEXT")], 0);
         let row: Vec<Value<String, Vec<u8>>> = vec![Value::Integer(1), Value::Text("x".into())];
         assert_schema_pk_parity(parsed, &simple, &row);
         assert_eq!(parsed.primary_key_columns().collect::<Vec<usize>>(), [0]);
@@ -1224,7 +1224,11 @@ mod tests {
         let (parsed, _rows) = set.tables.first().expect("one table");
         assert_eq!(parsed.pk_flags(), &[2, 1, 0]);
 
-        let simple = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let simple = SimpleTable::new(
+            "abc",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("c", "TEXT")],
+            &[1, 0],
+        );
         let row: Vec<Value<String, Vec<u8>>> = vec![
             Value::Integer(10),
             Value::Integer(20),

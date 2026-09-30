@@ -35,7 +35,7 @@
 //! ```
 //! use sqlite_diff_rs::{ChangeSet, SimpleTable};
 //!
-//! let schema = SimpleTable::new("t", &["id"], &[0]);
+//! let schema = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
 //! let mut a: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
 //! a.add_table(&schema);
 //! let b: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();

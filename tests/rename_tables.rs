@@ -90,8 +90,9 @@ fn all_none_callback_is_noop() {
 /// The count reflects sections actually renamed, not callback invocations.
 #[test]
 fn count_reflects_renamed_sections_not_invocations() {
-    let orders = SimpleTable::new("orders", &["id", "item"], &[0]);
-    let payments = SimpleTable::new("payments", &["id", "amount"], &[0]);
+    let orders = SimpleTable::with_rowid_alias("orders", &[("id", "INTEGER"), ("item", "TEXT")], 0);
+    let payments =
+        SimpleTable::with_rowid_alias("payments", &[("id", "INTEGER"), ("amount", "INTEGER")], 0);
 
     let bytes = ChangeSet::<SimpleTable, String, Vec<u8>>::new()
         .insert(
@@ -133,8 +134,9 @@ fn count_reflects_renamed_sections_not_invocations() {
 /// Mapping two sections to the same name leaves them as two sections.
 #[test]
 fn colliding_names_stay_separate_sections() {
-    let orders = SimpleTable::new("orders", &["id", "item"], &[0]);
-    let payments = SimpleTable::new("payments", &["id", "item"], &[0]);
+    let orders = SimpleTable::with_rowid_alias("orders", &[("id", "INTEGER"), ("item", "TEXT")], 0);
+    let payments =
+        SimpleTable::with_rowid_alias("payments", &[("id", "INTEGER"), ("item", "TEXT")], 0);
 
     let bytes = ChangeSet::<SimpleTable, String, Vec<u8>>::new()
         .insert(

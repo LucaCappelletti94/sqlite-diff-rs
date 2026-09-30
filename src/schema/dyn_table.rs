@@ -217,7 +217,11 @@ mod tests {
     use alloc::vec::Vec;
 
     fn users() -> SimpleTable {
-        SimpleTable::new("users", &["id", "name", "email"], &[0, 2])
+        SimpleTable::new(
+            "users",
+            &[("id", "INTEGER"), ("name", "TEXT"), ("email", "TEXT")],
+            &[0, 2],
+        )
     }
 
     #[test]

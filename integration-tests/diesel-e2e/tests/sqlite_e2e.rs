@@ -168,7 +168,15 @@ fn kv_composite_primary_key_move_via_changeset() {
 
     // Move the row from composite key (1, 20) to (2, 99) and change its value.
     // A patchset has no slot for the new key, so this is changeset-only.
-    let schema = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let schema = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(schema)
             .set(0, 1_i64, 2_i64)
@@ -207,7 +215,11 @@ fn identifier_with_embedded_quotes_survives_execution() {
     conn.batch_execute(r#"CREATE TABLE "we""ird" ("i""d" INTEGER PRIMARY KEY, "va""l" TEXT)"#)
         .unwrap();
 
-    let schema = sqlite_diff_rs::SimpleTable::new("we\"ird", &["i\"d", "va\"l"], &[0]);
+    let schema = sqlite_diff_rs::SimpleTable::with_rowid_alias(
+        "we\"ird",
+        &[("i\"d", "INTEGER"), ("va\"l", "TEXT")],
+        0,
+    );
     let patchset = sqlite_diff_rs::PatchSet::<_, String, Vec<u8>>::new().insert(
         sqlite_diff_rs::Insert::from(schema.clone())
             .set(0, 1_i64)
@@ -348,7 +360,11 @@ fn adapter_bind_error_propagates_through_execute() {
 
     // Column 1 has Integer value, but the adapter models it as a UUID column
     // and rejects the mapping.
-    let schema = sqlite_diff_rs::SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let schema = sqlite_diff_rs::SimpleTable::with_rowid_alias(
+        "accounts",
+        &[("id", "INTEGER"), ("session", "TEXT")],
+        0,
+    );
     let patchset = sqlite_diff_rs::PatchSet::<sqlite_diff_rs::SimpleTable, String, Vec<u8>>::new()
         .insert(
             sqlite_diff_rs::Insert::from(schema.clone())

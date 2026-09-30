@@ -51,7 +51,7 @@ where
 
 #[test]
 fn insert_matches_patchset_shape() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().insert(
         Insert::from(table)
             .set(0, 1_i64)
@@ -74,7 +74,7 @@ fn insert_matches_patchset_shape() {
 
 #[test]
 fn insert_mysql_backticks() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().insert(
         Insert::from(table)
             .set(0, 1_i64)
@@ -94,7 +94,11 @@ fn insert_mysql_backticks() {
 
 #[test]
 fn update_writes_only_changed_columns_and_keeps_pk_out_of_set_when_unchanged() {
-    let table = SimpleTable::new("users", &["id", "name", "email"], &[0]);
+    let table = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("email", "TEXT")],
+        0,
+    );
     // PK unchanged (old == new), name changed, email untouched.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
@@ -125,7 +129,7 @@ fn update_writes_only_changed_columns_and_keeps_pk_out_of_set_when_unchanged() {
 
 #[test]
 fn update_changes_a_single_primary_key() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
             .set(0, 1_i64, 2_i64)
@@ -143,7 +147,15 @@ fn update_changes_a_single_primary_key() {
 
 #[test]
 fn update_changes_one_column_of_a_composite_primary_key() {
-    let table = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     // tenant_id unchanged, user_id 2 -> 9 (PK move), value untouched.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
@@ -171,7 +183,15 @@ fn update_changes_one_column_of_a_composite_primary_key() {
 
 #[test]
 fn update_changes_every_column_of_a_composite_primary_key() {
-    let table = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
             .set(0, 5_i64, 50_i64)
@@ -195,7 +215,7 @@ fn update_changes_every_column_of_a_composite_primary_key() {
 
 #[test]
 fn update_with_no_actual_change_fails_to_render() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     // Every column set to its own value: nothing to write.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
@@ -217,7 +237,7 @@ fn update_with_no_actual_change_fails_to_render() {
 
 #[test]
 fn delete_matches_primary_key_only() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().delete(
         ChangeDelete::<_, String, Vec<u8>>::from(table)
             .set(0, 9_i64)
@@ -240,7 +260,15 @@ fn delete_matches_primary_key_only() {
 
 #[test]
 fn delete_composite_pk_matches_all_key_columns_only() {
-    let table = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().delete(
         ChangeDelete::<_, String, Vec<u8>>::from(table)
             .set(0, 5_i64)
@@ -263,7 +291,7 @@ fn delete_composite_pk_matches_all_key_columns_only() {
 
 #[test]
 fn patchset_cannot_change_a_primary_key_but_changeset_can() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     // Patchset: the format records no new PK value, so the PK is dropped from
     // SET, leaving an empty SET clause that cannot render.
@@ -333,7 +361,15 @@ where
 
 #[test]
 fn adapter_composite_pk_change_binds_set_then_where() {
-    let table = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     // user_id 2 -> 9 (PK move) and value "a" -> "b", tenant_id unchanged.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
@@ -374,7 +410,15 @@ fn adapter_composite_pk_change_binds_set_then_where() {
 fn changeset_reversed_ordinal_pk_change_one_column() {
     // orders(region_id [col 0], order_id [col 1], note [col 2]) with
     // PRIMARY KEY(order_id, region_id): PK-ordinal 0 is column 1.
-    let table = SimpleTable::new("orders", &["region_id", "order_id", "note"], &[1, 0]);
+    let table = SimpleTable::new(
+        "orders",
+        &[
+            ("region_id", "INTEGER"),
+            ("order_id", "INTEGER"),
+            ("note", "TEXT"),
+        ],
+        &[1, 0],
+    );
     // Change order_id (PK-ordinal 0, column 1); region_id unchanged.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
@@ -403,7 +447,15 @@ fn changeset_reversed_ordinal_pk_change_one_column() {
 
 #[test]
 fn changeset_reversed_ordinal_pk_change_both_columns() {
-    let table = SimpleTable::new("orders", &["region_id", "order_id", "note"], &[1, 0]);
+    let table = SimpleTable::new(
+        "orders",
+        &[
+            ("region_id", "INTEGER"),
+            ("order_id", "INTEGER"),
+            ("note", "TEXT"),
+        ],
+        &[1, 0],
+    );
     // Change both key columns: SET follows column order, WHERE follows
     // PK-ordinal order, and the two orders genuinely differ here.
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
@@ -428,7 +480,15 @@ fn changeset_reversed_ordinal_pk_change_both_columns() {
 
 #[test]
 fn adapter_reversed_ordinal_pk_change_binds_in_lockstep() {
-    let table = SimpleTable::new("orders", &["region_id", "order_id", "note"], &[1, 0]);
+    let table = SimpleTable::new(
+        "orders",
+        &[
+            ("region_id", "INTEGER"),
+            ("order_id", "INTEGER"),
+            ("note", "TEXT"),
+        ],
+        &[1, 0],
+    );
     let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().update(
         ChangeUpdate::<_, String, Vec<u8>>::from(table)
             .set(0, 5_i64, 50_i64)

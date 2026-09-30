@@ -276,7 +276,7 @@ mod tests {
     use alloc::vec::Vec;
 
     fn users() -> SimpleTable {
-        SimpleTable::new("users", &["id", "name"], &[0])
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0)
     }
 
     #[test]

@@ -764,48 +764,52 @@ fn create_simple_table_schemas() -> (
     SimpleTable,
     SimpleTable,
 ) {
-    let users = SimpleTable::new(
+    let users = SimpleTable::with_rowid_alias(
         "users",
         &[
-            "id",
-            "username",
-            "email",
-            "created_at",
-            "last_login",
-            "is_active",
-            "profile_data",
+            ("id", "INTEGER"),
+            ("username", "TEXT"),
+            ("email", "TEXT"),
+            ("created_at", "INTEGER"),
+            ("last_login", "INTEGER"),
+            ("is_active", "INTEGER"),
+            ("profile_data", "BLOB"),
         ],
-        &[0],
+        0,
     );
-    let posts = SimpleTable::new(
+    let posts = SimpleTable::with_rowid_alias(
         "posts",
         &[
-            "id",
-            "user_id",
-            "title",
-            "content",
-            "created_at",
-            "updated_at",
-            "view_count",
-            "is_published",
+            ("id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("title", "TEXT"),
+            ("content", "TEXT"),
+            ("created_at", "INTEGER"),
+            ("updated_at", "INTEGER"),
+            ("view_count", "INTEGER"),
+            ("is_published", "INTEGER"),
         ],
-        &[0],
+        0,
     );
-    let comments = SimpleTable::new(
+    let comments = SimpleTable::with_rowid_alias(
         "comments",
         &[
-            "id",
-            "post_id",
-            "user_id",
-            "content",
-            "created_at",
-            "parent_id",
-            "is_deleted",
+            ("id", "INTEGER"),
+            ("post_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("content", "TEXT"),
+            ("created_at", "INTEGER"),
+            ("parent_id", "INTEGER"),
+            ("is_deleted", "INTEGER"),
         ],
-        &[0],
+        0,
     );
-    let tags = SimpleTable::new("tags", &["id", "name"], &[0]);
-    let post_tags = SimpleTable::new("post_tags", &["post_id", "tag_id"], &[0, 1]);
+    let tags = SimpleTable::with_rowid_alias("tags", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let post_tags = SimpleTable::new(
+        "post_tags",
+        &[("post_id", "INTEGER"), ("tag_id", "INTEGER")],
+        &[0, 1],
+    );
     (users, posts, comments, tags, post_tags)
 }
 

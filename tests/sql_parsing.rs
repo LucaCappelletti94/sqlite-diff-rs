@@ -24,7 +24,7 @@ fn patchset_with(tables: &[SimpleTable]) -> PatchSet<SimpleTable, String, Vec<u8
 
 #[test]
 fn test_digest_simple_insert() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
         .unwrap();
@@ -35,7 +35,7 @@ fn test_digest_simple_insert() {
 
 #[test]
 fn test_digest_simple_delete() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql("DELETE FROM users WHERE id = 1;").unwrap();
     assert_eq!(ps.len(), 1);
@@ -43,7 +43,7 @@ fn test_digest_simple_delete() {
 
 #[test]
 fn test_digest_simple_update() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql("UPDATE users SET name = 'Bob' WHERE id = 1;")
         .unwrap();
@@ -52,8 +52,16 @@ fn test_digest_simple_update() {
 
 #[test]
 fn test_digest_multiple_tables() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "user_id", "content"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias(
+        "posts",
+        &[
+            ("id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("content", "TEXT"),
+        ],
+        0,
+    );
     let mut ps = patchset_with(&[users, posts]);
     ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
         .unwrap();
@@ -64,7 +72,11 @@ fn test_digest_multiple_tables() {
 
 #[test]
 fn test_digest_mixed_operations() {
-    let users = SimpleTable::new("users", &["id", "name", "age"], &[0]);
+    let users = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("age", "INTEGER")],
+        0,
+    );
     let mut ps = patchset_with(&[users]);
     ps.digest_sql(
         "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30);\
@@ -91,7 +103,7 @@ fn test_table_not_registered_error() {
 
 #[test]
 fn test_invalid_sql_error() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     let result = ps.digest_sql("THIS IS NOT VALID SQL");
     assert!(result.is_err());
@@ -106,7 +118,7 @@ fn test_create_table_rejected() {
 
 #[test]
 fn test_unknown_column_error() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     let result = ps.digest_sql("INSERT INTO users (id, nonexistent) VALUES (1, 'Alice');");
     assert!(result.is_err());
@@ -118,7 +130,8 @@ fn test_unknown_column_error() {
 
 #[test]
 fn test_digest_integer_values() {
-    let numbers = SimpleTable::new("numbers", &["id", "value"], &[0]);
+    let numbers =
+        SimpleTable::with_rowid_alias("numbers", &[("id", "INTEGER"), ("value", "INTEGER")], 0);
     let mut ps = patchset_with(&[numbers]);
     ps.digest_sql(
         "INSERT INTO numbers (id, value) VALUES (1, 42);\
@@ -131,7 +144,8 @@ fn test_digest_integer_values() {
 
 #[test]
 fn test_digest_real_values() {
-    let floats = SimpleTable::new("floats", &["id", "value"], &[0]);
+    let floats =
+        SimpleTable::with_rowid_alias("floats", &[("id", "INTEGER"), ("value", "REAL")], 0);
     let mut ps = patchset_with(&[floats]);
     ps.digest_sql(
         "INSERT INTO floats (id, value) VALUES (1, 3.14);\
@@ -143,7 +157,7 @@ fn test_digest_real_values() {
 
 #[test]
 fn test_digest_text_values() {
-    let texts = SimpleTable::new("texts", &["id", "value"], &[0]);
+    let texts = SimpleTable::with_rowid_alias("texts", &[("id", "INTEGER"), ("value", "TEXT")], 0);
     let mut ps = patchset_with(&[texts]);
     ps.digest_sql(
         "INSERT INTO texts (id, value) VALUES (1, 'hello');\
@@ -156,7 +170,8 @@ fn test_digest_text_values() {
 
 #[test]
 fn test_digest_null_values() {
-    let nullable = SimpleTable::new("nullable", &["id", "value"], &[0]);
+    let nullable =
+        SimpleTable::with_rowid_alias("nullable", &[("id", "INTEGER"), ("value", "")], 0);
     let mut ps = patchset_with(&[nullable]);
     ps.digest_sql("INSERT INTO nullable (id, value) VALUES (1, NULL);")
         .unwrap();
@@ -165,7 +180,7 @@ fn test_digest_null_values() {
 
 #[test]
 fn test_digest_blob_values() {
-    let blobs = SimpleTable::new("blobs", &["id", "data"], &[0]);
+    let blobs = SimpleTable::with_rowid_alias("blobs", &[("id", "INTEGER"), ("data", "BLOB")], 0);
     let mut ps = patchset_with(&[blobs]);
     ps.digest_sql("INSERT INTO blobs (id, data) VALUES (1, X'DEADBEEF');")
         .unwrap();
@@ -178,7 +193,11 @@ fn test_digest_blob_values() {
 
 #[test]
 fn test_digest_composite_pk_insert() {
-    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let composite = SimpleTable::new(
+        "composite",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("value", "TEXT")],
+        &[0, 1],
+    );
     let mut ps = patchset_with(&[composite]);
     ps.digest_sql("INSERT INTO composite (a, b, value) VALUES (1, 2, 'test');")
         .unwrap();
@@ -187,7 +206,11 @@ fn test_digest_composite_pk_insert() {
 
 #[test]
 fn test_digest_composite_pk_delete() {
-    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let composite = SimpleTable::new(
+        "composite",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("value", "TEXT")],
+        &[0, 1],
+    );
     let mut ps = patchset_with(&[composite]);
     ps.digest_sql("DELETE FROM composite WHERE a = 1 AND b = 2;")
         .unwrap();
@@ -196,7 +219,11 @@ fn test_digest_composite_pk_delete() {
 
 #[test]
 fn test_digest_composite_pk_update() {
-    let composite = SimpleTable::new("composite", &["a", "b", "value"], &[0, 1]);
+    let composite = SimpleTable::new(
+        "composite",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("value", "TEXT")],
+        &[0, 1],
+    );
     let mut ps = patchset_with(&[composite]);
     ps.digest_sql("UPDATE composite SET value = 'updated' WHERE a = 1 AND b = 2;")
         .unwrap();
@@ -209,7 +236,7 @@ fn test_digest_composite_pk_update() {
 
 #[test]
 fn test_insert_then_delete_cancels() {
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "TEXT")], 0);
     let mut ps = patchset_with(&[t]);
     ps.digest_sql(
         "INSERT INTO t (id, v) VALUES (1, 'a');\
@@ -222,7 +249,7 @@ fn test_insert_then_delete_cancels() {
 
 #[test]
 fn test_insert_then_update_becomes_insert() {
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "TEXT")], 0);
     let mut ps = patchset_with(&[t]);
     ps.digest_sql(
         "INSERT INTO t (id, v) VALUES (1, 'a');\
@@ -235,7 +262,7 @@ fn test_insert_then_update_becomes_insert() {
 
 #[test]
 fn test_update_then_update_consolidates() {
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "TEXT")], 0);
     let mut ps = patchset_with(&[t]);
     ps.digest_sql(
         "UPDATE t SET v = 'a' WHERE id = 1;\
@@ -252,7 +279,7 @@ fn test_update_then_update_consolidates() {
 
 #[test]
 fn test_empty_sql() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql("").unwrap();
     assert!(ps.is_empty());
@@ -260,7 +287,7 @@ fn test_empty_sql() {
 
 #[test]
 fn test_semicolons_only() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql(";;;").unwrap();
     assert!(ps.is_empty());
@@ -268,7 +295,7 @@ fn test_semicolons_only() {
 
 #[test]
 fn test_multiple_digest_calls() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let mut ps = patchset_with(&[users]);
     ps.digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice');")
         .unwrap();
@@ -279,7 +306,11 @@ fn test_multiple_digest_calls() {
 
 #[test]
 fn test_delete_rejects_non_pk_in_where() {
-    let users = SimpleTable::new("users", &["id", "name", "status"], &[0]);
+    let users = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("status", "TEXT")],
+        0,
+    );
     let mut ps = patchset_with(&[users]);
     let result = ps.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
     assert!(result.is_err());
@@ -287,7 +318,7 @@ fn test_delete_rejects_non_pk_in_where() {
 
 #[test]
 fn test_negative_numbers() {
-    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "REAL")], &[0]);
     let mut ps = patchset_with(&[t]);
     ps.digest_sql("INSERT INTO t (a, b) VALUES (-42, -3.14);")
         .unwrap();
@@ -300,7 +331,7 @@ fn test_negative_numbers() {
 
 #[test]
 fn parity_single_insert() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -312,7 +343,7 @@ fn parity_single_insert() {
 
 #[test]
 fn parity_insert_and_update() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -325,8 +356,8 @@ fn parity_insert_and_update() {
 
 #[test]
 fn parity_multi_table() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "title"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users, posts],
         &[
@@ -340,8 +371,15 @@ fn parity_multi_table() {
 
 #[test]
 fn parity_composite_pk() {
-    let order_items =
-        SimpleTable::new("order_items", &["order_id", "item_id", "quantity"], &[0, 1]);
+    let order_items = SimpleTable::new(
+        "order_items",
+        &[
+            ("order_id", "INTEGER"),
+            ("item_id", "INTEGER"),
+            ("quantity", "INTEGER"),
+        ],
+        &[0, 1],
+    );
     assert_patchset_sql_parity(
         &[order_items],
         &[
@@ -359,7 +397,7 @@ fn parity_composite_pk() {
 #[test]
 fn test_explicit_values_shorter_than_column_list() {
     // INSERT INTO t (a, b) VALUES (1) silently filled b with NULL before this fix.
-    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "")], &[0]);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("INSERT INTO t (a, b) VALUES (1)");
     assert!(
@@ -371,7 +409,7 @@ fn test_explicit_values_shorter_than_column_list() {
 #[test]
 fn test_explicit_values_matching_column_list_accepted() {
     // Matching counts must still work.
-    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "INTEGER")], &[0]);
     let mut ps = patchset_with(&[t]);
     ps.digest_sql("INSERT INTO t (a, b) VALUES (1, 2)").unwrap();
     assert_eq!(ps.len(), 1);
@@ -382,7 +420,7 @@ fn test_positional_fewer_values_already_errors() {
     // The positional form already called expect(Comma) before each value
     // after the first, so a short list already produced an error before
     // this change. Confirm it still does.
-    let t = SimpleTable::new("t", &["a", "b"], &[0]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "")], &[0]);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("INSERT INTO t VALUES (1)");
     assert!(result.is_err());
@@ -392,7 +430,7 @@ fn test_positional_fewer_values_already_errors() {
 fn test_atomicity_failure_leaves_builder_untouched() {
     // The first statement is valid, the second is not. The builder must be
     // empty after the call, not contain the first operation.
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "TEXT")], 0);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql(
         "INSERT INTO t (id, v) VALUES (1, 'ok'); \
@@ -408,7 +446,7 @@ fn test_atomicity_failure_leaves_builder_untouched() {
 
 #[test]
 fn test_or_in_where_delete_rejected() {
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "")], 0);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("DELETE FROM t WHERE id = 1 OR id = 2");
     assert!(result.is_err(), "OR in WHERE must be rejected");
@@ -416,7 +454,7 @@ fn test_or_in_where_delete_rejected() {
 
 #[test]
 fn test_or_in_where_update_rejected() {
-    let t = SimpleTable::new("t", &["id", "v"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "TEXT")], 0);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("UPDATE t SET v = 'x' WHERE id = 1 OR id = 2");
     assert!(result.is_err(), "OR in WHERE must be rejected");
@@ -425,7 +463,7 @@ fn test_or_in_where_update_rejected() {
 #[test]
 fn test_partial_pk_delete_rejected() {
     // Two-column primary key, only one column given in WHERE.
-    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", ""), ("v", "")], &[0, 1]);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("DELETE FROM t WHERE a = 1");
     assert!(
@@ -436,7 +474,7 @@ fn test_partial_pk_delete_rejected() {
 
 #[test]
 fn test_partial_pk_update_rejected() {
-    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", ""), ("v", "TEXT")], &[0, 1]);
     let mut ps = patchset_with(&[t]);
     let result = ps.digest_sql("UPDATE t SET v = 'x' WHERE a = 1");
     assert!(
@@ -448,7 +486,11 @@ fn test_partial_pk_update_rejected() {
 #[test]
 fn test_complete_composite_pk_where_accepted() {
     // Both PK columns given: must succeed.
-    let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+    let t = SimpleTable::new(
+        "t",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("v", "")],
+        &[0, 1],
+    );
     let mut ps = patchset_with(&[t]);
     ps.digest_sql("DELETE FROM t WHERE a = 1 AND b = 2")
         .unwrap();

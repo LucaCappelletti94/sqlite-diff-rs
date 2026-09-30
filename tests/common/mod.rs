@@ -62,6 +62,12 @@ impl NamedColumns for TestUsersTable {
     fn column_index(&self, name: &str) -> Option<usize> {
         self.0.column_index(name)
     }
+    fn column_affinity(&self, column_index: usize) -> Option<sqlite_diff_rs::Affinity> {
+        self.0.column_affinity(column_index)
+    }
+    fn rowid_alias(&self) -> Option<usize> {
+        self.0.rowid_alias()
+    }
 }
 
 impl WireColumnTypes for TestUsersTable {
@@ -98,13 +104,21 @@ impl WireSchema for SourceScopedTestSchema {
 /// Constructs the canonical three-column `users` test schema.
 pub fn test_schema() -> TestSchema {
     TestSchema {
-        users: TestUsersTable(SimpleTable::new("users", &["id", "name", "active"], &[0])),
+        users: TestUsersTable(SimpleTable::with_rowid_alias(
+            "users",
+            &[("id", "INTEGER"), ("name", "TEXT"), ("active", "INTEGER")],
+            0,
+        )),
     }
 }
 
 pub fn source_scoped_test_schema(source_schema: &'static str) -> SourceScopedTestSchema {
     SourceScopedTestSchema {
-        users: TestUsersTable(SimpleTable::new("users", &["id", "name", "active"], &[0])),
+        users: TestUsersTable(SimpleTable::with_rowid_alias(
+            "users",
+            &[("id", "INTEGER"), ("name", "TEXT"), ("active", "INTEGER")],
+            0,
+        )),
         source_schema,
     }
 }

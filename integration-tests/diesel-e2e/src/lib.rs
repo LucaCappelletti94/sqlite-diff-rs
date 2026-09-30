@@ -9,19 +9,36 @@ use sqlite_diff_rs::{DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate, Simple
 /// `users(id INT PK, name TEXT, email TEXT NULL, score REAL NULL)`.
 #[must_use]
 pub fn users_schema() -> SimpleTable {
-    SimpleTable::new("users", &["id", "name", "email", "score"], &[0])
+    SimpleTable::with_rowid_alias(
+        "users",
+        &[
+            ("id", "INTEGER"),
+            ("name", "TEXT"),
+            ("email", "TEXT"),
+            ("score", "REAL"),
+        ],
+        0,
+    )
 }
 
 /// `blobs(id INT PK, payload BLOB NULL)`.
 #[must_use]
 pub fn blobs_schema() -> SimpleTable {
-    SimpleTable::new("blobs", &["id", "payload"], &[0])
+    SimpleTable::with_rowid_alias("blobs", &[("id", "INTEGER"), ("payload", "BLOB")], 0)
 }
 
 /// `kv(tenant_id INT, user_id INT, value TEXT NULL, PRIMARY KEY(tenant_id, user_id))`.
 #[must_use]
 pub fn kv_schema() -> SimpleTable {
-    SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1])
+    SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    )
 }
 
 /// Insert three users covering every scalar `Value` variant:
@@ -140,7 +157,7 @@ pub fn kv_full_cycle(schema: &SimpleTable) -> PatchSet<SimpleTable, String, Vec<
 /// exercise transactional rollback and non-transactional partial-apply.
 #[must_use]
 pub fn duplicate_email_patchset() -> PatchSet<SimpleTable, String, Vec<u8>> {
-    let schema = SimpleTable::new("users", &["id", "email"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("email", "TEXT")], 0);
     PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .insert(
             Insert::from(schema.clone())

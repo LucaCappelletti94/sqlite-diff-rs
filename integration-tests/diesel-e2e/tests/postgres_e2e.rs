@@ -244,7 +244,11 @@ fn adapter_binds_bool_natively_against_pg_boolean_column() {
     let (_container, mut conn) = boot();
     conn.batch_execute(USERS_TYPED_DDL).unwrap();
 
-    let schema = sqlite_diff_rs::SimpleTable::new("users_typed", &["id", "active"], &[0]);
+    let schema = sqlite_diff_rs::SimpleTable::new(
+        "users_typed",
+        &[("id", "INTEGER"), ("active", "INTEGER")],
+        &[0],
+    );
     let patchset = sqlite_diff_rs::PatchSet::<sqlite_diff_rs::SimpleTable, String, Vec<u8>>::new()
         .insert(
             sqlite_diff_rs::Insert::from(schema.clone())
@@ -290,7 +294,11 @@ fn adapter_full_crud_lifecycle_against_pg_boolean_column() {
     let (_container, mut conn) = boot();
     conn.batch_execute(USERS_TYPED_DDL).unwrap();
 
-    let schema = sqlite_diff_rs::SimpleTable::new("users_typed", &["id", "active"], &[0]);
+    let schema = sqlite_diff_rs::SimpleTable::new(
+        "users_typed",
+        &[("id", "INTEGER"), ("active", "INTEGER")],
+        &[0],
+    );
     let adapter = UsersTypedAdapter;
 
     // Step 1: INSERT two rows via adapter.
