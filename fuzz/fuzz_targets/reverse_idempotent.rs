@@ -5,13 +5,11 @@
 //! 2. Binary representations match after double reverse
 //! 3. No panics occur during reversal
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::test_reverse_idempotent;
 
-fn main() {
-    loop {
-        fuzz!(|data: &[u8]| {
-            test_reverse_idempotent(data);
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    test_reverse_idempotent(data);
+});

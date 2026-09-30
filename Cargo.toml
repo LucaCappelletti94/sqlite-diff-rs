@@ -14,12 +14,11 @@ categories = ["database", "encoding", "no-std"]
 [workspace]
 members = [
 	".",
-	"fuzz",
 	"compile-bench",
 	"integration-tests/payload-size-bench",
 	"integration-tests/apply-bench-report",
 ]
-exclude = ["integration-tests/diesel-e2e", "integration-tests/schema-aware-roundtrip"]
+exclude = ["fuzz", "integration-tests/diesel-e2e", "integration-tests/schema-aware-roundtrip"]
 
 [workspace.lints.rust]
 missing_docs = "forbid"

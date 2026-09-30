@@ -2,13 +2,11 @@
 //!
 //! Tests that parse, serialize, and re-parse produce equal structures.
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::test_roundtrip;
 
-fn main() {
-    loop {
-        fuzz!(|data: &[u8]| {
-            test_roundtrip(data);
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    test_roundtrip(data);
+});

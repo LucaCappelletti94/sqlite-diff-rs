@@ -5,13 +5,11 @@
 //! vendored code paths for hex-escape, integer/float parse, UUID
 //! parse, JSON canonicalize.
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::test_wire_pg_walstream;
 
-fn main() {
-    loop {
-        fuzz!(|data: &[u8]| {
-            test_wire_pg_walstream(data);
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    test_wire_pg_walstream(data);
+});

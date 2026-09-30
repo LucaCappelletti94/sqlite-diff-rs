@@ -4,7 +4,7 @@
 //! corpus (empty, malformed UTF-8, well-formed inputs across every
 //! payload family) to confirm none of the decoders panic.
 //!
-//! This is intentionally cheap so it runs in CI. The actual honggfuzz
+//! This is intentionally cheap so it runs in CI. The actual libFuzzer
 //! runs live under `fuzz/`.
 
 #![cfg(all(

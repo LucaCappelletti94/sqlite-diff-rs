@@ -1,2 +1,4 @@
-hfuzz_workspace/
-hfuzz_target/
+target
+corpus
+artifacts
+coverage

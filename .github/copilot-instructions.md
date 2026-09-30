@@ -414,7 +414,7 @@ cargo test
 
 ## B5. Fuzz Harnesses (`fuzz/`)
 
-Uses [honggfuzz](https://github.com/google/honggfuzz) via `honggfuzz-rs`.
+Uses [libFuzzer](https://llvm.org/docs/LibFuzzer.html) via `cargo-fuzz`, run by ClusterFuzzLite on pull requests and daily.
 
 | Harness | Input | What it tests |
 |---------|-------|---------------|
