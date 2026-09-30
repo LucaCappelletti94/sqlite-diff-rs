@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+### Breaking
+
+`digest_sql` returns the new `ParseError::PrimaryKeyUpdate` for an `UPDATE` whose `SET` gives a primary key column a value other than the one its `WHERE` names. SQLite's session records such a change as a `DELETE` of the old row and an `INSERT` of every column of the new one, and SQL text does not carry the other columns. Setting a key column to its `WHERE` value is still accepted.
+
+A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and in every wire `RealDecoder`, as SQLite records it for an untyped column. NaN still becomes `NULL`.
+
 ### Fixed
 
 A table header whose varint column count lies near `usize::MAX` returns `ParseError::UnexpectedEof` instead of panicking, which it did on the overflowing bounds check in debug builds and on the wrapped slice range in release builds.
+
+`digest_sql` records a negated real literal such as `-5.0` or `-0.0` as a real, and a negated integer literal past `i64::MIN` such as `-9223372036854775809` as a real, as SQLite does. Only `-9223372036854775808` becomes the integer `i64::MIN`.
+
+An unterminated `/*` comment in `digest_sql` input runs to the end of the input, as in SQLite, so a statement whose closing parenthesis falls inside it is rejected.
 
 ## 0.15.0
 

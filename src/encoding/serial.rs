@@ -202,10 +202,8 @@ pub(crate) fn encode_defined_value<S: AsRef<str>, B: AsRef<[u8]>>(
                 out.push(0x05); // NULL
             } else {
                 // FLOAT is type 2, 8 bytes big-endian IEEE 754
-                // SQLite normalizes -0.0 to 0.0
                 out.push(0x02);
-                let normalized = if *v == 0.0 { 0.0 } else { *v };
-                out.extend(normalized.to_be_bytes());
+                out.extend(v.to_be_bytes());
             }
         }
         Value::Text(s) => {
@@ -270,14 +268,11 @@ pub(crate) fn decode_value(data: &[u8]) -> Option<(MaybeValue<String, Vec<u8>>, 
             let v = f64::from_be_bytes([
                 data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ]);
-            // SQLite normalizes NaN to NULL and -0.0 to 0.0, so we do the same
-            // during decoding to ensure roundtrip consistency
+            // SQLite never stores NaN, so a NaN payload reads as NULL like the encoder writes it
             if v.is_nan() {
                 Some((Some(Value::Null), 9))
             } else {
-                // Normalize -0.0 to 0.0
-                let normalized = if v == 0.0 { 0.0 } else { v };
-                Some((Some(Value::Real(normalized)), 9))
+                Some((Some(Value::Real(v)), 9))
             }
         }
         3 => {

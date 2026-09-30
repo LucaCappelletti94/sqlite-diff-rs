@@ -75,10 +75,10 @@ fn fuzz_regression_crash_3() {
     test_roundtrip(&input);
 }
 
-/// Crash 4: Negative zero (-0.0) not normalized during decoding.
+/// Crash 4: a FLOAT value of `-0.0` round-trips with its sign.
 ///
-/// Bug: `decode_value` returned Real(-0.0), but `encode_value` normalizes to 0.0.
-/// Fix: `decode_value` now normalizes -0.0 to 0.0 (matching `SQLite` behavior).
+/// Input: a changeset DELETE carrying a FLOAT `-0.0`, which SQLite records
+/// for an untyped column.
 #[test]
 fn fuzz_regression_crash_4() {
     let input = [

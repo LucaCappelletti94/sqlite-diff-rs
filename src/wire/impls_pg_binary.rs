@@ -60,7 +60,7 @@ impl<S, B> Decoder<PgBinary, S, B> for IntDecoder {
 
 // ------------------------------------------------------------------
 // RealDecoder: float4/float8 as 4/8-byte big-endian IEEE 754. NaN
-// normalizes to Null, -0.0 to 0.0, matching `decode_value`.
+// becomes Null, matching `decode_value`.
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<PgBinary, S, B> for RealDecoder {

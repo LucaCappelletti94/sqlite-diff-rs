@@ -421,7 +421,7 @@ fn pg_jsonb_unknown_binary_version_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// pg_walstream — normalize_real paths (NaN→Null, -0.0→0.0)
+// pg_walstream — normalize_real paths (NaN→Null, -0.0 kept)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -438,7 +438,7 @@ fn pg_real_decoder_nan_to_null() {
 }
 
 #[test]
-fn pg_real_decoder_negative_zero_normalized() {
+fn pg_real_decoder_negative_zero_keeps_sign() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
     let val = types
         .decode(PgWalstreamColumn {
@@ -447,7 +447,7 @@ fn pg_real_decoder_negative_zero_normalized() {
             data: &ColumnValue::text("-0.0"),
         })
         .unwrap();
-    assert_eq!(val, Value::Real(0.0), "-0.0 -> 0.0");
+    assert_eq!(val, Value::Real(-0.0), "-0.0 keeps its sign");
 }
 
 #[test]
@@ -767,7 +767,7 @@ fn w2j_int64_overflow_wrong_payload() {
 #[test]
 fn w2j_real_decoder_nan_unreachable() {
     let dec = sqlite_diff_rs::RealDecoder;
-    // Verify that -0.0 is normalized instead.
+    // Verify that -0.0 keeps its sign instead.
     let val = as_w2j_dec!(dec)
         .decode(Wal2JsonColumn {
             column_name: "c",
@@ -775,7 +775,7 @@ fn w2j_real_decoder_nan_unreachable() {
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
-    assert_eq!(val, Value::Real(0.0), "-0.0 -> 0.0");
+    assert_eq!(val, Value::Real(-0.0), "-0.0 keeps its sign");
 }
 
 #[test]
@@ -1057,7 +1057,7 @@ fn mx_int64_overflow_wrong_payload() {
 #[test]
 fn mx_real_decoder_nan_unreachable() {
     let dec = sqlite_diff_rs::RealDecoder;
-    // Verify that -0.0 is normalized instead.
+    // Verify that -0.0 keeps its sign instead.
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
             column_name: "c",
@@ -1065,11 +1065,11 @@ fn mx_real_decoder_nan_unreachable() {
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
-    assert_eq!(val, Value::Real(0.0), "-0.0 -> 0.0");
+    assert_eq!(val, Value::Real(-0.0), "-0.0 keeps its sign");
 }
 
 #[test]
-fn mx_real_decoder_negative_zero_normalized() {
+fn mx_real_decoder_negative_zero_keeps_sign() {
     let dec = sqlite_diff_rs::RealDecoder;
     let val = as_mx_dec!(dec)
         .decode(MaxwellColumn {
@@ -1078,7 +1078,7 @@ fn mx_real_decoder_negative_zero_normalized() {
             value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
         })
         .unwrap();
-    assert_eq!(val, Value::Real(0.0), "-0.0 -> 0.0");
+    assert_eq!(val, Value::Real(-0.0), "-0.0 keeps its sign");
 }
 
 #[test]
