@@ -42,6 +42,8 @@ impl Affinity {
         const fn key(name: [u8; 4]) -> u32 {
             u32::from_be_bytes(name)
         }
+        // SQLite reads the type as a C string, which ends at the first NUL.
+        let declared = declared.split('\0').next().unwrap_or_default();
         if declared.is_empty() {
             return Self::Blob;
         }
@@ -169,6 +171,8 @@ mod tests {
             ("BOOLEAN", Affinity::Numeric),
             ("DATETIME", Affinity::Numeric),
             ("STRING", Affinity::Numeric),
+            ("X\0INT", Affinity::Numeric),
+            ("CLOB\0INT", Affinity::Text),
         ];
         for (declared, expected) in cases {
             assert_eq!(

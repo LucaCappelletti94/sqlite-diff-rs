@@ -52,6 +52,9 @@ impl<T: DynTable, S: Default + Clone + AsRef<str>, B: Default + Clone + AsRef<[u
 impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> ChangeDelete<T, S, B> {
     /// Sets the value for a specific column by index.
     ///
+    /// The value is recorded as given. Use [`Affinity::apply`](crate::Affinity::apply)
+    /// for the conversion SQLite applies when storing it in the column.
+    ///
     /// # Arguments
     ///
     /// * `col_idx` - The index of the column to set.

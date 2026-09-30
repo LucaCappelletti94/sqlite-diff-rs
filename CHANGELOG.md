@@ -10,6 +10,14 @@ A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and
 
 `differential_testing::run_differential_test` runs each string of SQL statement by statement and returns whether it compared the patchsets. It skips input where a statement changes no row or a constraint refuses it, because `digest_sql` assumes the row a `WHERE` names exists and such input has no counterpart session. The session helpers in `testing` accept several statements per string.
 
+`SimpleTable::new` takes each column as a `(name, declared type)` pair, with `""` for an untyped column, and `SimpleTable::with_rowid_alias` builds a rowid table whose single `INTEGER PRIMARY KEY` column aliases the rowid. `NamedColumns` gains the required methods `column_affinity` and `rowid_alias`. `testing::SqlType` gains `Numeric` and `Untyped`, and `TypedSimpleTable` treats a lone `INTEGER` key as a rowid alias, as the DDL it emits makes it.
+
+`digest_sql` returns the new `ParseError::DatatypeMismatch` when an `INSERT` gives a rowid alias a value that does not convert to an integer, which SQLite refuses.
+
+### Added
+
+`Affinity`, SQLite's column type affinity, with `Affinity::from_declared_type` for SQLite's declared-type rules and `Affinity::apply` for the conversion SQLite applies to a value stored in a column of that affinity, including SQLite's own text rendering of reals.
+
 ### Fixed
 
 A table header whose varint column count lies near `usize::MAX` returns `ParseError::UnexpectedEof` instead of panicking, which it did on the overflowing bounds check in debug builds and on the wrapped slice range in release builds.
@@ -19,6 +27,8 @@ A table header whose varint column count lies near `usize::MAX` returns `ParseEr
 An unterminated `/*` comment in `digest_sql` input runs to the end of the input, as in SQLite, so a statement whose closing parenthesis falls inside it is rejected.
 
 `digest_sql` rejects two statements with no `;` between them, which SQLite refuses as a syntax error.
+
+`digest_sql` converts every literal by its column's affinity before recording it, as SQLite does, so an integer written into a `TEXT` column is recorded as text and numeric text written into an `INTEGER` column as an integer. `WHERE` literals are converted the same way, and a `WHERE` no row can satisfy records nothing. Real literals are read with SQLite's own decimal rounding.
 
 ## 0.15.0
 

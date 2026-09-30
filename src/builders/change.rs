@@ -852,6 +852,18 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
     /// gives it. SQLite records a key change as a `DELETE` plus an `INSERT`
     /// of every column, which the statement alone cannot supply.
     ///
+    /// A column an `INSERT` omits is recorded as `NULL`. Column `DEFAULT`
+    /// values are not part of the schema, so give such columns explicitly.
+    ///
+    /// Every literal is converted by its column's [`Affinity`](crate::Affinity),
+    /// as SQLite converts a value before storing or comparing it, so an
+    /// integer written into a `TEXT` column is recorded as text. A table built
+    /// with [`SimpleTable::with_rowid_alias`](crate::SimpleTable::with_rowid_alias)
+    /// accepts only a key that converts to an integer and returns
+    /// [`ParseError::DatatypeMismatch`](crate::builders::sql::ParseError::DatatypeMismatch)
+    /// otherwise. A `WHERE` no row can satisfy, a `NULL` key or a non-integer
+    /// rowid key, records nothing.
+    ///
     /// Multiple statements must be separated by semicolons.
     ///
     /// # Errors

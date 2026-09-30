@@ -411,7 +411,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
     /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate
     /// with the literal converted by the column's affinity, as SQLite compares it.
-    /// Returns `OrInWhere` if `OR` appears after a predicate.
+    /// Fails with `OrInWhere` if `OR` appears after a predicate.
     ///
     /// Returns whether a row can satisfy every predicate. A predicate cannot
     /// hold when its value is `NULL`, or is not an integer on a rowid alias.

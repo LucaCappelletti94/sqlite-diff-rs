@@ -29,7 +29,7 @@ sqlite-diff-rs = "0.10"
 ```rust
 use sqlite_diff_rs::{DiffOps, Insert, PatchSet, SimpleTable};
 
-// Define a table schema: "users" with columns (id, name), PK at index 0
+// users (id INTEGER PRIMARY KEY, name TEXT): declared types drive SQLite's affinity
 let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
 // Build a patchset with an INSERT

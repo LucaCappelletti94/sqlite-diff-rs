@@ -11,7 +11,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use rusqlite::Connection;
 use sqlite_diff_rs::{
     ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate,
-    SimpleTable, TableSchema, Value,
+    SimpleTable, TableSchema, Value, testing::byte_diff_report,
 };
 use std::hint::black_box;
 use std::string::String;
@@ -112,6 +112,46 @@ const OPERATIONS: &[&str] = &[
     "DELETE FROM comments WHERE id = 5",
     "DELETE FROM post_tags WHERE post_id = 3 AND tag_id = 5",
     "DELETE FROM users WHERE id = 4",
+];
+
+/// `OPERATIONS` with every literal written so SQLite converts it by column
+/// affinity: numeric text into INTEGER columns, numbers into TEXT columns, and
+/// integral reals into INTEGER columns. Columns with a `DEFAULT` are always
+/// given, because `digest_sql` records an omitted column as `NULL`.
+const CONVERTING_OPERATIONS: &[&str] = &[
+    "INSERT INTO users (id, username, email, created_at, is_active) VALUES ('1', 1001, 'alice@example.com', '1000000', 1.0)",
+    "INSERT INTO users (id, username, email, created_at, is_active) VALUES ('2', 1002, 'bob@example.com', ' 1000100 ', 1.0)",
+    "INSERT INTO users (id, username, email, created_at, is_active) VALUES ('3', 1003.5, 'charlie@example.com', '1.0002e6', 1.0)",
+    "INSERT INTO users (id, username, email, created_at, is_active) VALUES ('4', 1e-5, 'diana@example.com', '1000300', 0.0)",
+    "INSERT INTO users (id, username, email, created_at, is_active) VALUES ('5', 1005, 'eve@example.com', '1000400', 1.0)",
+    "INSERT INTO posts (id, user_id, title, content, created_at, view_count, is_published) VALUES ('1', '1', 1, 2.5, '1000500', '0', 1.0)",
+    "INSERT INTO posts (id, user_id, title, content, created_at, view_count, is_published) VALUES ('2', '1', 2, 0.1, '1000600', '0', 1.0)",
+    "INSERT INTO posts (id, user_id, title, content, created_at, view_count, is_published) VALUES ('3', '2', 3, 1e17, '1000700', '0', 1.0)",
+    "INSERT INTO posts (id, user_id, title, content, created_at, view_count, is_published) VALUES ('4', '3', 4, 49.47, '1000800', '0', 0.0)",
+    "INSERT INTO posts (id, user_id, title, content, created_at, view_count, is_published) VALUES ('5', '5', 5, 1e300, '1000900', '0', 1.0)",
+    "INSERT INTO tags (id, name) VALUES ('1', 101)",
+    "INSERT INTO tags (id, name) VALUES ('2', 102.5)",
+    "INSERT INTO tags (id, name) VALUES ('3', 103)",
+    "INSERT INTO tags (id, name) VALUES ('4', 0.25)",
+    "INSERT INTO tags (id, name) VALUES ('5', 105)",
+    "INSERT INTO post_tags (post_id, tag_id) VALUES ('1', 1.0)",
+    "INSERT INTO post_tags (post_id, tag_id) VALUES ('1', 3.0)",
+    "INSERT INTO post_tags (post_id, tag_id) VALUES ('2', 1.0)",
+    "INSERT INTO post_tags (post_id, tag_id) VALUES ('3', 5.0)",
+    "INSERT INTO post_tags (post_id, tag_id) VALUES ('5', 4.0)",
+    "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) VALUES ('1', '1', '2', 11, '1001000', 0.0)",
+    "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) VALUES ('2', '1', '3', 12.5, '1001100', 0.0)",
+    "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) VALUES ('3', '2', '2', 13, '1001200', 0.0)",
+    "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) VALUES ('4', '3', '1', 14, '1001300', 0.0)",
+    "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) VALUES ('5', '1', '5', 15, '1001400', 0.0)",
+    "UPDATE users SET last_login = '1002000' WHERE id = '1'",
+    "UPDATE users SET last_login = 1002100.0 WHERE id = '2'",
+    "UPDATE posts SET view_count = '10' WHERE id = '1'",
+    "UPDATE posts SET view_count = 5.0 WHERE id = '2'",
+    "UPDATE posts SET updated_at = '1002200', content = 3.25 WHERE id = '2'",
+    "DELETE FROM comments WHERE id = '5'",
+    "DELETE FROM post_tags WHERE post_id = '3' AND tag_id = 5.0",
+    "DELETE FROM users WHERE id = '4'",
 ];
 
 /// Create table schemas programmatically.
@@ -817,12 +857,13 @@ fn create_simple_table_schemas() -> (
 fn parser_patchset_with(operations: &[&str]) -> Vec<u8> {
     let (users, posts, comments, tags, post_tags) = create_simple_table_schemas();
 
+    // SQLite's session lists tables in the order the statements first touch them.
     let mut builder = PatchSet::<SimpleTable, String, Vec<u8>>::new();
     builder.add_table(&users);
     builder.add_table(&posts);
-    builder.add_table(&comments);
     builder.add_table(&tags);
     builder.add_table(&post_tags);
+    builder.add_table(&comments);
 
     // Combine operations into one SQL string
     let mut sql = String::new();
@@ -880,5 +921,39 @@ fn benchmark_patchset(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_changeset, benchmark_patchset);
+fn benchmark_converting_patchset(c: &mut Criterion) {
+    let ours = parser_patchset_with(CONVERTING_OPERATIONS);
+    let sqlite = rusqlite_patchset_with(SCHEMA, CONVERTING_OPERATIONS);
+    assert!(
+        ours == sqlite,
+        "the converting statements must digest to rusqlite's patchset\n{}",
+        byte_diff_report("patchset", &sqlite, &ours)
+    );
+
+    let mut group = c.benchmark_group("digest_sql_affinity");
+
+    group.bench_function("rusqlite", |b| {
+        b.iter(|| {
+            let schema = black_box(SCHEMA);
+            let ops = black_box(CONVERTING_OPERATIONS);
+            black_box(rusqlite_patchset_with(schema, ops))
+        });
+    });
+
+    group.bench_function("sql_parser", |b| {
+        b.iter(|| {
+            let ops = black_box(CONVERTING_OPERATIONS);
+            black_box(parser_patchset_with(ops))
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    benchmark_changeset,
+    benchmark_patchset,
+    benchmark_converting_patchset
+);
 criterion_main!(benches);
