@@ -574,7 +574,6 @@ impl Decoded {
 /// `sqlite3FpDecode(r, 17, 20)` for a positive finite nonzero `r`.
 fn fp_decode(r: f64) -> Decoded {
     const I_ROUND: usize = 17;
-    const MX_ROUND: usize = 20;
     let bits = r.to_bits();
     let exponent = i32::from(u16::try_from((bits >> 52) & 0x7ff).unwrap_or(0));
     let mut v = bits & 0x000f_ffff_ffff_ffff;
@@ -602,7 +601,8 @@ fn fp_decode(r: f64) -> Decoded {
     let mut n = 24 - decoded.start;
     decoded.decimal_point = i32::try_from(n).unwrap_or(0) + exp;
 
-    if I_ROUND < n || n > MX_ROUND {
+    // C also tests `n > mxRound`, which is 20 here and so implied by `n > 17`.
+    if n > I_ROUND {
         let mut round = I_ROUND;
         let z = |i: usize| decoded.buf[decoded.start + i];
         let digits_after = |jj: usize| exp + i32::try_from(n - jj).unwrap_or(0);
