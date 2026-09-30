@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+A table header whose varint column count lies near `usize::MAX` returns `ParseError::UnexpectedEof` instead of panicking, which it did on the overflowing bounds check in debug builds and on the wrapped slice range in release builds.
+
 ## 0.15.0
 
 ### Breaking
