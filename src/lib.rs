@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+mod affinity;
 pub mod builders;
 #[cfg(any(test, feature = "testing"))]
 pub mod differential_testing;
@@ -25,6 +26,7 @@ pub mod wal2json;
 pub mod wire;
 
 // Re-export main types
+pub use affinity::Affinity;
 #[cfg(feature = "diesel-async")]
 pub use builders::ApplyOpsAsync;
 #[cfg(feature = "diesel")]
