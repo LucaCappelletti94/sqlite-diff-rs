@@ -416,7 +416,7 @@ fn test_our_builder_empty_after_cancel() {
     use sqlite_diff_rs::SimpleTable;
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, DiffOps, Insert};
 
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     // Changeset: INSERT + DELETE should produce empty output
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
@@ -454,8 +454,10 @@ fn test_our_builder_table_order_matches_sqlite_after_cancel_readd() {
     use sqlite_diff_rs::SimpleTable;
     use sqlite_diff_rs::{ChangeDelete, ChangeSet, DiffOps, Insert, ParsedDiffSet};
 
-    let schema_a = SimpleTable::new("table_a", &["id", "val"], &[0]);
-    let schema_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
+    let schema_a =
+        SimpleTable::with_rowid_alias("table_a", &[("id", "INTEGER"), ("val", "TEXT")], 0);
+    let schema_b =
+        SimpleTable::with_rowid_alias("table_b", &[("id", "INTEGER"), ("val", "TEXT")], 0);
 
     // Build: insert A, insert B, delete A, insert A again
     let insert_a = Insert::<_, String, Vec<u8>>::from(schema_a.clone())

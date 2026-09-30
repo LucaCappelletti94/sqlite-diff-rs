@@ -54,7 +54,7 @@ fn render_mysql<
 
 #[test]
 fn insert_pg_binds_values_and_quotes_identifiers() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -78,7 +78,7 @@ fn insert_pg_binds_values_and_quotes_identifiers() {
 
 #[test]
 fn insert_mysql_uses_backtick_identifiers() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -97,7 +97,7 @@ fn insert_mysql_uses_backtick_identifiers() {
 
 #[test]
 fn insert_with_null_emits_null_literal() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 42_i64)
         .unwrap()
@@ -117,7 +117,11 @@ fn insert_with_null_emits_null_literal() {
 
 #[test]
 fn update_pg_puts_pk_in_where_and_skips_pk_from_set() {
-    let table = SimpleTable::new("users", &["id", "name", "email"], &[0]);
+    let table = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("email", "TEXT")],
+        0,
+    );
     let update = PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(table.clone())
         .set(0, 7_i64)
         .unwrap()
@@ -144,7 +148,7 @@ fn update_pg_puts_pk_in_where_and_skips_pk_from_set() {
 
 #[test]
 fn update_mysql_backticks_and_placeholder_style() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let update = PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(table.clone())
         .set(0, 3_i64)
         .unwrap()
@@ -162,7 +166,15 @@ fn update_mysql_backticks_and_placeholder_style() {
 
 #[test]
 fn update_composite_pk_all_pk_columns_in_where() {
-    let table = SimpleTable::new("kv", &["tenant_id", "user_id", "value"], &[0, 1]);
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
     let update = PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -186,7 +198,7 @@ fn update_composite_pk_all_pk_columns_in_where() {
 
 #[test]
 fn delete_pg_uses_pk_only_where() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let delete = PatchDelete::new(table.clone(), alloc::vec![9_i64.into()]);
     let patchset =
         PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().delete(delete);
@@ -200,7 +212,7 @@ fn delete_pg_uses_pk_only_where() {
 
 #[test]
 fn delete_mysql() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let delete = PatchDelete::new(table.clone(), alloc::vec![9_i64.into()]);
     let patchset =
         PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().delete(delete);
@@ -216,7 +228,7 @@ fn delete_mysql() {
 
 #[test]
 fn adversarial_string_value_never_terminates_sql() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -236,7 +248,7 @@ fn adversarial_string_value_never_terminates_sql() {
 
 #[test]
 fn adversarial_table_and_column_names_are_quoted() {
-    let table = SimpleTable::new("us\"ers", &["id\"col"], &[0]);
+    let table = SimpleTable::with_rowid_alias("us\"ers", &[("id\"col", "INTEGER")], 0);
     let insert = Insert::from(table.clone()).set(0, 1_i64).unwrap();
     let patchset =
         PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
@@ -250,7 +262,7 @@ fn adversarial_table_and_column_names_are_quoted() {
 
 #[test]
 fn same_statement_walks_both_backends() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -269,7 +281,8 @@ fn same_statement_walks_both_backends() {
 
 #[test]
 fn insert_real_value_binds_as_double() {
-    let table = SimpleTable::new("prices", &["id", "amount"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("prices", &[("id", "INTEGER"), ("amount", "REAL")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -292,7 +305,7 @@ fn insert_real_value_binds_as_double() {
 
 #[test]
 fn insert_blob_value_binds_as_binary() {
-    let table = SimpleTable::new("blobs", &["id", "data"], &[0]);
+    let table = SimpleTable::with_rowid_alias("blobs", &[("id", "INTEGER"), ("data", "BLOB")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -319,8 +332,9 @@ fn insert_blob_value_binds_as_binary() {
 fn iter_visits_every_op_across_multiple_tables() {
     use sqlite_diff_rs::PatchsetOp;
 
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let orders = SimpleTable::new("orders", &["id", "total"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let orders =
+        SimpleTable::with_rowid_alias("orders", &[("id", "INTEGER"), ("total", "INTEGER")], 0);
 
     let patchset = PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new()
         .insert(
@@ -374,7 +388,7 @@ fn iter_visits_every_op_across_multiple_tables() {
 
 #[test]
 fn update_with_only_pk_columns_set_returns_query_builder_error() {
-    let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let update = PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(table.clone())
         .set(0, 1_i64)
         .unwrap();
@@ -391,7 +405,7 @@ fn update_with_only_pk_columns_set_returns_query_builder_error() {
 
 #[test]
 fn delete_against_table_with_no_pk_returns_query_builder_error() {
-    let table = SimpleTable::new("no_pk", &["a", "b"], &[]);
+    let table = SimpleTable::new("no_pk", &[("a", ""), ("b", "")], &[]);
     let delete = PatchDelete::new(table.clone(), alloc::vec![]);
     let patchset =
         PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().delete(delete);
@@ -482,7 +496,8 @@ where
 #[test]
 fn adapter_binds_bool_natively_no_cast_in_emitted_sql() {
     // `active` is stored as SQLite INTEGER, but the target column is BOOLEAN.
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -517,7 +532,8 @@ fn adapter_binds_bool_natively_no_cast_in_emitted_sql() {
 
 #[test]
 fn adapter_bool_binds_false_when_integer_is_zero() {
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()
@@ -542,7 +558,8 @@ fn adapter_bool_binds_false_when_integer_is_zero() {
 fn adapter_falls_through_to_default_binder_for_other_columns() {
     // `id` gets DefaultBinder -> BigInt. Value in the debug binds should read
     // as an integer, not a bool.
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 42_i64)
         .unwrap()
@@ -569,7 +586,8 @@ fn adapter_falls_through_to_default_binder_for_other_columns() {
 
 #[test]
 fn adapter_update_binds_set_then_where_in_lockstep() {
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     // SET active = false, WHERE id = 42.
     let update = PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(table.clone())
         .set(0, 42_i64) // PK slot (goes to WHERE)
@@ -607,7 +625,8 @@ fn adapter_update_binds_set_then_where_in_lockstep() {
 
 #[test]
 fn adapter_delete_emits_where_only_with_single_pk_bind() {
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let delete = PatchDelete::new(table.clone(), alloc::vec![7_i64.into()]);
     let patchset =
         PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().delete(delete);
@@ -640,7 +659,11 @@ fn adapter_composite_pk_binds_in_pk_ordinal_order_not_column_order() {
     // of PK-ordinal order, the values would land on the wrong columns.
     let table = SimpleTable::new(
         "orders_typed",
-        &["region_id", "order_id", "active"],
+        &[
+            ("region_id", "INTEGER"),
+            ("order_id", "INTEGER"),
+            ("active", "INTEGER"),
+        ],
         &[1, 0], // order_id first (col 1), then region_id (col 0)
     );
 
@@ -684,7 +707,8 @@ fn assert_send<T: Send>(_: &T) {}
 
 #[test]
 fn bound_patchset_op_is_send() {
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let patchset = PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new()
         .insert(
             Insert::from(table.clone())
@@ -706,7 +730,8 @@ fn bound_patchset_op_is_send() {
 fn bound_patchset_ops_survive_thread_scope() {
     // Real threading witness: build a batch, distribute across scoped
     // threads, render each. If the type isn't `Send`, this doesn't compile.
-    let table = SimpleTable::new("users", &["id", "active"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let patchset = PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new()
         .insert(
             Insert::from(table.clone())
@@ -780,7 +805,8 @@ where
 
 #[test]
 fn adapter_bind_error_surfaces_at_walk_time() {
-    let table = SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("accounts", &[("id", "INTEGER"), ("session", "INTEGER")], 0);
     // Column 1 is `Integer` but the adapter treats it as a UUID column.
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
@@ -812,7 +838,8 @@ fn adapter_bind_error_surfaces_at_walk_time() {
 fn adapter_bind_ok_still_walks_normally() {
     // Sanity witness: the same adapter succeeds when column 1 has a
     // representable value (a Text). No error, no panic on debug rendering.
-    let table = SimpleTable::new("accounts", &["id", "session"], &[0]);
+    let table =
+        SimpleTable::with_rowid_alias("accounts", &[("id", "INTEGER"), ("session", "TEXT")], 0);
     let insert = Insert::from(table.clone())
         .set(0, 1_i64)
         .unwrap()

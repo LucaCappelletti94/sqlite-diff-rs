@@ -46,22 +46,43 @@ pub enum SqlType {
     Real,
     /// `BLOB` affinity (accepts any value).
     Blob,
+    /// `NUMERIC` affinity.
+    Numeric,
+    /// No declared type, which also has `BLOB` affinity.
+    Untyped,
+}
+
+impl SqlType {
+    /// The declared type as written in `CREATE TABLE`.
+    #[must_use]
+    pub const fn declared(self) -> &'static str {
+        match self {
+            Self::Integer => "INTEGER",
+            Self::Text => "TEXT",
+            Self::Real => "REAL",
+            Self::Blob => "BLOB",
+            Self::Numeric => "NUMERIC",
+            Self::Untyped => "",
+        }
+    }
 }
 
 impl fmt::Display for SqlType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Integer => f.write_str("INTEGER"),
-            Self::Text => f.write_str("TEXT"),
-            Self::Real => f.write_str("REAL"),
-            Self::Blob => f.write_str("BLOB"),
-        }
+        f.write_str(self.declared())
     }
 }
 
 impl<'a> arbitrary::Arbitrary<'a> for SqlType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(*u.choose(&[Self::Integer, Self::Text, Self::Real, Self::Blob])?)
+        Ok(*u.choose(&[
+            Self::Integer,
+            Self::Text,
+            Self::Real,
+            Self::Blob,
+            Self::Numeric,
+            Self::Untyped,
+        ])?)
     }
 }
 
@@ -112,11 +133,21 @@ impl TypedSimpleTable {
     /// Panics if any `pk_indices` value is out of bounds.
     #[must_use]
     pub fn new(name: &str, columns: &[(&str, SqlType)], pk_indices: &[usize]) -> Self {
-        let col_names: Vec<&str> = columns.iter().map(|(n, _)| *n).collect();
-        let col_types: Vec<SqlType> = columns.iter().map(|(_, t)| *t).collect();
+        let declared: Vec<(&str, &str)> = columns.iter().map(|&(n, t)| (n, t.declared())).collect();
+        // The DDL inlines a lone key as `INTEGER PRIMARY KEY`, which aliases the rowid.
+        let table = match pk_indices {
+            &[key]
+                if columns
+                    .get(key)
+                    .is_some_and(|&(_, t)| t == SqlType::Integer) =>
+            {
+                SimpleTable::with_rowid_alias(name, &declared, key)
+            }
+            _ => SimpleTable::new(name, &declared, pk_indices),
+        };
         Self {
-            table: SimpleTable::new(name, &col_names, pk_indices),
-            column_types: col_types,
+            table,
+            column_types: columns.iter().map(|&(_, t)| t).collect(),
         }
     }
 
@@ -181,7 +212,10 @@ impl fmt::Display for TypedSimpleTable {
             if i > 0 {
                 f.write_str(", ")?;
             }
-            write!(f, "\"{col_name}\" {col_type}")?;
+            write!(f, "\"{col_name}\"")?;
+            if *col_type != SqlType::Untyped {
+                write!(f, " {col_type}")?;
+            }
             if single_pk && pk_indices[0] == i {
                 f.write_str(" PRIMARY KEY")?;
             }

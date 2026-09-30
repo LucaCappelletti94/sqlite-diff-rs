@@ -26,7 +26,7 @@ use sqlite_diff_rs::{
 
 #[test]
 fn bit_parity_single_insert() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -38,7 +38,7 @@ fn bit_parity_single_insert() {
 
 #[test]
 fn bit_parity_single_insert_integer_only() {
-    let nums = SimpleTable::new("nums", &["id", "val"], &[0]);
+    let nums = SimpleTable::with_rowid_alias("nums", &[("id", "INTEGER"), ("val", "INTEGER")], 0);
     assert_patchset_sql_parity(
         &[nums],
         &[
@@ -50,7 +50,15 @@ fn bit_parity_single_insert_integer_only() {
 
 #[test]
 fn bit_parity_single_insert_with_null() {
-    let items = SimpleTable::new("items", &["id", "description", "price"], &[0]);
+    let items = SimpleTable::with_rowid_alias(
+        "items",
+        &[
+            ("id", "INTEGER"),
+            ("description", "TEXT"),
+            ("price", "REAL"),
+        ],
+        0,
+    );
     assert_patchset_sql_parity(
         &[items],
         &[
@@ -62,7 +70,8 @@ fn bit_parity_single_insert_with_null() {
 
 #[test]
 fn bit_parity_single_insert_with_real() {
-    let measurements = SimpleTable::new("measurements", &["id", "value"], &[0]);
+    let measurements =
+        SimpleTable::with_rowid_alias("measurements", &[("id", "INTEGER"), ("value", "REAL")], 0);
     assert_patchset_sql_parity(
         &[measurements],
         &[
@@ -74,7 +83,8 @@ fn bit_parity_single_insert_with_real() {
 
 #[test]
 fn bit_parity_single_insert_empty_string() {
-    let strings = SimpleTable::new("strings", &["id", "value"], &[0]);
+    let strings =
+        SimpleTable::with_rowid_alias("strings", &[("id", "INTEGER"), ("value", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[strings],
         &[
@@ -90,7 +100,7 @@ fn bit_parity_single_insert_empty_string() {
 
 #[test]
 fn bit_parity_two_inserts_same_table() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -103,7 +113,11 @@ fn bit_parity_two_inserts_same_table() {
 
 #[test]
 fn bit_parity_three_inserts_same_table() {
-    let users = SimpleTable::new("users", &["id", "name", "age"], &[0]);
+    let users = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("age", "INTEGER")],
+        0,
+    );
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -117,7 +131,7 @@ fn bit_parity_three_inserts_same_table() {
 
 #[test]
 fn bit_parity_insert_then_update() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -130,7 +144,7 @@ fn bit_parity_insert_then_update() {
 
 #[test]
 fn bit_parity_insert_then_delete_cancel() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -143,7 +157,7 @@ fn bit_parity_insert_then_delete_cancel() {
 
 #[test]
 fn bit_parity_two_inserts_one_deleted() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users],
         &[
@@ -161,8 +175,8 @@ fn bit_parity_two_inserts_one_deleted() {
 
 #[test]
 fn bit_parity_two_tables() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "title"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users, posts],
         &[
@@ -177,8 +191,8 @@ fn bit_parity_two_tables() {
 #[test]
 fn bit_parity_two_tables_reverse_order() {
     // Insert into posts first, then users
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "title"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users, posts],
         &[
@@ -192,9 +206,9 @@ fn bit_parity_two_tables_reverse_order() {
 
 #[test]
 fn bit_parity_three_tables() {
-    let alpha = SimpleTable::new("alpha", &["id", "val"], &[0]);
-    let beta = SimpleTable::new("beta", &["id", "val"], &[0]);
-    let gamma = SimpleTable::new("gamma", &["id", "val"], &[0]);
+    let alpha = SimpleTable::with_rowid_alias("alpha", &[("id", "INTEGER"), ("val", "TEXT")], 0);
+    let beta = SimpleTable::with_rowid_alias("beta", &[("id", "INTEGER"), ("val", "TEXT")], 0);
+    let gamma = SimpleTable::with_rowid_alias("gamma", &[("id", "INTEGER"), ("val", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[alpha, beta, gamma],
         &[
@@ -210,8 +224,10 @@ fn bit_parity_three_tables() {
 
 #[test]
 fn bit_parity_table_cancel_and_readd() {
-    let table_a = SimpleTable::new("table_a", &["id", "val"], &[0]);
-    let table_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
+    let table_a =
+        SimpleTable::with_rowid_alias("table_a", &[("id", "INTEGER"), ("val", "TEXT")], 0);
+    let table_b =
+        SimpleTable::with_rowid_alias("table_b", &[("id", "INTEGER"), ("val", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[table_a, table_b],
         &[
@@ -227,8 +243,8 @@ fn bit_parity_table_cancel_and_readd() {
 
 #[test]
 fn bit_parity_cancelled_table_excluded() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "title"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[users, posts],
         &[
@@ -247,8 +263,15 @@ fn bit_parity_cancelled_table_excluded() {
 
 #[test]
 fn bit_parity_composite_pk() {
-    let order_items =
-        SimpleTable::new("order_items", &["order_id", "item_id", "quantity"], &[0, 1]);
+    let order_items = SimpleTable::new(
+        "order_items",
+        &[
+            ("order_id", "INTEGER"),
+            ("item_id", "INTEGER"),
+            ("quantity", "INTEGER"),
+        ],
+        &[0, 1],
+    );
     assert_patchset_sql_parity(
         &[order_items],
         &[
@@ -265,7 +288,7 @@ fn bit_parity_composite_pk() {
 
 #[test]
 fn bit_parity_builder_single_insert() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(
         Insert::<_, String, Vec<u8>>::from(schema.clone())
@@ -297,7 +320,7 @@ fn bit_parity_builder_single_insert() {
 
 #[test]
 fn bit_parity_builder_two_inserts() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
@@ -346,7 +369,7 @@ fn bit_parity_builder_two_inserts() {
 
 #[test]
 fn bit_parity_builder_insert_then_update() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
@@ -395,8 +418,10 @@ fn bit_parity_builder_insert_then_update() {
 
 #[test]
 fn bit_parity_builder_two_tables() {
-    let schema_u = SimpleTable::new("users", &["id", "name"], &[0]);
-    let schema_p = SimpleTable::new("posts", &["id", "title"], &[0]);
+    let schema_u =
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let schema_p =
+        SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
 
     let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
         .insert(
@@ -446,8 +471,10 @@ fn bit_parity_builder_two_tables() {
 
 #[test]
 fn bit_parity_builder_table_cancel_and_readd() {
-    let schema_a = SimpleTable::new("table_a", &["id", "val"], &[0]);
-    let schema_b = SimpleTable::new("table_b", &["id", "val"], &[0]);
+    let schema_a =
+        SimpleTable::with_rowid_alias("table_a", &[("id", "INTEGER"), ("val", "TEXT")], 0);
+    let schema_b =
+        SimpleTable::with_rowid_alias("table_b", &[("id", "INTEGER"), ("val", "TEXT")], 0);
 
     // Changeset
     let changeset: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new()
@@ -527,7 +554,8 @@ fn bit_parity_builder_table_cancel_and_readd() {
 
 #[test]
 fn bit_parity_integer_boundaries() {
-    let numbers = SimpleTable::new("numbers", &["id", "value"], &[0]);
+    let numbers =
+        SimpleTable::with_rowid_alias("numbers", &[("id", "INTEGER"), ("value", "INTEGER")], 0);
     assert_patchset_sql_parity(
         &[numbers],
         &[
@@ -544,7 +572,8 @@ fn bit_parity_integer_boundaries() {
 
 #[test]
 fn bit_parity_float_values() {
-    let floats = SimpleTable::new("floats", &["id", "value"], &[0]);
+    let floats =
+        SimpleTable::with_rowid_alias("floats", &[("id", "INTEGER"), ("value", "REAL")], 0);
     assert_patchset_sql_parity(
         &[floats],
         &[
@@ -558,7 +587,8 @@ fn bit_parity_float_values() {
 
 #[test]
 fn bit_parity_unicode_text() {
-    let strings = SimpleTable::new("strings", &["id", "value"], &[0]);
+    let strings =
+        SimpleTable::with_rowid_alias("strings", &[("id", "INTEGER"), ("value", "TEXT")], 0);
     assert_patchset_sql_parity(
         &[strings],
         &[
@@ -571,7 +601,7 @@ fn bit_parity_unicode_text() {
 
 #[test]
 fn bit_parity_blob_value() {
-    let blobs = SimpleTable::new("blobs", &["id", "data"], &[0]);
+    let blobs = SimpleTable::with_rowid_alias("blobs", &[("id", "INTEGER"), ("data", "BLOB")], 0);
     assert_patchset_sql_parity(
         &[blobs],
         &[
@@ -583,7 +613,16 @@ fn bit_parity_blob_value() {
 
 #[test]
 fn bit_parity_all_nulls() {
-    let items = SimpleTable::new("items", &["id", "a", "b", "c"], &[0]);
+    let items = SimpleTable::with_rowid_alias(
+        "items",
+        &[
+            ("id", "INTEGER"),
+            ("a", "TEXT"),
+            ("b", "REAL"),
+            ("c", "INTEGER"),
+        ],
+        0,
+    );
     assert_patchset_sql_parity(
         &[items],
         &[
@@ -616,7 +655,11 @@ fn bit_parity_standalone_update_single_pk() {
     // Note: only patchset parity is asserted here. The changeset UPDATE builder
     // has a separate, adjacent gap on the new side for PK columns that is out
     // of scope for this fix.
-    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+    let schema = SimpleTable::with_rowid_alias(
+        "orders",
+        &[("id", "INTEGER"), ("amount", "INTEGER"), ("status", "TEXT")],
+        0,
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -645,7 +688,11 @@ fn bit_parity_standalone_update_single_pk() {
 
 #[test]
 fn bit_parity_standalone_update_composite_pk() {
-    let schema = SimpleTable::new("items", &["a", "b", "val"], &[0, 1]);
+    let schema = SimpleTable::new(
+        "items",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("val", "TEXT")],
+        &[0, 1],
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -676,7 +723,11 @@ fn bit_parity_standalone_update_composite_pk() {
 
 #[test]
 fn bit_parity_standalone_update_all_non_pk_changed() {
-    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+    let schema = SimpleTable::with_rowid_alias(
+        "orders",
+        &[("id", "INTEGER"), ("amount", "INTEGER"), ("status", "TEXT")],
+        0,
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -707,7 +758,11 @@ fn bit_parity_standalone_update_all_non_pk_changed() {
 
 #[test]
 fn bit_parity_standalone_delete_single_pk() {
-    let schema = SimpleTable::new("orders", &["id", "amount", "status"], &[0]);
+    let schema = SimpleTable::with_rowid_alias(
+        "orders",
+        &[("id", "INTEGER"), ("amount", "INTEGER"), ("status", "TEXT")],
+        0,
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .delete(PatchDelete::new(schema, vec![Value::Integer(5)]))
@@ -746,7 +801,7 @@ fn bit_parity_standalone_delete_single_pk() {
 
 #[test]
 fn bit_parity_insert_pk_at_column_1() {
-    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+    let schema = SimpleTable::with_rowid_alias("t", &[("value", "TEXT"), ("id", "INTEGER")], 1);
     assert_patchset_sql_parity(
         &[schema],
         &[
@@ -758,7 +813,7 @@ fn bit_parity_insert_pk_at_column_1() {
 
 #[test]
 fn bit_parity_standalone_update_pk_at_column_1() {
-    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+    let schema = SimpleTable::with_rowid_alias("t", &[("value", "TEXT"), ("id", "INTEGER")], 1);
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -787,7 +842,7 @@ fn bit_parity_standalone_update_pk_at_column_1() {
 
 #[test]
 fn bit_parity_standalone_delete_pk_at_column_1() {
-    let schema = SimpleTable::new("t", &["value", "id"], &[1]);
+    let schema = SimpleTable::with_rowid_alias("t", &[("value", "TEXT"), ("id", "INTEGER")], 1);
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .delete(PatchDelete::new(schema, vec![Value::Integer(42)]))
@@ -812,7 +867,11 @@ fn bit_parity_standalone_delete_pk_at_column_1() {
 
 #[test]
 fn bit_parity_insert_pk_at_last_column() {
-    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+    let schema = SimpleTable::with_rowid_alias(
+        "t",
+        &[("a", "INTEGER"), ("b", "TEXT"), ("id", "INTEGER")],
+        2,
+    );
     assert_patchset_sql_parity(
         &[schema],
         &[
@@ -824,7 +883,11 @@ fn bit_parity_insert_pk_at_last_column() {
 
 #[test]
 fn bit_parity_standalone_update_pk_at_last_column() {
-    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+    let schema = SimpleTable::with_rowid_alias(
+        "t",
+        &[("a", "INTEGER"), ("b", "TEXT"), ("id", "INTEGER")],
+        2,
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -853,7 +916,11 @@ fn bit_parity_standalone_update_pk_at_last_column() {
 
 #[test]
 fn bit_parity_standalone_delete_pk_at_last_column() {
-    let schema = SimpleTable::new("t", &["a", "b", "id"], &[2]);
+    let schema = SimpleTable::with_rowid_alias(
+        "t",
+        &[("a", "INTEGER"), ("b", "TEXT"), ("id", "INTEGER")],
+        2,
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .delete(PatchDelete::new(schema, vec![Value::Integer(99)]))
@@ -878,7 +945,11 @@ fn bit_parity_standalone_delete_pk_at_last_column() {
 
 #[test]
 fn bit_parity_insert_composite_pk_not_at_column_0() {
-    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "TEXT"), ("b", "INTEGER"), ("c", "INTEGER")],
+        &[1, 2],
+    );
     assert_patchset_sql_parity(
         &[schema],
         &[
@@ -890,7 +961,11 @@ fn bit_parity_insert_composite_pk_not_at_column_0() {
 
 #[test]
 fn bit_parity_standalone_update_composite_pk_not_at_column_0() {
-    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "TEXT"), ("b", "INTEGER"), ("c", "INTEGER")],
+        &[1, 2],
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .update(
@@ -921,7 +996,11 @@ fn bit_parity_standalone_update_composite_pk_not_at_column_0() {
 
 #[test]
 fn bit_parity_standalone_delete_composite_pk_not_at_column_0() {
-    let schema = SimpleTable::new("t", &["a", "b", "c"], &[1, 2]);
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "TEXT"), ("b", "INTEGER"), ("c", "INTEGER")],
+        &[1, 2],
+    );
 
     let our_patchset: Vec<u8> = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .delete(PatchDelete::new(
@@ -956,8 +1035,11 @@ fn bit_parity_standalone_delete_composite_pk_not_at_column_0() {
 
 fn wide_table_insert_parity(n_cols: usize) {
     let col_names: Vec<String> = (0..n_cols).map(|i| format!("c{i}")).collect();
-    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
-    let schema = SimpleTable::new("wide", &col_refs, &[0]);
+    let col_pairs: Vec<(&str, &str)> = col_names
+        .iter()
+        .map(|name| (name.as_str(), "INTEGER"))
+        .collect();
+    let schema = SimpleTable::with_rowid_alias("wide", &col_pairs, 0);
 
     let mut insert = Insert::<SimpleTable, String, Vec<u8>>::from(schema);
     for i in 0..n_cols {
@@ -1014,7 +1096,7 @@ fn bit_parity_wide_table_300_columns() {
 // =============================================================================
 
 fn untyped_literal_parity(literal: &str) {
-    let t = SimpleTable::new("t", &["id", "b"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("b", "")], 0);
     let insert = format!("INSERT INTO t (id, b) VALUES (1, {literal})");
     assert_patchset_sql_parity(
         &[t],
@@ -1086,7 +1168,7 @@ fn bit_parity_negated_integer_above_u64_max() {
 
 #[test]
 fn bit_parity_update_sets_key_to_its_where_value() {
-    let t = SimpleTable::new("t", &["id", "b"], &[0]);
+    let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("b", "")], 0);
     let mut ours = PatchSet::<SimpleTable, String, Vec<u8>>::new();
     ours.add_table(&t);
     ours.digest_sql("UPDATE t SET id = 5, b = 2 WHERE id = 5")

@@ -105,6 +105,9 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
 {
     /// Sets the value for a specific column by index.
     ///
+    /// The values are recorded as given. Use [`Affinity::apply`](crate::Affinity::apply)
+    /// for the conversion SQLite applies when storing them in the column.
+    ///
     /// # Arguments
     ///
     /// * `col_idx` - The index of the column to set.
@@ -208,6 +211,9 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
 impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Update<T, PatchsetFormat, S, B> {
     /// Sets the value for a specific column by index.
     ///
+    /// The value is recorded as given. Use [`Affinity::apply`](crate::Affinity::apply)
+    /// for the conversion SQLite applies when storing it in the column.
+    ///
     /// # Implementation Note
     ///
     /// In the patchset format, the old value is not stored for updates,
@@ -276,7 +282,7 @@ mod tests {
     use alloc::vec::Vec;
 
     fn users() -> SimpleTable {
-        SimpleTable::new("users", &["id", "name"], &[0])
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0)
     }
 
     #[test]

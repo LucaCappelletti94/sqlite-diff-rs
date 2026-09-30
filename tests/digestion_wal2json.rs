@@ -45,15 +45,15 @@ impl WireSchema for DuplicateNameSchema {
 
 fn duplicate_name_schema() -> DuplicateNameSchema {
     DuplicateNameSchema {
-        public: TestUsersTable(SimpleTable::new(
+        public: TestUsersTable(SimpleTable::with_rowid_alias(
             "public.users",
-            &["id", "name", "active"],
-            &[0],
+            &[("id", "INTEGER"), ("name", "TEXT"), ("active", "INTEGER")],
+            0,
         )),
-        private: TestUsersTable(SimpleTable::new(
+        private: TestUsersTable(SimpleTable::with_rowid_alias(
             "private.users",
-            &["id", "other", "active"],
-            &[0],
+            &[("id", "INTEGER"), ("other", "TEXT"), ("active", "INTEGER")],
+            0,
         )),
     }
 }

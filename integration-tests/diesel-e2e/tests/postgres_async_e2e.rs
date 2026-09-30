@@ -193,7 +193,11 @@ async fn adapter_binds_bool_natively_against_pg_boolean_column_async() {
     let (_container, mut conn) = boot().await;
     conn.batch_execute(USERS_TYPED_DDL).await.unwrap();
 
-    let schema = SimpleTable::new("users_typed", &["id", "active"], &[0]);
+    let schema = SimpleTable::new(
+        "users_typed",
+        &[("id", "INTEGER"), ("active", "INTEGER")],
+        &[0],
+    );
     let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new()
         .insert(
             Insert::from(schema.clone())

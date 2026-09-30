@@ -23,7 +23,7 @@
 #![cfg(feature = "testing")]
 
 use sqlite_diff_rs::testing::{
-    FuzzSchemas, TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip,
+    FuzzSchemas, SqlType, TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip,
     test_differential, test_reverse_idempotent, test_roundtrip, test_sql_roundtrip,
 };
 use std::time::Duration;
@@ -130,6 +130,22 @@ fn fuzz_regression_crash_6() {
         0x00, 0x00,
     ];
     test_roundtrip(&input);
+}
+
+/// Crash 7: numbers written into a TEXT column, from the `differential` target.
+///
+/// SQLite stores the text of each number, which `digest_sql` must record too.
+#[test]
+fn fuzz_regression_crash_7() {
+    let t0 = TypedSimpleTable::new(
+        "t0",
+        &[("c0", SqlType::Integer), ("c1", SqlType::Text)],
+        &[0],
+    );
+    test_differential(
+        &[t0],
+        "INSERT INTO t0 VALUES(5555555555555550000,000000896943928585055)",
+    );
 }
 
 /// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.

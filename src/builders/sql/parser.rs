@@ -93,6 +93,27 @@ pub enum ParseError<'a> {
         /// The primary key column.
         column: &'a str,
     },
+    /// `INSERT` gives the rowid alias column a value SQLite cannot store as an integer.
+    #[error(
+        "datatype mismatch: column {column} of table '{table}' aliases the rowid and holds only integers"
+    )]
+    DatatypeMismatch {
+        /// The table name.
+        table: &'a str,
+        /// Index of the rowid alias column.
+        column: usize,
+    },
+    /// `INSERT` leaves the rowid alias column `NULL` or out, so SQLite assigns
+    /// a rowid the statement does not state.
+    #[error(
+        "column {column} of table '{table}' aliases the rowid and needs a value, because SQLite would assign one"
+    )]
+    MissingRowid {
+        /// The table name.
+        table: &'a str,
+        /// Index of the rowid alias column.
+        column: usize,
+    },
 }
 
 /// SQL parser. Collects operations into a pending list without applying
@@ -185,7 +206,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::Insert)?;
         self.expect(&TokenKind::Into)?;
 
-        let table = self.expect_table()?;
+        let (table, table_name) = self.expect_table()?;
 
         // Column identifiers for the explicit list, empty means positional.
         // u16 is enough: SQLite's default column limit is 2000, and even with
@@ -217,7 +238,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 if col_idx > 0 {
                     self.expect(&TokenKind::Comma)?;
                 }
-                *value_ref = self.parse_value()?;
+                *value_ref = Self::with_affinity(&table, col_idx, self.parse_value()?);
                 if let Some(pk_idx) = table.primary_key_index(col_idx) {
                     pks[pk_idx] = (*value_ref).clone();
                 }
@@ -226,11 +247,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             // Explicit column list: exactly one value per listed column.
             let expected = column_identifiers.len();
             let mut parsed = 0usize;
-            for column_index in &column_identifiers {
-                values[usize::from(*column_index)] = self.parse_value()?;
-                if let Some(primary_key_index) = table.primary_key_index(usize::from(*column_index))
-                {
-                    pks[primary_key_index] = values[usize::from(*column_index)].clone();
+            for &column_index in &column_identifiers {
+                let column_index = usize::from(column_index);
+                values[column_index] =
+                    Self::with_affinity(&table, column_index, self.parse_value()?);
+                if let Some(primary_key_index) = table.primary_key_index(column_index) {
+                    pks[primary_key_index] = values[column_index].clone();
                 }
                 parsed += 1;
                 if self.lexer.peek()?.kind != TokenKind::Comma {
@@ -248,6 +270,24 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         self.expect(&TokenKind::RParen)?;
 
+        if let Some(alias) = table.rowid_alias() {
+            match values[alias] {
+                Value::Integer(_) => {}
+                Value::Null => {
+                    return Err(ParseError::MissingRowid {
+                        table: table_name,
+                        column: alias,
+                    });
+                }
+                Value::Text(_) | Value::Real(_) | Value::Blob(_) => {
+                    return Err(ParseError::DatatypeMismatch {
+                        table: table_name,
+                        column: alias,
+                    });
+                }
+            }
+        }
+
         self.pending.push((
             table,
             pks,
@@ -264,7 +304,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     fn digest_update(&mut self) -> Result<(), ParseError<'input>> {
         self.expect(&TokenKind::Update)?;
 
-        let table = self.expect_table()?;
+        let (table, _) = self.expect_table()?;
         self.expect(&TokenKind::Set)?;
 
         let mut new_values = vec![((), None); table.number_of_columns()];
@@ -274,7 +314,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             let (col_idx, col_name) = self.expect_column(&table)?;
             let col_idx = usize::from(col_idx);
             self.expect(&TokenKind::Equals)?;
-            let val = self.parse_value()?;
+            let val = Self::with_affinity(&table, col_idx, self.parse_value()?);
             if let Some(primary_key_index) = table.primary_key_index(col_idx) {
                 key_sets.push((col_idx, primary_key_index, col_name));
             }
@@ -296,7 +336,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let mut pk = vec![Value::Null; n_pk];
         let mut pk_seen = vec![false; n_pk];
 
-        self.digest_where(&table, |col_idx, col_name, val| {
+        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pk[primary_key_index] = val.clone();
                 pk_seen[primary_key_index] = true;
@@ -312,6 +352,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 expected: n_pk,
                 found,
             });
+        }
+        if !can_match {
+            return Ok(());
         }
 
         // A session records a key change as a DELETE plus a full-row INSERT, which SQL text cannot supply.
@@ -338,7 +381,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::Delete)?;
         self.expect(&TokenKind::From)?;
 
-        let table = self.expect_table()?;
+        let (table, _) = self.expect_table()?;
 
         if self.lexer.peek()?.kind != TokenKind::Where {
             return Err(ParseError::MissingWhere {
@@ -350,7 +393,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let mut pks = vec![Value::Null; n_pk];
         let mut pk_seen = vec![false; n_pk];
 
-        self.digest_where(&table, |col_idx, col_name, val| {
+        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pks[primary_key_index] = val.clone();
                 pk_seen[primary_key_index] = true;
@@ -367,6 +410,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 found,
             });
         }
+        if !can_match {
+            return Ok(());
+        }
 
         self.pending.push((
             table,
@@ -380,18 +426,30 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         Ok(())
     }
 
-    /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate.
-    /// Returns `OrInWhere` if `OR` appears after a predicate.
-    fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<(), ParseError<'input>>
+    /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate
+    /// with the literal converted by the column's affinity, as SQLite compares it.
+    /// Fails with `OrInWhere` if `OR` appears after a predicate.
+    ///
+    /// Returns whether a row can satisfy every predicate. A predicate cannot
+    /// hold when its value is `NULL`, or is not an integer on a rowid alias.
+    fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<bool, ParseError<'input>>
     where
         D: FnMut(u16, &'input str, Value<S, Vec<u8>>) -> Result<(), ParseError<'input>>,
     {
         self.expect(&TokenKind::Where)?;
 
+        let mut can_match = true;
         loop {
             let (col_idx, col_name) = self.expect_column(table)?;
             self.expect(&TokenKind::Equals)?;
-            let val = self.parse_value()?;
+            let val = Self::with_affinity(table, usize::from(col_idx), self.parse_value()?);
+            can_match &= match val {
+                Value::Null => false,
+                Value::Integer(_) => true,
+                Value::Real(_) | Value::Text(_) | Value::Blob(_) => {
+                    table.rowid_alias() != Some(usize::from(col_idx))
+                }
+            };
             digestor(col_idx, col_name, val)?;
 
             if self.lexer.peek()?.kind != TokenKind::And {
@@ -403,7 +461,15 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             self.lexer.next()?;
         }
 
-        Ok(())
+        Ok(can_match)
+    }
+
+    /// `value` as SQLite stores or compares it in column `col_idx` of `table`.
+    fn with_affinity(table: &T, col_idx: usize, value: Value<S, Vec<u8>>) -> Value<S, Vec<u8>> {
+        match table.column_affinity(col_idx) {
+            Some(affinity) => affinity.apply(value),
+            None => value,
+        }
     }
 
     /// Parse a value literal.
@@ -411,9 +477,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let token = self.lexer.next()?;
         match token.kind {
             TokenKind::Null => Ok(Value::Null),
+            // The lexer caps integers at 2^63, the one integer literal past i64::MAX.
             TokenKind::IntegerLiteral(v) => {
-                Ok(i64::try_from(v)
-                    .map_or_else(|_| Value::Real(unsigned_to_real(v)), Value::Integer))
+                Ok(i64::try_from(v).map_or(Value::Real(TWO_POW_63), Value::Integer))
             }
             TokenKind::RealLiteral(v) => Ok(Value::Real(v)),
             TokenKind::StringLiteral(s) => {
@@ -427,9 +493,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             TokenKind::Minus => {
                 let next = self.lexer.next()?;
                 match next.kind {
-                    TokenKind::IntegerLiteral(v) => Ok(0_i64
-                        .checked_sub_unsigned(v)
-                        .map_or_else(|| Value::Real(-unsigned_to_real(v)), Value::Integer)),
+                    TokenKind::IntegerLiteral(v) => {
+                        debug_assert!(v <= 1 << 63, "the lexer caps integers at 2^63");
+                        Ok(Value::Integer(
+                            0_i64.checked_sub_unsigned(v).unwrap_or(i64::MIN),
+                        ))
+                    }
                     TokenKind::RealLiteral(v) => Ok(Value::Real(-v)),
                     other => Err(ParseError::UnexpectedToken {
                         expected: "number after minus",
@@ -473,12 +542,13 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             .ok_or(ParseError::UnknownColumn(column_name))
     }
 
-    /// Expects a table existing in the builder's schema and returns a clone.
-    fn expect_table(&mut self) -> Result<T, ParseError<'input>> {
+    /// Expects a table existing in the builder's schema and returns a clone and its name.
+    fn expect_table(&mut self) -> Result<(T, &'input str), ParseError<'input>> {
         let table_name = self.expect_identifier()?;
         self.builder
             .table(table_name)
             .cloned()
+            .map(|table| (table, table_name))
             .ok_or(ParseError::UnknownTable(table_name))
     }
 
@@ -516,14 +586,8 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     }
 }
 
-/// SQLite stores an integer literal past the `i64` range as the nearest real.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "rounding to the nearest real is the conversion SQLite applies"
-)]
-fn unsigned_to_real(v: u64) -> f64 {
-    v as f64
-}
+/// `9223372036854775808`, which SQLite reads as a real unless negated.
+const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
 
 #[cfg(test)]
 mod tests {
@@ -545,7 +609,8 @@ mod tests {
 
     #[test]
     fn test_digest_insert() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')")
@@ -556,7 +621,8 @@ mod tests {
 
     #[test]
     fn test_digest_insert_positional() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("INSERT INTO users VALUES (1, 'Alice')")
@@ -566,7 +632,8 @@ mod tests {
 
     #[test]
     fn test_digest_update() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("UPDATE users SET name = 'Bob' WHERE id = 1")
@@ -577,7 +644,8 @@ mod tests {
 
     #[test]
     fn test_digest_delete() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql("DELETE FROM users WHERE id = 1")
@@ -588,7 +656,11 @@ mod tests {
 
     #[test]
     fn test_digest_delete_rejects_non_pk_in_where() {
-        let users = SimpleTable::new("users", &["id", "name", "status"], &[0]);
+        let users = SimpleTable::with_rowid_alias(
+            "users",
+            &[("id", "INTEGER"), ("name", "TEXT"), ("status", "TEXT")],
+            0,
+        );
         let mut builder = make_builder(&[users]);
         let result = builder.digest_sql("DELETE FROM users WHERE id = 1 AND status = 'active'");
         assert!(result.is_err());
@@ -596,7 +668,8 @@ mod tests {
 
     #[test]
     fn test_digest_multiple_dml() {
-        let users = SimpleTable::new("users", &["id", "name"], &[0]);
+        let users =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let mut builder = make_builder(&[users]);
         builder
             .digest_sql(
@@ -620,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_digest_blob_value() {
-        let t = SimpleTable::new("t", &["data"], &[0]);
+        let t = SimpleTable::new("t", &[("data", "BLOB")], &[0]);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (data) VALUES (X'DEADBEEF')")
@@ -630,7 +703,7 @@ mod tests {
 
     #[test]
     fn test_digest_null_value() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (id, v) VALUES (1, NULL)")
@@ -640,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_digest_negative_numbers() {
-        let t = SimpleTable::new("t", &["a", "b"], &[0]);
+        let t = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "REAL")], &[0]);
         let mut builder = make_builder(&[t]);
         builder
             .digest_sql("INSERT INTO t (a, b) VALUES (-42, -3.14)")
@@ -653,9 +726,25 @@ mod tests {
         // Each reserved keyword is a column name. This forces expect_identifier
         // to take every keyword arm. The names registered on the schema match
         // the uppercase constants the parser returns for those arms.
-        let cols = [
-            "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "FROM", "WHERE", "AND",
-            "PRIMARY", "KEY", "NULL", "INTEGER", "INT", "REAL", "TEXT", "BLOB", "NOT",
+        let cols: [(&str, &str); 18] = [
+            ("INSERT", "INTEGER"),
+            ("INTO", "INTEGER"),
+            ("VALUES", "INTEGER"),
+            ("UPDATE", "INTEGER"),
+            ("SET", "INTEGER"),
+            ("DELETE", "INTEGER"),
+            ("FROM", "INTEGER"),
+            ("WHERE", "INTEGER"),
+            ("AND", "INTEGER"),
+            ("PRIMARY", "INTEGER"),
+            ("KEY", "INTEGER"),
+            ("NULL", "INTEGER"),
+            ("INTEGER", "INTEGER"),
+            ("INT", "INTEGER"),
+            ("REAL", "INTEGER"),
+            ("TEXT", "INTEGER"),
+            ("BLOB", "INTEGER"),
+            ("NOT", "INTEGER"),
         ];
         let t = SimpleTable::new("kwords", &cols, &[0]);
         let mut builder = make_builder(&[t]);
@@ -674,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_digest_insert_missing_into() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("INSERT FROM t").unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));
@@ -682,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_digest_insert_unknown_table() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO unknown_table VALUES (1)")
@@ -692,7 +781,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_missing_where() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("UPDATE t SET v = 1").unwrap_err();
         assert!(matches!(
@@ -705,7 +794,7 @@ mod tests {
 
     #[test]
     fn test_digest_delete_missing_where() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("DELETE FROM t").unwrap_err();
         assert!(matches!(
@@ -718,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_where_non_pk_column() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("UPDATE t SET v = 2 WHERE v = 1")
@@ -728,7 +817,7 @@ mod tests {
 
     #[test]
     fn test_digest_unexpected_top_level_token() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder.digest_sql("SELECT 1").unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));
@@ -736,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_digest_expect_identifier_rejects_value_token() {
-        let t = SimpleTable::new("t", &["id"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         // Integer literal where a table name is expected.
         let err = builder.digest_sql("INSERT INTO 42 VALUES (1)").unwrap_err();
@@ -745,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_digest_update_changing_key_refused() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
         let mut builder = make_builder(&[t]);
         builder.digest_sql("INSERT INTO t VALUES (5, 1)").unwrap();
         let before = builder.build();
@@ -758,7 +847,11 @@ mod tests {
 
     #[test]
     fn test_digest_update_changing_one_composite_key_column_refused() {
-        let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+        let t = SimpleTable::new(
+            "t",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("v", "INTEGER")],
+            &[0, 1],
+        );
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("UPDATE t SET v = 0, b = 9 WHERE a = 1 AND b = 2")
@@ -769,7 +862,7 @@ mod tests {
 
     #[test]
     fn test_digest_unterminated_comment_swallows_closing_paren() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO t VALUES (1, 2 /* never closed)")
@@ -780,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_digest_statements_need_a_separator() {
-        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "")], 0);
         let mut builder = make_builder(&[t]);
         let err = builder
             .digest_sql("INSERT INTO t VALUES (1, 2) INSERT INTO t VALUES (3, 4)")
@@ -791,5 +884,53 @@ mod tests {
             .digest_sql("INSERT INTO t VALUES (1, 2);INSERT INTO t VALUES (3, 4);")
             .unwrap();
         assert_eq!(builder.len(), 2);
+    }
+
+    #[test]
+    fn test_digest_rowid_alias_refuses_non_integer_key() {
+        let k = SimpleTable::with_rowid_alias("k", &[("v", ""), ("id", "INTEGER")], 1);
+        let mut builder = make_builder(&[k]);
+        builder.digest_sql("INSERT INTO k VALUES (1, 1)").unwrap();
+        let before = builder.build();
+        for sql in [
+            "INSERT INTO k VALUES (1, 'abc')",
+            "INSERT INTO k (id, v) VALUES (7.5, 1)",
+            "INSERT INTO k VALUES (1, X'07')",
+            "INSERT INTO k VALUES (2, 2); INSERT INTO k VALUES (1, '7a')",
+        ] {
+            let err = builder.digest_sql(sql).unwrap_err();
+            assert_eq!(
+                err,
+                ParseError::DatatypeMismatch {
+                    table: "k",
+                    column: 1
+                },
+                "{sql}"
+            );
+            assert_eq!(builder.build(), before, "{sql}");
+        }
+    }
+
+    #[test]
+    fn test_digest_rowid_alias_refuses_null_or_omitted_key() {
+        let k = SimpleTable::with_rowid_alias("k", &[("v", ""), ("id", "INTEGER")], 1);
+        let mut builder = make_builder(&[k]);
+        builder.digest_sql("INSERT INTO k VALUES (1, 1)").unwrap();
+        let before = builder.build();
+        for sql in [
+            "INSERT INTO k VALUES (1, NULL)",
+            "INSERT INTO k (v) VALUES (1)",
+        ] {
+            let err = builder.digest_sql(sql).unwrap_err();
+            assert_eq!(
+                err,
+                ParseError::MissingRowid {
+                    table: "k",
+                    column: 1
+                },
+                "{sql}"
+            );
+            assert_eq!(builder.build(), before, "{sql}");
+        }
     }
 }

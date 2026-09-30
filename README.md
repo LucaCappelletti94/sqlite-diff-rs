@@ -29,8 +29,8 @@ sqlite-diff-rs = "0.10"
 ```rust
 use sqlite_diff_rs::{DiffOps, Insert, PatchSet, SimpleTable};
 
-// Define a table schema: "users" with columns (id, name), PK at index 0
-let users = SimpleTable::new("users", &["id", "name"], &[0]);
+// users (id INTEGER PRIMARY KEY, name TEXT): declared types drive SQLite's affinity
+let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
 // Build a patchset with an INSERT
 let patchset = PatchSet::<_, String, Vec<u8>>::new()
@@ -53,8 +53,8 @@ let bytes: Vec<u8> = patchset.into();
 ```rust
 # #![cfg(feature = "maxwell")]
 # use sqlite_diff_rs::{
-#     DynTable, IndexableValues, NamedColumns, PatchSet, SchemaWithPK, SimpleTable, TypeMap,
-#     Value, WireColumnTypes, WireSchema, WireType,
+#     Affinity, DynTable, IndexableValues, NamedColumns, PatchSet, SchemaWithPK, SimpleTable,
+#     TypeMap, Value, WireColumnTypes, WireSchema, WireType,
 # };
 # use sqlite_diff_rs::maxwell::{ConversionError, Maxwell, parse};
 # #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -71,6 +71,8 @@ let bytes: Vec<u8> = patchset.into();
 # }
 # impl NamedColumns for UsersTable {
 #     fn column_index(&self, name: &str) -> Option<usize> { self.0.column_index(name) }
+#     fn column_affinity(&self, column_index: usize) -> Option<Affinity> { self.0.column_affinity(column_index) }
+#     fn rowid_alias(&self) -> Option<usize> { self.0.rowid_alias() }
 # }
 # impl WireColumnTypes for UsersTable {
 #     fn column_type(&self, i: usize) -> WireType { if i == 0 { WireType::Int } else { WireType::Text } }
@@ -82,7 +84,7 @@ let bytes: Vec<u8> = patchset.into();
 # }
 # let json_ev = r#"{"database":"db","table":"users","type":"insert","ts":0,"data":{"id":1,"name":"Alice"}}"#;
 # let msg = parse(json_ev).unwrap();
-# let schema = MySchema { users: UsersTable(SimpleTable::new("users", &["id", "name"], &[0])) };
+# let schema = MySchema { users: UsersTable(SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0)) };
 # let types = TypeMap::<Maxwell, String, Vec<u8>>::defaults();
 let patchset = PatchSet::<UsersTable, String, Vec<u8>>::new()
     .digest(&msg, &schema, &types)?;
@@ -178,7 +180,7 @@ impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Pg, S, B> for MyAdapte
 
 // Pass any Connection<Backend = Pg> (e.g. PgConnection::establish("postgres://...")):
 fn apply<C: Connection<Backend = Pg>>(conn: &mut C) -> QueryResult<usize> {
-    let schema = SimpleTable::new("users", &["id", "active"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("active", "INTEGER")], 0);
     let patchset = PatchSet::<SimpleTable, String, Vec<u8>>::new().insert(
         Insert::from(schema.clone())
             .set(0, 1_i64)

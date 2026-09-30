@@ -35,7 +35,7 @@
 //! ```
 //! use sqlite_diff_rs::{ChangeSet, SimpleTable};
 //!
-//! let schema = SimpleTable::new("t", &["id"], &[0]);
+//! let schema = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER")], 0);
 //! let mut a: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
 //! a.add_table(&schema);
 //! let b: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new();
@@ -851,6 +851,20 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
     /// `SET` may name a primary key column only with the value its `WHERE`
     /// gives it. SQLite records a key change as a `DELETE` plus an `INSERT`
     /// of every column, which the statement alone cannot supply.
+    ///
+    /// A column an `INSERT` omits is recorded as `NULL`. Column `DEFAULT`
+    /// values are not part of the schema, so give such columns explicitly.
+    ///
+    /// Every literal is converted by its column's [`Affinity`](crate::Affinity),
+    /// as SQLite converts a value before storing or comparing it, so an
+    /// integer written into a `TEXT` column is recorded as text. A table built
+    /// with [`SimpleTable::with_rowid_alias`](crate::SimpleTable::with_rowid_alias)
+    /// accepts only a key that converts to an integer, returning
+    /// [`ParseError::DatatypeMismatch`](crate::builders::sql::ParseError::DatatypeMismatch)
+    /// otherwise, and an `INSERT` must give that key, returning
+    /// [`ParseError::MissingRowid`](crate::builders::sql::ParseError::MissingRowid)
+    /// for a `NULL` or omitted key whose rowid SQLite would choose. A `WHERE`
+    /// no row can satisfy, a `NULL` key or a non-integer rowid key, records nothing.
     ///
     /// Multiple statements must be separated by semicolons.
     ///

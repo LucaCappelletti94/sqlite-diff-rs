@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn changeset_primary_key_single_key() {
-        let schema = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let schema = SimpleTable::with_rowid_alias("kv", &[("id", "INTEGER"), ("val", "TEXT")], 0);
 
         let insert_values: Vec<Val> = vec![Value::Integer(1), Value::Text("a".into())];
         let insert = ChangesetOp::Insert {
@@ -296,7 +296,11 @@ mod tests {
     #[test]
     fn changeset_primary_key_composite_reordered_key() {
         // Columns (a, b, c), key (b, a): flags [2, 1, 0], key order is b then a.
-        let schema = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let schema = SimpleTable::new(
+            "abc",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("c", "TEXT")],
+            &[1, 0],
+        );
         let expected: Vec<Val> = vec![Value::Integer(20), Value::Integer(10)];
 
         let insert_values: Vec<Val> = vec![
@@ -343,7 +347,7 @@ mod tests {
 
     #[test]
     fn patchset_primary_key_variants() {
-        let kv = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let kv = SimpleTable::with_rowid_alias("kv", &[("id", "INTEGER"), ("val", "TEXT")], 0);
 
         let insert_values: Vec<Val> = vec![Value::Integer(1), Value::Text("a".into())];
         let insert = PatchsetOp::Insert {
@@ -372,7 +376,11 @@ mod tests {
         assert_eq!(delete.primary_key(), vec![Value::Integer(7)]);
 
         // Composite key: INSERT recovers key order (b, a) from the full row.
-        let abc = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let abc = SimpleTable::new(
+            "abc",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("c", "TEXT")],
+            &[1, 0],
+        );
         let abc_values: Vec<Val> = vec![
             Value::Integer(10),
             Value::Integer(20),
@@ -393,7 +401,11 @@ mod tests {
     fn changeset_primary_key_through_iter_composite() {
         // Build a real changeset and read the key back through iter(), so the
         // extract_pk key ordering is exercised end to end.
-        let schema = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let schema = SimpleTable::new(
+            "abc",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("c", "TEXT")],
+            &[1, 0],
+        );
         let cs: ChangeSet<SimpleTable, String, Vec<u8>> = ChangeSet::new().insert(
             Insert::from(schema)
                 .set(0, 10i64)
@@ -415,7 +427,11 @@ mod tests {
     fn patchset_primary_key_through_iter_composite_delete() {
         // A digested DELETE stores its key in key order; primary_key() must
         // return it in that same order through iter().
-        let schema = SimpleTable::new("abc", &["a", "b", "c"], &[1, 0]);
+        let schema = SimpleTable::new(
+            "abc",
+            &[("a", "INTEGER"), ("b", "INTEGER"), ("c", "TEXT")],
+            &[1, 0],
+        );
         let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
         ps.add_table(&schema);
         ps.digest_sql("DELETE FROM abc WHERE a = 10 AND b = 20")
@@ -432,7 +448,7 @@ mod tests {
     fn primary_key_on_parsed_changeset_ops() {
         // The whole point: ops from a parsed diff are over TableSchema<String>,
         // not SimpleTable. primary_key() must be callable there.
-        let schema = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let schema = SimpleTable::with_rowid_alias("kv", &[("id", "INTEGER"), ("val", "TEXT")], 0);
         let bytes = ChangeSet::<SimpleTable, String, Vec<u8>>::new()
             .insert(
                 Insert::from(schema.clone())
@@ -459,7 +475,7 @@ mod tests {
 
     #[test]
     fn primary_key_on_parsed_patchset_ops() {
-        let schema = SimpleTable::new("kv", &["id", "val"], &[0]);
+        let schema = SimpleTable::with_rowid_alias("kv", &[("id", "INTEGER"), ("val", "TEXT")], 0);
         let mut ps: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
         ps.add_table(&schema);
         ps.digest_sql("INSERT INTO kv (id, val) VALUES (1, 'a')")

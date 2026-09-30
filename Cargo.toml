@@ -99,6 +99,10 @@ name = "apply_benchmark"
 harness = false
 required-features = ["testing"]
 
+[[bench]]
+name = "affinity"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1

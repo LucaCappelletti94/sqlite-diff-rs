@@ -11,7 +11,7 @@ use sqlite_diff_rs::differential_testing::run_differential_test;
 
 #[test]
 fn differential_insert_update_delete_byte_parity() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let create = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let dml = [
         "INSERT INTO users (id, name) VALUES (1, 'Alice')",
@@ -24,8 +24,12 @@ fn differential_insert_update_delete_byte_parity() {
 
 #[test]
 fn differential_multi_table_byte_parity() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
-    let posts = SimpleTable::new("posts", &["id", "user_id", "body"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let posts = SimpleTable::with_rowid_alias(
+        "posts",
+        &[("id", "INTEGER"), ("user_id", "INTEGER"), ("body", "TEXT")],
+        0,
+    );
     let create_users = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let create_posts = "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, body TEXT)";
     let dml = [
@@ -42,7 +46,7 @@ fn differential_multi_table_byte_parity() {
 
 #[test]
 fn differential_runs_every_statement_of_a_multi_statement_string() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let create = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     let dml = ["INSERT INTO users VALUES (1, 'a'); INSERT INTO users VALUES (2, 'b')"];
     assert!(run_differential_test(&[users], &[create], &dml));
@@ -50,7 +54,7 @@ fn differential_runs_every_statement_of_a_multi_statement_string() {
 
 #[test]
 fn differential_skips_statements_without_a_counterpart_row() {
-    let users = SimpleTable::new("users", &["id", "name"], &[0]);
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let create = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
     for dml in [
         "UPDATE users SET name = 'x' WHERE id = 5",

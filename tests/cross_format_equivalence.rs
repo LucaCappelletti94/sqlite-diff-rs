@@ -94,6 +94,12 @@ impl NamedColumns for UsersTable {
     fn column_index(&self, column_name: &str) -> Option<usize> {
         NamedColumns::column_index(&self.inner, column_name)
     }
+    fn column_affinity(&self, column_index: usize) -> Option<sqlite_diff_rs::Affinity> {
+        NamedColumns::column_affinity(&self.inner, column_index)
+    }
+    fn rowid_alias(&self) -> Option<usize> {
+        NamedColumns::rowid_alias(&self.inner)
+    }
 }
 
 impl WireColumnTypes for UsersTable {
@@ -140,10 +146,17 @@ fn scenario_scalar_row() -> (
     AppSchema,
     Vec<(&'static str, ColumnValue, serde_json::Value)>,
 ) {
-    let inner = SimpleTable::new(
+    let inner = SimpleTable::with_rowid_alias(
         "users",
-        &["id", "active", "handle", "credits", "price", "ts"],
-        &[0],
+        &[
+            ("id", "INTEGER"),
+            ("active", "INTEGER"),
+            ("handle", "TEXT"),
+            ("credits", "INTEGER"),
+            ("price", "REAL"),
+            ("ts", "TEXT"),
+        ],
+        0,
     );
     let wire_types: Vec<WireType> = alloc::vec![
         WireType::Int,

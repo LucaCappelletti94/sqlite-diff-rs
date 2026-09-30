@@ -8,7 +8,7 @@
 //! ```rust
 //! use sqlite_diff_rs::{SimpleTable, PatchSet, DiffOps, Insert};
 //!
-//! let table = SimpleTable::new("users", &["id", "name"], &[0]);
+//! let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 //! let insert = Insert::from(table.clone())
 //!     .set(0, 1i64).unwrap()
 //!     .set(1, "Alice").unwrap();
@@ -279,7 +279,7 @@ impl<
     /// ```rust
     /// use sqlite_diff_rs::{SimpleTable, ChangeSet, DiffOps, Insert};
     ///
-    /// let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    /// let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     /// let insert = Insert::from(table.clone())
     ///     .set(0, 1i64).unwrap()
     ///     .set(1, "Alice").unwrap();
@@ -315,7 +315,7 @@ impl<T: ColumnNames, S: AsRef<str> + Clone + Hash + Eq, B: AsRef<[u8]> + Clone +
     /// ```rust
     /// use sqlite_diff_rs::{SimpleTable, PatchSet, DiffOps, Insert};
     ///
-    /// let table = SimpleTable::new("users", &["id", "name"], &[0]);
+    /// let table = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     /// let insert = Insert::from(table.clone())
     ///     .set(0, 1i64).unwrap()
     ///     .set(1, "Alice").unwrap();
@@ -357,7 +357,8 @@ mod tests {
 
     #[test]
     fn test_changeset_insert_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let insert = Insert::from(table.clone())
             .set(0, 1i64)
             .unwrap()
@@ -376,7 +377,8 @@ mod tests {
 
     #[test]
     fn test_patchset_insert_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let insert = Insert::from(table.clone())
             .set(0, 1i64)
             .unwrap()
@@ -395,7 +397,8 @@ mod tests {
 
     #[test]
     fn test_changeset_delete_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let delete = ChangeDelete::from(table.clone())
             .set(0, 42i64)
             .unwrap()
@@ -411,7 +414,8 @@ mod tests {
 
     #[test]
     fn test_patchset_delete_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let delete = PatchDelete::new(table.clone(), alloc::vec![Value::Integer(42)]);
 
         let ps = PatchSet::<SimpleTable, String, Vec<u8>>::new().delete(delete);
@@ -423,7 +427,8 @@ mod tests {
 
     #[test]
     fn test_changeset_update_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64, 1i64)
             .unwrap()
@@ -442,7 +447,8 @@ mod tests {
 
     #[test]
     fn test_patchset_update_sql() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let update = Update::<SimpleTable, PatchsetFormat, String, Vec<u8>>::from(table.clone())
             .set(0, 1i64)
             .unwrap()
@@ -461,7 +467,8 @@ mod tests {
 
     #[test]
     fn test_sql_escapes_quotes_in_strings() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
         let insert = Insert::from(table.clone())
             .set(0, 1i64)
             .unwrap()
@@ -479,7 +486,11 @@ mod tests {
 
     #[test]
     fn test_sql_escapes_quotes_in_identifiers() {
-        let table = SimpleTable::new(r#"user"table"#, &["id", r#"user"name"#], &[0]);
+        let table = SimpleTable::with_rowid_alias(
+            r#"user"table"#,
+            &[("id", "INTEGER"), (r#"user"name"#, "TEXT")],
+            0,
+        );
         let insert = Insert::from(table.clone())
             .set(0, 1i64)
             .unwrap()
@@ -497,7 +508,8 @@ mod tests {
 
     #[test]
     fn test_multiple_operations() {
-        let table = SimpleTable::new("users", &["id", "name"], &[0]);
+        let table =
+            SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
         let insert1 = Insert::from(table.clone())
             .set(0, 1i64)
@@ -521,7 +533,15 @@ mod tests {
 
     #[test]
     fn test_composite_pk_delete() {
-        let table = SimpleTable::new("order_items", &["order_id", "item_id", "qty"], &[0, 1]);
+        let table = SimpleTable::new(
+            "order_items",
+            &[
+                ("order_id", "INTEGER"),
+                ("item_id", "INTEGER"),
+                ("qty", "INTEGER"),
+            ],
+            &[0, 1],
+        );
         let delete = ChangeDelete::from(table.clone())
             .set(0, 100i64)
             .unwrap()
@@ -580,6 +600,12 @@ mod tests {
 
     impl crate::schema::NamedColumns for AnonColsTable {
         fn column_index(&self, _column_name: &str) -> Option<usize> {
+            None
+        }
+        fn column_affinity(&self, column_index: usize) -> Option<crate::Affinity> {
+            (column_index < self.num_columns).then_some(crate::Affinity::Blob)
+        }
+        fn rowid_alias(&self) -> Option<usize> {
             None
         }
     }

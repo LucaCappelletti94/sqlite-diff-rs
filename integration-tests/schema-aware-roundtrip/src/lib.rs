@@ -105,8 +105,8 @@ pub async fn get_changes_v2(client: &Client, slot: &str) -> Vec<String> {
 use std::hash::{Hash, Hasher};
 
 use sqlite_diff_rs::{
-    DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable, Value, WireColumnTypes,
-    WireSchema, WireType,
+    Affinity, DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable, Value,
+    WireColumnTypes, WireSchema, WireType,
 };
 
 /// The `users` table both roundtrip tests exercise. Columns:
@@ -123,10 +123,17 @@ impl UsersTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: SimpleTable::new(
+            inner: SimpleTable::with_rowid_alias(
                 "users",
-                &["id", "active", "handle", "price", "ts", "metadata"],
-                &[0],
+                &[
+                    ("id", "INTEGER"),
+                    ("active", "INTEGER"),
+                    ("handle", "TEXT"),
+                    ("price", "TEXT"),
+                    ("ts", "TEXT"),
+                    ("metadata", "TEXT"),
+                ],
+                0,
             ),
             wire_types: vec![
                 WireType::Int,
@@ -200,6 +207,12 @@ impl SchemaWithPK for UsersTable {
 impl NamedColumns for UsersTable {
     fn column_index(&self, column_name: &str) -> Option<usize> {
         NamedColumns::column_index(&self.inner, column_name)
+    }
+    fn column_affinity(&self, column_index: usize) -> Option<Affinity> {
+        self.inner.column_affinity(column_index)
+    }
+    fn rowid_alias(&self) -> Option<usize> {
+        self.inner.rowid_alias()
     }
 }
 
@@ -303,7 +316,11 @@ impl MaxwellUsersTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: SimpleTable::new("users", &["id", "name", "score"], &[0]),
+            inner: SimpleTable::with_rowid_alias(
+                "users",
+                &[("id", "INTEGER"), ("name", "TEXT"), ("score", "INTEGER")],
+                0,
+            ),
         }
     }
 }
@@ -362,6 +379,12 @@ impl SchemaWithPK for MaxwellUsersTable {
 impl NamedColumns for MaxwellUsersTable {
     fn column_index(&self, column_name: &str) -> Option<usize> {
         NamedColumns::column_index(&self.inner, column_name)
+    }
+    fn column_affinity(&self, column_index: usize) -> Option<Affinity> {
+        self.inner.column_affinity(column_index)
+    }
+    fn rowid_alias(&self) -> Option<usize> {
+        self.inner.rowid_alias()
     }
 }
 

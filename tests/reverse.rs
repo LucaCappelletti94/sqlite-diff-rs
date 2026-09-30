@@ -20,7 +20,7 @@ use sqlite_diff_rs::{
 
 #[test]
 fn test_reverse_single_insert() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -44,7 +44,7 @@ fn test_reverse_single_insert() {
 
 #[test]
 fn test_reverse_single_delete() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -60,7 +60,7 @@ fn test_reverse_single_delete() {
 
 #[test]
 fn test_reverse_single_update() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
@@ -76,7 +76,7 @@ fn test_reverse_single_update() {
 
 #[test]
 fn test_reverse_multiple_operations() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let insert1 = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -111,7 +111,7 @@ fn test_reverse_multiple_operations() {
 
 #[test]
 fn test_double_reverse_is_identity() {
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -128,7 +128,11 @@ fn test_double_reverse_is_identity() {
 
 #[test]
 fn test_double_reverse_complex() {
-    let schema = SimpleTable::new("users", &["id", "name", "age"], &[0]);
+    let schema = SimpleTable::with_rowid_alias(
+        "users",
+        &[("id", "INTEGER"), ("name", "TEXT"), ("age", "INTEGER")],
+        0,
+    );
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -178,7 +182,7 @@ fn test_apply_and_reverse_insert() {
     conn2.execute(schema_sql, []).unwrap();
 
     // Apply an insert to conn1
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
@@ -221,7 +225,7 @@ fn test_apply_and_reverse_delete() {
         .unwrap();
 
     // Delete from conn1
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let delete = ChangeDelete::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
         .unwrap()
@@ -269,7 +273,7 @@ fn test_apply_and_reverse_update() {
         .unwrap();
 
     // Update in conn1
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let update = Update::<SimpleTable, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64, 1i64)
         .unwrap()
@@ -326,7 +330,7 @@ fn test_apply_and_reverse_multiple_operations() {
         .execute("INSERT INTO users (id, name) VALUES (2, 'Bob')", [])
         .unwrap();
 
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     // Create a changeset with multiple operations
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
@@ -380,7 +384,15 @@ fn test_apply_and_reverse_multiple_operations() {
 
 #[test]
 fn test_reverse_with_composite_primary_key() {
-    let schema = SimpleTable::new("orders", &["user_id", "order_id", "status"], &[0, 1]);
+    let schema = SimpleTable::new(
+        "orders",
+        &[
+            ("user_id", "INTEGER"),
+            ("order_id", "INTEGER"),
+            ("status", "TEXT"),
+        ],
+        &[0, 1],
+    );
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -400,7 +412,15 @@ fn test_reverse_with_composite_primary_key() {
 
 #[test]
 fn test_reverse_with_null_values() {
-    let schema = SimpleTable::new("items", &["id", "description", "price"], &[0]);
+    let schema = SimpleTable::with_rowid_alias(
+        "items",
+        &[
+            ("id", "INTEGER"),
+            ("description", "TEXT"),
+            ("price", "REAL"),
+        ],
+        0,
+    );
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
@@ -433,7 +453,7 @@ fn test_reverse_empty_changeset() {
 #[test]
 fn test_reverse_consolidated_operations() {
     // Test that consolidated operations reverse correctly
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     // INSERT + UPDATE consolidates to INSERT with updated values
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
@@ -467,7 +487,7 @@ fn test_reverse_consolidated_operations() {
 #[test]
 fn test_reverse_cancelled_operations() {
     // INSERT + DELETE of same row cancels out
-    let schema = SimpleTable::new("users", &["id", "name"], &[0]);
+    let schema = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
 
     let insert = Insert::<_, String, Vec<u8>>::from(schema.clone())
         .set(0, 1i64)
