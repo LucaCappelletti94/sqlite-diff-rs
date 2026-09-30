@@ -4,7 +4,7 @@
 //!
 //! Each fuzz harness has a corresponding crash-input directory under
 //! `tests/crash_inputs/<harness>/`. The directory-based tests auto-copy new
-//! `.fuzz` files from the honggfuzz workspace and replay every file through
+//! files from `fuzz/artifacts/<harness>/` and replay every file through
 //! the same shared helper the harness uses.
 //!
 //! | Harness              | Input type                       | Crash directory                          |
@@ -16,7 +16,7 @@
 //! | `differential`       | `(FuzzSchemas, String)`          | `tests/crash_inputs/differential/`       |
 //!
 //! Structured-input harnesses (`apply_roundtrip`, `sql_roundtrip`, `differential`)
-//! store honggfuzz crash files as raw `arbitrary`-encoded bytes. The regression
+//! store crash files as raw `arbitrary`-encoded bytes. The regression
 //! tests deserialize them via [`arbitrary::Unstructured`] before calling the
 //! shared test function. If deserialization fails the file is silently skipped
 //! (it may be a legacy file from before the structured-input migration).
@@ -29,8 +29,8 @@ use sqlite_diff_rs::testing::{
 use std::time::Duration;
 
 /// Maximum time allowed for a single crash input before we flag it as a
-/// timeout-class bug. Honggfuzz uses 1 s by default, we use 2 s to account
-/// for debug-mode overhead while still catching algorithmic slowness.
+/// timeout-class bug, with room for debug-mode overhead while still catching
+/// algorithmic slowness.
 const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
 
 /// Crash 1: Empty patchset vs empty changeset equality.
@@ -150,18 +150,15 @@ fn fuzz_regression_crash_7() {
 
 /// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.
 ///
-/// This test also copies any new crash files from the fuzz workspace.
+/// This test also copies any new crash files from the fuzz artifacts.
 ///
 /// Each input is timed against [`PER_INPUT_TIME_LIMIT`] to catch timeout-class
-/// bugs that honggfuzz would kill but `cargo test` would silently pass.
+/// bugs that a fuzzer timeout would kill but `cargo test` would silently pass.
 #[test]
 fn fuzz_regression_roundtrip_crash_inputs_dir() {
     run_crash_dir_regression(
         concat!(env!("CARGO_MANIFEST_DIR"), "/tests/crash_inputs/roundtrip"),
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fuzz/hfuzz_workspace/roundtrip"
-        ),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/roundtrip"),
         PER_INPUT_TIME_LIMIT,
         test_roundtrip,
     );
@@ -179,7 +176,7 @@ fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
         ),
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/fuzz/hfuzz_workspace/reverse_idempotent"
+            "/fuzz/artifacts/reverse_idempotent"
         ),
         PER_INPUT_TIME_LIMIT,
         test_reverse_idempotent,
@@ -200,7 +197,7 @@ fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
         ),
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/fuzz/hfuzz_workspace/apply_roundtrip"
+            "/fuzz/artifacts/apply_roundtrip"
         ),
         PER_INPUT_TIME_LIMIT,
         |data| {
@@ -235,10 +232,7 @@ fn fuzz_regression_sql_roundtrip_crash_inputs_dir() {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/crash_inputs/sql_roundtrip"
         ),
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fuzz/hfuzz_workspace/sql_roundtrip"
-        ),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/sql_roundtrip"),
         PER_INPUT_TIME_LIMIT,
         |data| {
             let Ok((schemas, sql)) =
@@ -262,10 +256,7 @@ fn fuzz_regression_differential_crash_inputs_dir() {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/crash_inputs/differential"
         ),
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fuzz/hfuzz_workspace/differential"
-        ),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/differential"),
         PER_INPUT_TIME_LIMIT,
         |data| {
             let Ok((schemas, sql)) =

@@ -4,13 +4,11 @@
 //! `TypeMap::defaults()` for the `PgBinary` source, as both a present
 //! binary field and a SQL NULL. Asserts nothing panics.
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::test_wire_pg_binary;
 
-fn main() {
-    loop {
-        fuzz!(|data: &[u8]| {
-            test_wire_pg_binary(data);
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    test_wire_pg_binary(data);
+});

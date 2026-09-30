@@ -3,13 +3,11 @@
 //! Feeds arbitrary bytes into every built-in decoder registered by
 //! `TypeMap::defaults()` for the `maxwell` source.
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::test_wire_maxwell;
 
-fn main() {
-    loop {
-        fuzz!(|data: &[u8]| {
-            test_wire_maxwell(data);
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    test_wire_maxwell(data);
+});

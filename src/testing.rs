@@ -762,11 +762,11 @@ pub fn get_all_rows(conn: &Connection, table_name: &str) -> Vec<Vec<String>> {
 }
 
 /// Run all crash files in a directory through a test function, with timing
-/// and auto-copy from the fuzz workspace.
+/// and auto-copy from the cargo-fuzz artifacts directory.
 ///
 /// Shared implementation behind the per-target regression tests (for example
 /// `roundtrip`, `apply_roundtrip`). Ensures `crash_dir` exists, copies any
-/// `.fuzz` files from `fuzz_source_dir` that are not already there, runs
+/// file from `fuzz_source_dir` that is not already there, runs
 /// `test_fn` on every file in `crash_dir` enforcing `time_limit` per input,
 /// and panics with a summary if any input fails or exceeds the time limit.
 /// Returns the number of files tested.
@@ -787,11 +787,11 @@ pub fn run_crash_dir_regression(
     // Ensure crash_inputs directory exists
     let _ = fs::create_dir_all(crash_dir);
 
-    // Copy any new crash files from fuzz workspace
+    // Copy any new crash files from the fuzz artifacts
     if let Ok(fuzz_entries) = fs::read_dir(fuzz_source_dir) {
         for entry in fuzz_entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "fuzz") {
+            if path.is_file() {
                 let dest = format!(
                     "{}/{}",
                     crash_dir,

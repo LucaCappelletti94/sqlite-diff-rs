@@ -4,14 +4,16 @@
 //! `digest_sql`. If digestion succeeds, verifies the resulting patchset can
 //! be serialized and re-parsed as a valid binary patchset.
 
-use honggfuzz::fuzz;
+#![no_main]
+
+use arbitrary::Unstructured;
+use libfuzzer_sys::fuzz_target;
 use sqlite_diff_rs::testing::{FuzzSchemas, test_sql_roundtrip};
 
-fn main() {
-    loop {
-        fuzz!(|input: (FuzzSchemas, String)| {
-            let (schemas, sql) = input;
-            test_sql_roundtrip(&schemas, &sql);
-        });
-    }
-}
+// `arbitrary`, not `arbitrary_take_rest`, so crash files replay in tests
+fuzz_target!(|bytes: &[u8]| {
+    let Ok((schemas, sql)) = Unstructured::new(bytes).arbitrary::<(FuzzSchemas, String)>() else {
+        return;
+    };
+    test_sql_roundtrip(&schemas, &sql);
+});

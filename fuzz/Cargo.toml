@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-honggfuzz = "0.5"
+libfuzzer-sys = "0.4"
 sqlite-diff-rs = { path = "../", features = ["testing", "wal2json", "pg-walstream", "maxwell"] }
 rusqlite = { version = "0.40", features = [
 	"bundled",
@@ -16,6 +16,13 @@ rusqlite = { version = "0.40", features = [
 ] }
 arbitrary = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Outside the parent workspace, whose release profile turns on fat LTO, and
+# LTO drops the sanitizer coverage symbols the fuzz binaries link against.
+[workspace]
+
+[profile.release]
+debug = 1
 
 [[bin]]
 name = "roundtrip"
