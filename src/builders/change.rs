@@ -852,7 +852,7 @@ impl<T: crate::schema::NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a>
     /// gives it. SQLite records a key change as a `DELETE` plus an `INSERT`
     /// of every column, which the statement alone cannot supply.
     ///
-    /// Multiple statements can be separated by semicolons.
+    /// Multiple statements must be separated by semicolons.
     ///
     /// # Errors
     ///

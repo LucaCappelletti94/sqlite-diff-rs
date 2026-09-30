@@ -18,6 +18,8 @@ A table header whose varint column count lies near `usize::MAX` returns `ParseEr
 
 An unterminated `/*` comment in `digest_sql` input runs to the end of the input, as in SQLite, so a statement whose closing parenthesis falls inside it is rejected.
 
+`digest_sql` rejects two statements with no `;` between them, which SQLite refuses as a syntax error.
+
 ## 0.15.0
 
 ### Breaking

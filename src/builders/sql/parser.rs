@@ -151,6 +151,15 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }
 
             self.digest_statement()?;
+
+            let next = self.lexer.peek()?;
+            if !matches!(next.kind, TokenKind::Semicolon | TokenKind::Eof) {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "; or end of input",
+                    found: next.kind.clone(),
+                    pos: next.pos,
+                });
+            }
         }
 
         Ok(())
@@ -767,5 +776,20 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }), "{err:?}");
         assert!(builder.is_empty());
+    }
+
+    #[test]
+    fn test_digest_statements_need_a_separator() {
+        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder
+            .digest_sql("INSERT INTO t VALUES (1, 2) INSERT INTO t VALUES (3, 4)")
+            .unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }), "{err:?}");
+        assert!(builder.is_empty());
+        builder
+            .digest_sql("INSERT INTO t VALUES (1, 2);INSERT INTO t VALUES (3, 4);")
+            .unwrap();
+        assert_eq!(builder.len(), 2);
     }
 }
