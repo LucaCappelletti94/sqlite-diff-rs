@@ -32,6 +32,14 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
 
    `cargo test --all-features --test fuzz_regression` copies every artifact into `tests/crash_inputs/<target>/` and replays the whole directory.
 
+## Seed Corpus
+
+Every target has a seed corpus in `fuzz/seeds/<target>/`, one input per file, and the ClusterFuzzLite build fails for a target without one. `roundtrip` and `reverse_idempotent` start from real rusqlite session changesets and patchsets, and the `wire_*` targets start from one valid value per wire type. `apply_roundtrip`, `sql_roundtrip` and `differential` decode their input through `arbitrary`, so their seeds are fuzzer-grown inputs reduced by libFuzzer's `-set_cover_merge=1` to the smallest set that keeps the same coverage. Pass the seeds as a second corpus directory to start a local run from them:
+
+```bash
+cargo +nightly fuzz run roundtrip fuzz/corpus/roundtrip fuzz/seeds/roundtrip
+```
+
 ## Fuzz Targets
 
 `roundtrip` checks binary round-trip stability: parse arbitrary bytes into a `ParsedDiffSet`, serialize back to bytes, re-parse, and re-serialize. The two serialized byte sequences must be identical, which proves a single normalization pass produces stable output. This also exercises parser robustness on arbitrary input.
