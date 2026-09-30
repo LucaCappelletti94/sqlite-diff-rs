@@ -14,6 +14,8 @@ A table header whose varint column count lies near `usize::MAX` returns `ParseEr
 
 `digest_sql` records a negated real literal such as `-5.0` or `-0.0` as a real, and a negated integer literal past `i64::MIN` such as `-9223372036854775809` as a real, as SQLite does. Only `-9223372036854775808` becomes the integer `i64::MIN`.
 
+An unterminated `/*` comment in `digest_sql` input runs to the end of the input, as in SQLite, so a statement whose closing parenthesis falls inside it is rejected.
+
 ## 0.15.0
 
 ### Breaking

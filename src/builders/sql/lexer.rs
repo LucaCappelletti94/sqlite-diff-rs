@@ -216,16 +216,14 @@ impl<'input> Lexer<'input> {
                     self.pos += 1;
                 }
             } else if b == b'/' && self.pos + 1 < bytes.len() && bytes[self.pos + 1] == b'*' {
-                // Block comment
+                // Block comment, which like SQLite's runs to the end of input when unterminated
                 self.pos += 2;
                 while self.pos + 1 < bytes.len()
                     && !(bytes[self.pos] == b'*' && bytes[self.pos + 1] == b'/')
                 {
                     self.pos += 1;
                 }
-                if self.pos + 1 < bytes.len() {
-                    self.pos += 2;
-                }
+                self.pos = (self.pos + 2).min(bytes.len());
             } else {
                 break;
             }
@@ -697,19 +695,9 @@ mod tests {
     }
 
     #[test]
-    fn test_unterminated_block_comment_does_not_panic() {
-        // The lexer should not panic on an unterminated /* comment.
-        // It may emit a stray token from the comment tail, but must
-        // ultimately return Eof.
-        let mut lexer = Lexer::new("/* never closes");
-        let mut saw_eof = false;
-        for _ in 0..32 {
-            let kind = lexer.next().unwrap().kind;
-            if matches!(kind, TokenKind::Eof) {
-                saw_eof = true;
-                break;
-            }
-        }
-        assert!(saw_eof, "lexer never reached EOF");
+    fn test_unterminated_block_comment_runs_to_end_of_input() {
+        let mut lexer = Lexer::new("INSERT /* never closes)");
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Insert);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Eof);
     }
 }

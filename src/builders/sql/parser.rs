@@ -757,4 +757,15 @@ mod tests {
         assert_eq!(err, ParseError::PrimaryKeyUpdate { column: "b" });
         assert!(builder.is_empty());
     }
+
+    #[test]
+    fn test_digest_unterminated_comment_swallows_closing_paren() {
+        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut builder = make_builder(&[t]);
+        let err = builder
+            .digest_sql("INSERT INTO t VALUES (1, 2 /* never closed)")
+            .unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }), "{err:?}");
+        assert!(builder.is_empty());
+    }
 }
