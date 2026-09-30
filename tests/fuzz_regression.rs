@@ -132,6 +132,19 @@ fn fuzz_regression_crash_6() {
     test_roundtrip(&input);
 }
 
+/// Crash 7: table header column count near `usize::MAX`.
+///
+/// Input: Changeset marker 'T' (0x54) with a nine-byte varint column count.
+/// Bug: `pos + column_count` overflowed in the header bounds check.
+/// Fix: The bounds check uses `checked_add` and reports `UnexpectedEof`.
+#[test]
+fn fuzz_regression_column_count_overflow() {
+    let input = [
+        0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7c, 0x01, 0x29,
+    ];
+    test_roundtrip(&input);
+}
+
 /// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.
 ///
 /// This test also copies any new crash files from the fuzz workspace.
