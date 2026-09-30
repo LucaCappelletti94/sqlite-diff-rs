@@ -58,9 +58,9 @@ The project enforces **clippy::pedantic** at deny level. Key lint overrides
    consolidation table in Section B4. Changing these requires updating both
    the changeset *and* patchset `impl Add` blocks.
 
-4. **NaN → Null, −0.0 → 0.0**: Value decoding normalizes these to match
-   SQLite. Fuzz regressions #2 and #4 guard this. Do not remove the
-   normalization.
+4. **NaN → Null, −0.0 kept**: SQLite never stores NaN, so encoding, decoding
+   and the wire `RealDecoder`s map it to Null (fuzz regression #2). `-0.0`
+   keeps its sign, as SQLite records it for an untyped column (fuzz regression #4).
 
 ## A4. Adding a New Feature — Checklist
 
@@ -227,8 +227,8 @@ Re-exports the main public API. Key re-exports:
 
 `MaybeValue<S, B>` = `Option<Value<S, B>>` — `None` means "undefined" (unchanged in UPDATE).
 
-**Important**: NaN is normalized to Null, and -0.0 is normalized to 0.0 during decoding
-(matching SQLite behavior). See fuzz regressions.
+**Important**: NaN is decoded as Null, since SQLite never stores it. `-0.0` keeps its sign.
+See fuzz regressions #2 and #4.
 
 ---
 
@@ -534,8 +534,8 @@ let undo_bytes: Vec<u8> = reversed.build();
    (matching SQLite behavior). `DiffSetBuilder::PartialEq` ignores empty tables.
    Tables are kept in memory to preserve insertion order if operations are added later.
 
-4. **NaN / -0.0 normalization**: `decode_value` normalizes NaN → Null and -0.0 → 0.0
-   to match SQLite. Fuzz regressions #2 and #4 caught these.
+4. **NaN and -0.0**: `decode_value` maps NaN to Null and keeps the sign of `-0.0`,
+   which SQLite records for an untyped column. Fuzz regressions #2 and #4 pin both.
 
 5. **Patchset-only SQL parsing**: `digest_sql` only works with `PatchsetFormat` because
    SQL DML doesn't provide old-row values needed for changesets.

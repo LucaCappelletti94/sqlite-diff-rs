@@ -1008,3 +1008,102 @@ fn bit_parity_wide_table_128_columns() {
 fn bit_parity_wide_table_300_columns() {
     wide_table_insert_parity(300);
 }
+
+// =============================================================================
+// Signed numeric literals into an untyped column, which stores them unconverted
+// =============================================================================
+
+fn untyped_literal_parity(literal: &str) {
+    let t = SimpleTable::new("t", &["id", "b"], &[0]);
+    let insert = format!("INSERT INTO t (id, b) VALUES (1, {literal})");
+    assert_patchset_sql_parity(
+        &[t],
+        &[
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, b)",
+            insert.as_str(),
+        ],
+    );
+}
+
+#[test]
+fn bit_parity_negated_integral_real() {
+    untyped_literal_parity("-5.0");
+}
+
+#[test]
+fn bit_parity_negated_zero_real() {
+    untyped_literal_parity("-0.0");
+}
+
+#[test]
+fn bit_parity_negated_exponent_real() {
+    untyped_literal_parity("-1e2");
+}
+
+#[test]
+fn bit_parity_negated_fractional_real() {
+    untyped_literal_parity("-1.5");
+}
+
+#[test]
+fn bit_parity_negated_i64_min_magnitude_integer() {
+    untyped_literal_parity("-9223372036854775808");
+}
+
+#[test]
+fn bit_parity_negated_i64_min_magnitude_with_leading_zero() {
+    untyped_literal_parity("-09223372036854775808");
+}
+
+#[test]
+fn bit_parity_negated_i64_min_magnitude_real() {
+    untyped_literal_parity("-9223372036854775808.0");
+}
+
+#[test]
+fn bit_parity_negated_integer_below_i64_min() {
+    untyped_literal_parity("-9223372036854775809");
+}
+
+#[test]
+fn bit_parity_integer_above_i64_max() {
+    untyped_literal_parity("9223372036854775808");
+}
+
+#[test]
+fn bit_parity_integer_above_u64_max() {
+    untyped_literal_parity("18446744073709551616");
+}
+
+#[test]
+fn bit_parity_negated_integer_above_u64_max() {
+    untyped_literal_parity("-18446744073709551616");
+}
+
+// =============================================================================
+// UPDATE ... SET naming a primary key column
+// =============================================================================
+
+#[test]
+fn bit_parity_update_sets_key_to_its_where_value() {
+    let t = SimpleTable::new("t", &["id", "b"], &[0]);
+    let mut ours = PatchSet::<SimpleTable, String, Vec<u8>>::new();
+    ours.add_table(&t);
+    ours.digest_sql("UPDATE t SET id = 5, b = 2 WHERE id = 5")
+        .unwrap();
+    let our_ps = ours.build();
+
+    let (_, sqlite_ps) = session_changeset_and_patchset_with_setup(
+        &[
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, b)",
+            "INSERT INTO t VALUES (5, 1)",
+        ],
+        &["UPDATE t SET id = 5, b = 2 WHERE id = 5"],
+    );
+
+    let report = byte_diff_report("patchset", &sqlite_ps, &our_ps);
+    assert!(
+        sqlite_ps == our_ps,
+        "UPDATE setting the key to its WHERE value patchset mismatch\n{report}",
+    );
+}

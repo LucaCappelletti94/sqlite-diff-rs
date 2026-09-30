@@ -15,14 +15,11 @@ use super::error::DecodeError;
 use super::wire_type::WireType;
 use crate::encoding::Value;
 
-/// Normalize a decoded float to match SQLite: NaN becomes `Value::Null`
-/// and any zero (including `-0.0`) becomes `+0.0`.
+/// Map a decoded float to a value, NaN becoming `Value::Null` because SQLite never stores NaN.
 #[inline]
 pub(crate) fn normalize_real<S, B>(f: f64) -> Value<S, B> {
     if f.is_nan() {
         Value::Null
-    } else if f == 0.0 {
-        Value::Real(0.0)
     } else {
         Value::Real(f)
     }

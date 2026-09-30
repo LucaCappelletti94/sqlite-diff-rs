@@ -105,8 +105,8 @@ fn real_nan_normalizes_to_null() {
 }
 
 #[test]
-fn real_negative_zero_normalizes_to_positive_zero() {
-    // 0.0 == -0.0 under `==`, so assert the sign bit to prove normalization.
+fn real_negative_zero_keeps_its_sign() {
+    // 0.0 == -0.0 under `==`, so assert the sign bit.
     for bytes in [
         (-0.0_f64).to_be_bytes().to_vec(),
         (-0.0_f32).to_be_bytes().to_vec(),
@@ -115,7 +115,7 @@ fn real_negative_zero_normalizes_to_positive_zero() {
             .decoded_by(&RealDecoder)
             .unwrap();
         match got {
-            Value::Real(r) => assert!(r.is_sign_positive(), "expected +0.0, got {r}"),
+            Value::Real(r) => assert!(r.is_sign_negative(), "expected -0.0, got {r}"),
             other => panic!("expected Value::Real, got {other:?}"),
         }
     }

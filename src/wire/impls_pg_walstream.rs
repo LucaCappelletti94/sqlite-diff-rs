@@ -151,8 +151,8 @@ where
 // RealDecoder
 //
 // Text mode: `str::parse::<f64>` accepts "NaN"/"Infinity"/"-Infinity"
-// and standard decimal / exponential forms. NaN normalizes to Null,
-// -0.0 normalizes to 0.0 (matching the crate's `decode_value`).
+// and standard decimal / exponential forms. NaN becomes Null, matching
+// the crate's `decode_value`.
 // Binary mode: float4 = 4-byte big-endian IEEE 754, float8 = 8-byte.
 // ------------------------------------------------------------------
 

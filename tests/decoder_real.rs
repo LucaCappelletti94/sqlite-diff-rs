@@ -2,9 +2,8 @@
 //!
 //! Cross-format contract: `RealDecoder::decode(payload)` returns
 //! `Value::Real(f)` for floating-point wire values, `Value::Null` for
-//! null payloads, and additionally normalizes NaN to `Value::Null` and
-//! `-0.0` to `Value::Real(0.0)` (matching the crate's `decode_value`
-//! invariant).
+//! null payloads, and maps NaN to `Value::Null` (matching the crate's
+//! `decode_value`). `-0.0` keeps its sign.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
@@ -27,7 +26,7 @@ fn real_decoder_pg_walstream_text_basic() {
         ("2.5", Value::Real(2.5_f64)),
         ("-2.5", Value::Real(-2.5_f64)),
         ("0.0", Value::Real(0.0_f64)),
-        ("-0.0", Value::Real(0.0_f64)), // normalized
+        ("-0.0", Value::Real(-0.0_f64)),
         ("1e10", Value::Real(1e10_f64)),
     ];
     for (wire, expected) in &cases {

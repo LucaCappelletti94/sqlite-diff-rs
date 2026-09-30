@@ -56,8 +56,8 @@ pub(super) enum TokenKind<'input> {
     Not,
 
     // Literals
-    /// Integer literal
-    IntegerLiteral(i64),
+    /// Integer literal without its sign, which may exceed `i64::MAX`
+    IntegerLiteral(u64),
     /// Real/float literal
     RealLiteral(f64),
     /// String literal (single or double quoted)
@@ -419,13 +419,13 @@ impl<'input> Lexer<'input> {
                 }),
             }
         } else {
-            match num_str.parse::<i64>() {
+            match num_str.parse::<u64>() {
                 Ok(v) => Ok(Token {
                     kind: TokenKind::IntegerLiteral(v),
                     pos: start_pos,
                 }),
                 Err(_) => {
-                    // Try as f64 if too large for i64
+                    // Past u64::MAX
                     match num_str.parse::<f64>() {
                         Ok(v) => Ok(Token {
                             kind: TokenKind::RealLiteral(v),

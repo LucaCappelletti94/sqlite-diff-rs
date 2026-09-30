@@ -143,8 +143,7 @@ where
 // ------------------------------------------------------------------
 // RealDecoder
 //
-// NaN normalizes to Null, -0.0 to 0.0. Matches the crate's
-// `decode_value` invariant.
+// NaN becomes Null, matching the crate's `decode_value`.
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<Wal2Json, S, B> for RealDecoder {

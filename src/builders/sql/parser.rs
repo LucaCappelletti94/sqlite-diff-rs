@@ -85,6 +85,14 @@ pub enum ParseError<'a> {
         /// How many were actually provided.
         found: usize,
     },
+    /// `UPDATE ... SET` gives a primary key column a value other than the one its `WHERE` names.
+    #[error(
+        "UPDATE changes primary key column '{column}', which SQLite records as a DELETE and an INSERT of the whole row"
+    )]
+    PrimaryKeyUpdate {
+        /// The primary key column.
+        column: &'a str,
+    },
 }
 
 /// SQL parser. Collects operations into a pending list without applying
@@ -251,12 +259,17 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::Set)?;
 
         let mut new_values = vec![((), None); table.number_of_columns()];
+        let mut key_sets: Vec<(usize, usize, &'input str)> = Vec::new();
 
         loop {
-            let (col_idx, _) = self.expect_column(&table)?;
+            let (col_idx, col_name) = self.expect_column(&table)?;
+            let col_idx = usize::from(col_idx);
             self.expect(&TokenKind::Equals)?;
             let val = self.parse_value()?;
-            new_values[usize::from(col_idx)] = ((), Some(val));
+            if let Some(primary_key_index) = table.primary_key_index(col_idx) {
+                key_sets.push((col_idx, primary_key_index, col_name));
+            }
+            new_values[col_idx] = ((), Some(val));
 
             if self.lexer.peek()?.kind != TokenKind::Comma {
                 break;
@@ -290,6 +303,13 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 expected: n_pk,
                 found,
             });
+        }
+
+        // A session records a key change as a DELETE plus a full-row INSERT, which SQL text cannot supply.
+        if let Some(&(_, _, column)) = key_sets.iter().find(|&&(col_idx, primary_key_index, _)| {
+            new_values[col_idx].1.as_ref() != Some(&pk[primary_key_index])
+        }) {
+            return Err(ParseError::PrimaryKeyUpdate { column });
         }
 
         self.pending.push((
@@ -382,7 +402,10 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let token = self.lexer.next()?;
         match token.kind {
             TokenKind::Null => Ok(Value::Null),
-            TokenKind::IntegerLiteral(v) => Ok(Value::Integer(v)),
+            TokenKind::IntegerLiteral(v) => {
+                Ok(i64::try_from(v)
+                    .map_or_else(|_| Value::Real(unsigned_to_real(v)), Value::Integer))
+            }
             TokenKind::RealLiteral(v) => Ok(Value::Real(v)),
             TokenKind::StringLiteral(s) => {
                 let text: S = match s {
@@ -393,29 +416,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }
             TokenKind::BlobLiteral(b) => Ok(Value::Blob(b)),
             TokenKind::Minus => {
-                // Negative number
                 let next = self.lexer.next()?;
                 match next.kind {
-                    TokenKind::IntegerLiteral(v) => Ok(Value::Integer(-v)),
-                    TokenKind::RealLiteral(v) => {
-                        // Check if the negated float is exactly representable as i64.
-                        // This handles the i64::MIN case: 9223372036854775808 overflows
-                        // i64 in the lexer (positive), but -9223372036854775808 is valid.
-                        let neg = -v;
-                        #[allow(
-                            clippy::cast_precision_loss,
-                            clippy::float_cmp,
-                            clippy::cast_possible_truncation
-                        )]
-                        if neg >= i64::MIN as f64
-                            && neg <= i64::MAX as f64
-                            && neg == (neg as i64 as f64)
-                        {
-                            Ok(Value::Integer(neg as i64))
-                        } else {
-                            Ok(Value::Real(neg))
-                        }
-                    }
+                    TokenKind::IntegerLiteral(v) => Ok(0_i64
+                        .checked_sub_unsigned(v)
+                        .map_or_else(|| Value::Real(-unsigned_to_real(v)), Value::Integer)),
+                    TokenKind::RealLiteral(v) => Ok(Value::Real(-v)),
                     other => Err(ParseError::UnexpectedToken {
                         expected: "number after minus",
                         found: other,
@@ -499,6 +505,15 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             }),
         }
     }
+}
+
+/// SQLite stores an integer literal past the `i64` range as the nearest real.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "rounding to the nearest real is the conversion SQLite applies"
+)]
+fn unsigned_to_real(v: u64) -> f64 {
+    v as f64
 }
 
 #[cfg(test)]
@@ -717,5 +732,29 @@ mod tests {
         // Integer literal where a table name is expected.
         let err = builder.digest_sql("INSERT INTO 42 VALUES (1)").unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_digest_update_changing_key_refused() {
+        let t = SimpleTable::new("t", &["id", "v"], &[0]);
+        let mut builder = make_builder(&[t]);
+        builder.digest_sql("INSERT INTO t VALUES (5, 1)").unwrap();
+        let before = builder.build();
+        let err = builder
+            .digest_sql("UPDATE t SET id = 7 WHERE id = 5")
+            .unwrap_err();
+        assert_eq!(err, ParseError::PrimaryKeyUpdate { column: "id" });
+        assert_eq!(builder.build(), before);
+    }
+
+    #[test]
+    fn test_digest_update_changing_one_composite_key_column_refused() {
+        let t = SimpleTable::new("t", &["a", "b", "v"], &[0, 1]);
+        let mut builder = make_builder(&[t]);
+        let err = builder
+            .digest_sql("UPDATE t SET v = 0, b = 9 WHERE a = 1 AND b = 2")
+            .unwrap_err();
+        assert_eq!(err, ParseError::PrimaryKeyUpdate { column: "b" });
+        assert!(builder.is_empty());
     }
 }
