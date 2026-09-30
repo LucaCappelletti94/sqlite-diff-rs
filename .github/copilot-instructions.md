@@ -359,8 +359,8 @@ Parse errors are in `parser::ParseError` and `builders::sql::ParseError`.
 
 | Helper | Purpose |
 |--------|---------|
-| `SqlType` | Column type affinities (`Integer`, `Text`, `Real`, `Blob`) |
-| `TypedSimpleTable` | `SimpleTable` + column types; `Display` emits `CREATE TABLE` DDL; implements `Arbitrary` |
+| `SqlType` | Declared column types (`Integer`, `Text`, `Real`, `Blob`, `Numeric`, `Untyped`) |
+| `TypedSimpleTable` | `SimpleTable` + column types; a lone `INTEGER` key is a rowid alias; `Display` emits `CREATE TABLE` DDL; implements `Arbitrary` |
 | `session_changeset_and_patchset(sqls)` | Execute SQL in rusqlite, capture raw changeset + patchset bytes |
 | `byte_diff_report(label, expected, actual)` | Human-readable byte-level diff |
 | `assert_bit_parity(sqls, our_cs, our_ps)` | Assert byte-equality with rusqlite output |

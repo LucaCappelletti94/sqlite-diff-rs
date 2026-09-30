@@ -46,6 +46,10 @@ pub enum SqlType {
     Real,
     /// `BLOB` affinity (accepts any value).
     Blob,
+    /// `NUMERIC` affinity.
+    Numeric,
+    /// No declared type, which also has `BLOB` affinity.
+    Untyped,
 }
 
 impl SqlType {
@@ -57,6 +61,8 @@ impl SqlType {
             Self::Text => "TEXT",
             Self::Real => "REAL",
             Self::Blob => "BLOB",
+            Self::Numeric => "NUMERIC",
+            Self::Untyped => "",
         }
     }
 }
@@ -69,7 +75,14 @@ impl fmt::Display for SqlType {
 
 impl<'a> arbitrary::Arbitrary<'a> for SqlType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(*u.choose(&[Self::Integer, Self::Text, Self::Real, Self::Blob])?)
+        Ok(*u.choose(&[
+            Self::Integer,
+            Self::Text,
+            Self::Real,
+            Self::Blob,
+            Self::Numeric,
+            Self::Untyped,
+        ])?)
     }
 }
 
@@ -199,7 +212,10 @@ impl fmt::Display for TypedSimpleTable {
             if i > 0 {
                 f.write_str(", ")?;
             }
-            write!(f, "\"{col_name}\" {col_type}")?;
+            write!(f, "\"{col_name}\"")?;
+            if *col_type != SqlType::Untyped {
+                write!(f, " {col_type}")?;
+            }
             if single_pk && pk_indices[0] == i {
                 f.write_str(" PRIMARY KEY")?;
             }

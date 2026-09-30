@@ -128,6 +128,13 @@ fn numeric(text: &str) -> Option<Number> {
     Some(float::integral(r).map_or(Number::Real(r), Number::Integer))
 }
 
+/// The real SQLite reads from the text of a numeric literal, or `None` when
+/// the text is not entirely a number.
+pub(crate) fn literal_real(text: &str) -> Option<f64> {
+    let (flags, r) = float::ato_f(text.as_bytes());
+    (flags > 0).then_some(r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Affinity;

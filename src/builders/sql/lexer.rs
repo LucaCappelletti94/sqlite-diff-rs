@@ -4,6 +4,8 @@ use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::affinity::literal_real;
+
 /// A token produced by the lexer.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Token<'input> {
@@ -56,9 +58,9 @@ pub(super) enum TokenKind<'input> {
     Not,
 
     // Literals
-    /// Integer literal without its sign, which may exceed `i64::MAX`
+    /// Integer literal without its sign, at most `2^63` so `-9223372036854775808` stays exact
     IntegerLiteral(u64),
-    /// Real/float literal
+    /// Real literal, including an integer literal past `2^63`, read with SQLite's rounding
     RealLiteral(f64),
     /// String literal (single or double quoted)
     StringLiteral(Cow<'input, str>),
@@ -405,38 +407,25 @@ impl<'input> Lexer<'input> {
 
         let num_str = &self.input[num_start..self.pos];
 
-        if is_real {
-            match num_str.parse::<f64>() {
-                Ok(v) => Ok(Token {
-                    kind: TokenKind::RealLiteral(v),
-                    pos: start_pos,
-                }),
-                Err(_) => Err(LexerError::InvalidNumber {
+        // An integer up to 2^63 stays exact so that `-9223372036854775808` can become i64::MIN.
+        let integer = if is_real {
+            None
+        } else {
+            num_str.parse::<u64>().ok().filter(|&v| v <= 1 << 63)
+        };
+        let kind = match integer {
+            Some(v) => TokenKind::IntegerLiteral(v),
+            None => TokenKind::RealLiteral(literal_real(num_str).ok_or_else(|| {
+                LexerError::InvalidNumber {
                     value: num_str.into(),
                     pos: start_pos,
-                }),
-            }
-        } else {
-            match num_str.parse::<u64>() {
-                Ok(v) => Ok(Token {
-                    kind: TokenKind::IntegerLiteral(v),
-                    pos: start_pos,
-                }),
-                Err(_) => {
-                    // Past u64::MAX
-                    match num_str.parse::<f64>() {
-                        Ok(v) => Ok(Token {
-                            kind: TokenKind::RealLiteral(v),
-                            pos: start_pos,
-                        }),
-                        Err(_) => Err(LexerError::InvalidNumber {
-                            value: num_str.into(),
-                            pos: start_pos,
-                        }),
-                    }
                 }
-            }
-        }
+            })?),
+        };
+        Ok(Token {
+            kind,
+            pos: start_pos,
+        })
     }
 
     fn read_identifier(&mut self, start_pos: usize) -> Token<'input> {

@@ -93,6 +93,16 @@ pub enum ParseError<'a> {
         /// The primary key column.
         column: &'a str,
     },
+    /// `INSERT` gives the rowid alias column a value SQLite cannot store as an integer.
+    #[error(
+        "datatype mismatch: column {column} of table '{table}' aliases the rowid and holds only integers"
+    )]
+    DatatypeMismatch {
+        /// The table name.
+        table: &'a str,
+        /// Index of the rowid alias column.
+        column: usize,
+    },
 }
 
 /// SQL parser. Collects operations into a pending list without applying
@@ -185,7 +195,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::Insert)?;
         self.expect(&TokenKind::Into)?;
 
-        let table = self.expect_table()?;
+        let (table, table_name) = self.expect_table()?;
 
         // Column identifiers for the explicit list, empty means positional.
         // u16 is enough: SQLite's default column limit is 2000, and even with
@@ -217,7 +227,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 if col_idx > 0 {
                     self.expect(&TokenKind::Comma)?;
                 }
-                *value_ref = self.parse_value()?;
+                *value_ref = Self::with_affinity(&table, col_idx, self.parse_value()?);
                 if let Some(pk_idx) = table.primary_key_index(col_idx) {
                     pks[pk_idx] = (*value_ref).clone();
                 }
@@ -226,11 +236,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             // Explicit column list: exactly one value per listed column.
             let expected = column_identifiers.len();
             let mut parsed = 0usize;
-            for column_index in &column_identifiers {
-                values[usize::from(*column_index)] = self.parse_value()?;
-                if let Some(primary_key_index) = table.primary_key_index(usize::from(*column_index))
-                {
-                    pks[primary_key_index] = values[usize::from(*column_index)].clone();
+            for &column_index in &column_identifiers {
+                let column_index = usize::from(column_index);
+                values[column_index] =
+                    Self::with_affinity(&table, column_index, self.parse_value()?);
+                if let Some(primary_key_index) = table.primary_key_index(column_index) {
+                    pks[primary_key_index] = values[column_index].clone();
                 }
                 parsed += 1;
                 if self.lexer.peek()?.kind != TokenKind::Comma {
@@ -248,6 +259,18 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         self.expect(&TokenKind::RParen)?;
 
+        if let Some(alias) = table.rowid_alias()
+            && matches!(
+                values[alias],
+                Value::Text(_) | Value::Real(_) | Value::Blob(_)
+            )
+        {
+            return Err(ParseError::DatatypeMismatch {
+                table: table_name,
+                column: alias,
+            });
+        }
+
         self.pending.push((
             table,
             pks,
@@ -264,7 +287,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     fn digest_update(&mut self) -> Result<(), ParseError<'input>> {
         self.expect(&TokenKind::Update)?;
 
-        let table = self.expect_table()?;
+        let (table, _) = self.expect_table()?;
         self.expect(&TokenKind::Set)?;
 
         let mut new_values = vec![((), None); table.number_of_columns()];
@@ -274,7 +297,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             let (col_idx, col_name) = self.expect_column(&table)?;
             let col_idx = usize::from(col_idx);
             self.expect(&TokenKind::Equals)?;
-            let val = self.parse_value()?;
+            let val = Self::with_affinity(&table, col_idx, self.parse_value()?);
             if let Some(primary_key_index) = table.primary_key_index(col_idx) {
                 key_sets.push((col_idx, primary_key_index, col_name));
             }
@@ -296,7 +319,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let mut pk = vec![Value::Null; n_pk];
         let mut pk_seen = vec![false; n_pk];
 
-        self.digest_where(&table, |col_idx, col_name, val| {
+        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pk[primary_key_index] = val.clone();
                 pk_seen[primary_key_index] = true;
@@ -312,6 +335,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 expected: n_pk,
                 found,
             });
+        }
+        if !can_match {
+            return Ok(());
         }
 
         // A session records a key change as a DELETE plus a full-row INSERT, which SQL text cannot supply.
@@ -338,7 +364,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         self.expect(&TokenKind::Delete)?;
         self.expect(&TokenKind::From)?;
 
-        let table = self.expect_table()?;
+        let (table, _) = self.expect_table()?;
 
         if self.lexer.peek()?.kind != TokenKind::Where {
             return Err(ParseError::MissingWhere {
@@ -350,7 +376,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let mut pks = vec![Value::Null; n_pk];
         let mut pk_seen = vec![false; n_pk];
 
-        self.digest_where(&table, |col_idx, col_name, val| {
+        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
                 pks[primary_key_index] = val.clone();
                 pk_seen[primary_key_index] = true;
@@ -367,6 +393,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 found,
             });
         }
+        if !can_match {
+            return Ok(());
+        }
 
         self.pending.push((
             table,
@@ -380,18 +409,30 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         Ok(())
     }
 
-    /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate.
+    /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate
+    /// with the literal converted by the column's affinity, as SQLite compares it.
     /// Returns `OrInWhere` if `OR` appears after a predicate.
-    fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<(), ParseError<'input>>
+    ///
+    /// Returns whether a row can satisfy every predicate. A predicate cannot
+    /// hold when its value is `NULL`, or is not an integer on a rowid alias.
+    fn digest_where<D>(&mut self, table: &T, mut digestor: D) -> Result<bool, ParseError<'input>>
     where
         D: FnMut(u16, &'input str, Value<S, Vec<u8>>) -> Result<(), ParseError<'input>>,
     {
         self.expect(&TokenKind::Where)?;
 
+        let mut can_match = true;
         loop {
             let (col_idx, col_name) = self.expect_column(table)?;
             self.expect(&TokenKind::Equals)?;
-            let val = self.parse_value()?;
+            let val = Self::with_affinity(table, usize::from(col_idx), self.parse_value()?);
+            can_match &= match val {
+                Value::Null => false,
+                Value::Integer(_) => true,
+                Value::Real(_) | Value::Text(_) | Value::Blob(_) => {
+                    table.rowid_alias() != Some(usize::from(col_idx))
+                }
+            };
             digestor(col_idx, col_name, val)?;
 
             if self.lexer.peek()?.kind != TokenKind::And {
@@ -403,7 +444,15 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             self.lexer.next()?;
         }
 
-        Ok(())
+        Ok(can_match)
+    }
+
+    /// `value` as SQLite stores or compares it in column `col_idx` of `table`.
+    fn with_affinity(table: &T, col_idx: usize, value: Value<S, Vec<u8>>) -> Value<S, Vec<u8>> {
+        match table.column_affinity(col_idx) {
+            Some(affinity) => affinity.apply(value),
+            None => value,
+        }
     }
 
     /// Parse a value literal.
@@ -411,9 +460,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
         let token = self.lexer.next()?;
         match token.kind {
             TokenKind::Null => Ok(Value::Null),
+            // The lexer caps integers at 2^63, the one integer literal past i64::MAX.
             TokenKind::IntegerLiteral(v) => {
-                Ok(i64::try_from(v)
-                    .map_or_else(|_| Value::Real(unsigned_to_real(v)), Value::Integer))
+                Ok(i64::try_from(v).map_or(Value::Real(TWO_POW_63), Value::Integer))
             }
             TokenKind::RealLiteral(v) => Ok(Value::Real(v)),
             TokenKind::StringLiteral(s) => {
@@ -427,9 +476,12 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             TokenKind::Minus => {
                 let next = self.lexer.next()?;
                 match next.kind {
-                    TokenKind::IntegerLiteral(v) => Ok(0_i64
-                        .checked_sub_unsigned(v)
-                        .map_or_else(|| Value::Real(-unsigned_to_real(v)), Value::Integer)),
+                    TokenKind::IntegerLiteral(v) => {
+                        debug_assert!(v <= 1 << 63, "the lexer caps integers at 2^63");
+                        Ok(Value::Integer(
+                            0_i64.checked_sub_unsigned(v).unwrap_or(i64::MIN),
+                        ))
+                    }
                     TokenKind::RealLiteral(v) => Ok(Value::Real(-v)),
                     other => Err(ParseError::UnexpectedToken {
                         expected: "number after minus",
@@ -473,12 +525,13 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             .ok_or(ParseError::UnknownColumn(column_name))
     }
 
-    /// Expects a table existing in the builder's schema and returns a clone.
-    fn expect_table(&mut self) -> Result<T, ParseError<'input>> {
+    /// Expects a table existing in the builder's schema and returns a clone and its name.
+    fn expect_table(&mut self) -> Result<(T, &'input str), ParseError<'input>> {
         let table_name = self.expect_identifier()?;
         self.builder
             .table(table_name)
             .cloned()
+            .map(|table| (table, table_name))
             .ok_or(ParseError::UnknownTable(table_name))
     }
 
@@ -516,14 +569,8 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
     }
 }
 
-/// SQLite stores an integer literal past the `i64` range as the nearest real.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "rounding to the nearest real is the conversion SQLite applies"
-)]
-fn unsigned_to_real(v: u64) -> f64 {
-    v as f64
-}
+/// `9223372036854775808`, which SQLite reads as a real unless negated.
+const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
 
 #[cfg(test)]
 mod tests {
@@ -820,5 +867,30 @@ mod tests {
             .digest_sql("INSERT INTO t VALUES (1, 2);INSERT INTO t VALUES (3, 4);")
             .unwrap();
         assert_eq!(builder.len(), 2);
+    }
+
+    #[test]
+    fn test_digest_rowid_alias_refuses_non_integer_key() {
+        let k = SimpleTable::with_rowid_alias("k", &[("v", ""), ("id", "INTEGER")], 1);
+        let mut builder = make_builder(&[k]);
+        builder.digest_sql("INSERT INTO k VALUES (1, 1)").unwrap();
+        let before = builder.build();
+        for sql in [
+            "INSERT INTO k VALUES (1, 'abc')",
+            "INSERT INTO k (id, v) VALUES (7.5, 1)",
+            "INSERT INTO k VALUES (1, X'07')",
+            "INSERT INTO k VALUES (2, 2); INSERT INTO k VALUES (1, '7a')",
+        ] {
+            let err = builder.digest_sql(sql).unwrap_err();
+            assert_eq!(
+                err,
+                ParseError::DatatypeMismatch {
+                    table: "k",
+                    column: 1
+                },
+                "{sql}"
+            );
+            assert_eq!(builder.build(), before, "{sql}");
+        }
     }
 }
