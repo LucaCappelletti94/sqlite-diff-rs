@@ -8,6 +8,8 @@
 
 A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and in every wire `RealDecoder`, as SQLite records it for an untyped column. NaN still becomes `NULL`.
 
+`differential_testing::run_differential_test` runs each string of SQL statement by statement and returns whether it compared the patchsets. It skips input where a statement changes no row or a constraint refuses it, because `digest_sql` assumes the row a `WHERE` names exists and such input has no counterpart session. The session helpers in `testing` accept several statements per string.
+
 ### Fixed
 
 A table header whose varint column count lies near `usize::MAX` returns `ParseError::UnexpectedEof` instead of panicking, which it did on the overflowing bounds check in debug builds and on the wrapped slice range in release builds.

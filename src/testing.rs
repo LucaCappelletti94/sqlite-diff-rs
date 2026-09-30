@@ -450,7 +450,7 @@ pub fn test_sql_roundtrip(schemas: &[TypedSimpleTable], sql: &str) {
 /// Builds a [`PatchSet`] with the given schemas, digests the SQL, returns
 /// early if digestion fails or the result is empty, then delegates to
 /// `run_differential_test` to compare our bytes against rusqlite's session
-/// extension output.
+/// extension output, which it skips for input without a counterpart session.
 pub fn test_differential(schemas: &[TypedSimpleTable], sql: &str) {
     let mut builder: PatchSet<SimpleTable, String, Vec<u8>> = PatchSet::new();
     for schema in schemas {
@@ -464,14 +464,15 @@ pub fn test_differential(schemas: &[TypedSimpleTable], sql: &str) {
     let create_sqls: Vec<String> = schemas.iter().map(ToString::to_string).collect();
     let create_sql_refs: Vec<&str> = create_sqls.iter().map(String::as_str).collect();
     let simples: Vec<SimpleTable> = schemas.iter().map(|s| (**s).clone()).collect();
-    run_differential_test(&simples, &create_sql_refs, &[sql]);
+    let _compared = run_differential_test(&simples, &create_sql_refs, &[sql]);
 }
 
 /// Create an in-memory `SQLite` database, execute statements with a session,
 /// and return the raw changeset and patchset bytes.
 ///
 /// DDL (`CREATE TABLE`) is executed before the session starts.
-/// DML (`INSERT`/`UPDATE`/`DELETE`) is executed inside the session.
+/// DML (`INSERT`/`UPDATE`/`DELETE`) is executed inside the session, and a
+/// string may hold several statements.
 ///
 /// # Panics
 ///
@@ -482,14 +483,14 @@ pub fn session_changeset_and_patchset(statements: &[&str]) -> (Vec<u8>, Vec<u8>)
         let conn = Connection::open_in_memory().unwrap();
         for &sql in statements {
             if sql.trim().to_uppercase().starts_with("CREATE TABLE") {
-                conn.execute(sql, []).unwrap();
+                conn.execute_batch(sql).unwrap();
             }
         }
         let mut session = Session::new(&conn).unwrap();
         session.attach::<&str>(None).unwrap();
         for &sql in statements {
             if !sql.trim().to_uppercase().starts_with("CREATE TABLE") {
-                conn.execute(sql, []).unwrap();
+                conn.execute_batch(sql).unwrap();
             }
         }
         extract(&mut session)
@@ -535,12 +536,12 @@ pub fn session_changeset_and_patchset_with_setup(
     ) -> Vec<u8> {
         let conn = Connection::open_in_memory().unwrap();
         for &sql in setup {
-            conn.execute(sql, []).unwrap();
+            conn.execute_batch(sql).unwrap();
         }
         let mut session = Session::new(&conn).unwrap();
         session.attach::<&str>(None).unwrap();
         for &sql in tracked {
-            conn.execute(sql, []).unwrap();
+            conn.execute_batch(sql).unwrap();
         }
         extract(&mut session)
     }
