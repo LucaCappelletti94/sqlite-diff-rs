@@ -457,12 +457,13 @@ fn parse_table_header(
         })?;
     pos += varint_len;
 
-    if pos + column_count > data.len() {
-        return Err(ParseError::UnexpectedEof(base_pos + pos));
-    }
+    let pk_flags_end = pos
+        .checked_add(column_count)
+        .filter(|&end| end <= data.len())
+        .ok_or(ParseError::UnexpectedEof(base_pos + pos))?;
     let pk_flags_pos = base_pos + pos;
-    let pk_flags: Vec<u8> = data[pos..pos + column_count].to_vec();
-    pos += column_count;
+    let pk_flags: Vec<u8> = data[pos..pk_flags_end].to_vec();
+    pos = pk_flags_end;
 
     let name_start = pos;
     while pos < data.len() && data[pos] != 0 {
@@ -853,6 +854,16 @@ mod tests {
     fn test_parse_unexpected_eof_in_pk_flags() {
         // 'T', column count 3, but only 1 PK flag byte
         let data = [b'T', 3, 1];
+        let err = ParsedDiffSet::parse(&data).unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedEof(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_parse_column_count_past_usize_max() {
+        // 'T', then a ten-byte varint column count that decodes to 2^64 - 4
+        let data = [
+            b'T', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7c, 0x01, 0x29,
+        ];
         let err = ParsedDiffSet::parse(&data).unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedEof(_)), "got {err:?}");
     }
