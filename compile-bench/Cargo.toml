@@ -1,0 +1,23 @@
+[package]
+name = "compile-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Feature: rusqlite (uses rusqlite's session extension directly)
+rusqlite = { version = "0.40", features = [
+    "bundled",
+    "session",
+], optional = true }
+
+# Feature: builder (uses sqlite-diff-rs)
+sqlite-diff-rs = { path = "..", optional = true, default-features = false }
+
+[features]
+default = ["rusqlite", "builder"]
+rusqlite = ["dep:rusqlite"]
+builder = ["dep:sqlite-diff-rs"]

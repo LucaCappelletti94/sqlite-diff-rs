@@ -1,0 +1,49 @@
+name: Schema-Aware Roundtrip Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+permissions:
+  contents: read
+
+jobs:
+  schema-aware-roundtrip:
+    name: Schema-Aware Roundtrip Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+        with:
+          components: clippy, rustfmt
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev default-libmysqlclient-dev
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: integration-tests/schema-aware-roundtrip
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path integration-tests/schema-aware-roundtrip/Cargo.toml --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path integration-tests/schema-aware-roundtrip/Cargo.toml --tests -- -D warnings
+
+      - name: Run schema-aware roundtrip tests
+        run: cargo test --manifest-path integration-tests/schema-aware-roundtrip/Cargo.toml --release -- --test-threads=1

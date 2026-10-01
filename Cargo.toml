@@ -1,0 +1,109 @@
+[package]
+name = "sqlite-diff-rs"
+version = "0.15.0"
+edition = "2024"
+rust-version = "1.87"
+description = "Build SQLite changeset and patchset binary formats programmatically, without SQLite"
+license = "MIT"
+repository = "https://github.com/LucaCappelletti94/sqlite-diff-rs"
+documentation = "https://docs.rs/sqlite-diff-rs"
+readme = "README.md"
+keywords = ["sqlite", "changeset", "patchset", "session", "cdc"]
+categories = ["database", "encoding", "no-std"]
+
+[workspace]
+members = [
+	".",
+	"compile-bench",
+	"integration-tests/payload-size-bench",
+	"integration-tests/apply-bench-report",
+]
+exclude = ["fuzz", "integration-tests/diesel-e2e", "integration-tests/schema-aware-roundtrip"]
+
+[workspace.lints.rust]
+missing_docs = "forbid"
+unused_macro_rules = "forbid"
+unconditional_recursion = "forbid"
+unreachable_patterns = "forbid"
+unused_import_braces = "forbid"
+unused_must_use = "forbid"
+deprecated = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "forbid"
+bare_urls = "forbid"
+invalid_codeblock_attributes = "forbid"
+invalid_html_tags = "forbid"
+missing_crate_level_docs = "forbid"
+unescaped_backticks = "forbid"
+redundant_explicit_links = "forbid"
+invalid_rust_codeblocks = "forbid"
+
+[workspace.lints.clippy]
+unreadable_literal = "allow"
+missing_panics_doc = "allow"
+new_ret_no_self = "allow"
+struct_excessive_bools = "allow"
+should_panic_without_expect = "allow"
+doc_markdown = "allow"
+clone_on_copy = "forbid"
+pedantic = { level = "deny", priority = -1 }
+
+[dependencies]
+thiserror = "2"
+hashbrown = "0.17.1"
+indexmap = { version = "2", default-features = false }
+rusqlite = { version = "0.40", features = [
+	"bundled",
+	"session",
+], optional = true }
+arbitrary = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
+wal2json-events = { version = "0.1.0", default-features = false, optional = true }
+maxwell-cdc = { version = "0.1.0", default-features = false, optional = true }
+pg_walstream = { version = "0.9", default-features = false, optional = true }
+diesel = { version = "2", default-features = false, optional = true }
+diesel-async = { version = "0.9", default-features = false, optional = true }
+
+[dev-dependencies]
+rusqlite = { version = "0.40", features = ["bundled", "session", "backup"] }
+arbitrary = { version = "1", features = ["derive"] }
+rand = "0.10.1"
+uuid = { version = "1", features = ["v7"] }
+hex = "0.4"
+bytes = "1"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+diesel = { version = "2", default-features = false, features = ["postgres_backend", "mysql_backend"] }
+
+[features]
+default = []
+testing = ["dep:rusqlite", "dep:arbitrary"]
+wal2json = ["dep:wal2json-events", "dep:serde_json"]
+pg-walstream = ["dep:pg_walstream", "dep:serde_json"]
+maxwell = ["dep:maxwell-cdc", "dep:serde_json"]
+diesel = ["dep:diesel"]
+diesel-async = ["dep:diesel-async", "diesel"]
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "builder_vs_rusqlite"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "apply_benchmark"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "affinity"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

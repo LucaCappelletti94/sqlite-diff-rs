@@ -1,0 +1,190 @@
+//! Submodule defining a builder for an insert operation.
+
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+
+use crate::{DynTable, SchemaWithPK, builders::operation::Indirect, encoding::Value};
+
+#[derive(Debug)]
+/// Builder for an insert operation.
+pub struct Insert<T: DynTable, S, B> {
+    /// The table being inserted into.
+    table: T,
+    /// Values for the inserted row.
+    pub(super) values: Vec<Value<S, B>>,
+    /// SQLite session-extension indirect flag. See [`Indirect`].
+    pub(crate) indirect: bool,
+}
+
+impl<T: DynTable, S: Clone, B: Clone> Clone for Insert<T, S, B> {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+            values: self.values.clone(),
+            indirect: self.indirect,
+        }
+    }
+}
+
+impl<T: SchemaWithPK, S: Clone, B: Clone> Insert<T, S, B> {
+    /// Extract the primary key values from this insert's values.
+    #[inline]
+    pub fn extract_pk(&self) -> Vec<Value<S, B>> {
+        self.table.extract_pk(&self.values)
+    }
+}
+
+impl<T: DynTable + PartialEq, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
+    for Insert<T, S, B>
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.table == other.table && self.values == other.values && self.indirect == other.indirect
+    }
+}
+
+impl<T: DynTable + Eq, S: Eq + AsRef<str>, B: Eq + AsRef<[u8]>> Eq for Insert<T, S, B> {}
+
+impl<T: DynTable, S: Clone, B: Clone> From<T> for Insert<T, S, B> {
+    #[inline]
+    fn from(table: T) -> Self {
+        let num_cols = table.number_of_columns();
+        Self {
+            table,
+            values: vec![Value::Null; num_cols],
+            indirect: false,
+        }
+    }
+}
+
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> AsRef<T> for Insert<T, S, B> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.table
+    }
+}
+
+impl<T: DynTable, S: AsRef<str>, B: AsRef<[u8]>> Insert<T, S, B> {
+    /// Consumes self and returns the values.
+    #[inline]
+    pub(crate) fn into_values(self) -> Vec<Value<S, B>> {
+        self.values
+    }
+
+    /// Sets the value for a specific column by index.
+    ///
+    /// The value is recorded as given. Use [`Affinity::apply`](crate::Affinity::apply)
+    /// for the conversion SQLite applies when storing it in the column.
+    ///
+    /// # Arguments
+    ///
+    /// * `col_idx` - The index of the column to set.
+    /// * `value` - The value to set for the column.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the provided column index is out of bounds for the table schema.
+    ///
+    pub fn set(
+        mut self,
+        col_idx: usize,
+        value: impl Into<Value<S, B>>,
+    ) -> Result<Self, crate::errors::Error> {
+        if col_idx >= self.values.len() {
+            return Err(crate::errors::Error::ColumnIndexOutOfBounds(
+                col_idx,
+                self.values.len(),
+            ));
+        }
+
+        self.values[col_idx] = value.into();
+        Ok(self)
+    }
+
+    /// Sets a column to NULL.
+    ///
+    /// This is a convenience method equivalent to `.set(col_idx, Value::Null)`.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the provided column index is out of bounds for the table schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::{Insert, TableSchema};
+    ///
+    /// // CREATE TABLE items (id INTEGER PRIMARY KEY, description TEXT, price REAL)
+    /// let schema: TableSchema<String> = TableSchema::new("items".into(), 3, vec![1, 0, 0]);
+    ///
+    /// // INSERT INTO items (id, description, price) VALUES (1, NULL, 9.99)
+    /// let insert = Insert::<_, String, Vec<u8>>::from(schema)
+    ///     .set(0, 1i64).unwrap()
+    ///     .set_null(1).unwrap()    // description = NULL
+    ///     .set(2, 9.99f64).unwrap();
+    /// ```
+    pub fn set_null(self, col_idx: usize) -> Result<Self, crate::errors::Error>
+    where
+        S: Default,
+        B: Default,
+    {
+        self.set(col_idx, Value::Null)
+    }
+}
+
+impl<T: DynTable, S, B> Indirect for Insert<T, S, B> {
+    #[inline]
+    fn indirect(mut self, indirect: bool) -> Self {
+        self.indirect = indirect;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Insert;
+    use crate::errors::Error;
+    use crate::schema::SimpleTable;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
+    fn users() -> SimpleTable {
+        SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0)
+    }
+
+    #[test]
+    fn test_insert_set_out_of_bounds() {
+        let err = Insert::<_, String, Vec<u8>>::from(users())
+            .set(99, 1i64)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(99, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_insert_set_null_out_of_bounds() {
+        let err = Insert::<_, String, Vec<u8>>::from(users())
+            .set_null(2)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_insert_clone_and_eq() {
+        let a = Insert::<_, String, Vec<u8>>::from(users())
+            .set(0, 1i64)
+            .unwrap();
+        let b = a.clone();
+        assert_eq!(a, b);
+
+        let c = Insert::<_, String, Vec<u8>>::from(users())
+            .set(0, 2i64)
+            .unwrap();
+        assert_ne!(a, c);
+    }
+}

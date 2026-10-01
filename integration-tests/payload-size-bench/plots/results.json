@@ -1,0 +1,1941 @@
+{
+  "metadata": {
+    "schema": "messages(id BLOB PK, sender_id BLOB, receiver_id BLOB, body TEXT, created_at TEXT)",
+    "formats": [
+      "SQL",
+      "JSON",
+      "MsgPack",
+      "CBOR",
+      "Protobuf",
+      "Patchset",
+      "Changeset"
+    ],
+    "compressors": [
+      "DEFLATE",
+      "Zstd",
+      "LZ4"
+    ],
+    "timing_iterations": 100,
+    "workload_distribution": {
+      "insert_pct": 60,
+      "update_pct": 25,
+      "delete_pct": 15
+    }
+  },
+  "mixed_workload": [
+    {
+      "num_operations": 1,
+      "raw_bytes": 16,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 32,
+          "overhead_pct": 100.0,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 35,
+              "compression_ratio": 1.09375,
+              "compress_decompress_us": 42,
+              "compress_decompress_stddev_us": 6
+            },
+            "LZ4": {
+              "compressed_bytes": 38,
+              "compression_ratio": 1.1875,
+              "compress_decompress_us": 1,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 41,
+              "compression_ratio": 1.28125,
+              "compress_decompress_us": 9,
+              "compress_decompress_stddev_us": 0
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 114,
+          "overhead_pct": 612.5,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 119,
+              "compression_ratio": 1.043859649122807,
+              "compress_decompress_us": 48,
+              "compress_decompress_stddev_us": 4
+            },
+            "LZ4": {
+              "compressed_bytes": 120,
+              "compression_ratio": 1.0526315789473684,
+              "compress_decompress_us": 5,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 123,
+              "compression_ratio": 1.0789473684210527,
+              "compress_decompress_us": 23,
+              "compress_decompress_stddev_us": 5
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 57,
+          "overhead_pct": 256.25,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 62,
+              "compression_ratio": 1.087719298245614,
+              "compress_decompress_us": 42,
+              "compress_decompress_stddev_us": 4
+            },
+            "LZ4": {
+              "compressed_bytes": 63,
+              "compression_ratio": 1.105263157894737,
+              "compress_decompress_us": 3,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 66,
+              "compression_ratio": 1.1578947368421053,
+              "compress_decompress_us": 11,
+              "compress_decompress_stddev_us": 1
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 33,
+          "overhead_pct": 106.25,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 38,
+              "compression_ratio": 1.1515151515151516,
+              "compress_decompress_us": 20,
+              "compress_decompress_stddev_us": 1
+            },
+            "LZ4": {
+              "compressed_bytes": 39,
+              "compression_ratio": 1.1818181818181819,
+              "compress_decompress_us": 1,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 42,
+              "compression_ratio": 1.2727272727272727,
+              "compress_decompress_us": 9,
+              "compress_decompress_stddev_us": 0
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 36,
+          "overhead_pct": 125.0,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 41,
+              "compression_ratio": 1.1388888888888888,
+              "compress_decompress_us": 23,
+              "compress_decompress_stddev_us": 3
+            },
+            "LZ4": {
+              "compressed_bytes": 42,
+              "compression_ratio": 1.1666666666666667,
+              "compress_decompress_us": 2,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 45,
+              "compression_ratio": 1.25,
+              "compress_decompress_us": 9,
+              "compress_decompress_stddev_us": 0
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 20,
+          "overhead_pct": 25.0,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 23,
+              "compression_ratio": 1.15,
+              "compress_decompress_us": 38,
+              "compress_decompress_stddev_us": 0
+            },
+            "LZ4": {
+              "compressed_bytes": 26,
+              "compression_ratio": 1.3,
+              "compress_decompress_us": 1,
+              "compress_decompress_stddev_us": 0
+            },
+            "Zstd": {
+              "compressed_bytes": 29,
+              "compression_ratio": 1.45,
+              "compress_decompress_us": 9,
+              "compress_decompress_stddev_us": 0
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 68,
+          "overhead_pct": 325.0,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 73,
+              "compression_ratio": 1.0735294117647058,
+              "compress_decompress_us": 165,
+              "compress_decompress_stddev_us": 84
+            },
+            "LZ4": {
+              "compressed_bytes": 74,
+              "compression_ratio": 1.088235294117647,
+              "compress_decompress_us": 4,
+              "compress_decompress_stddev_us": 1
+            },
+            "Zstd": {
+              "compressed_bytes": 77,
+              "compression_ratio": 1.1323529411764706,
+              "compress_decompress_us": 131,
+              "compress_decompress_stddev_us": 153
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 5,
+      "raw_bytes": 3712,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 3925,
+          "overhead_pct": 5.738146551724138,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1550,
+              "compression_ratio": 0.39490445859872614,
+              "compress_decompress_us": 336,
+              "compress_decompress_stddev_us": 15
+            },
+            "LZ4": {
+              "compressed_bytes": 2190,
+              "compression_ratio": 0.5579617834394904,
+              "compress_decompress_us": 203,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 1605,
+              "compression_ratio": 0.4089171974522293,
+              "compress_decompress_us": 106,
+              "compress_decompress_stddev_us": 8
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 31725,
+          "overhead_pct": 754.6605603448276,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9986,
+              "compression_ratio": 0.3147675334909377,
+              "compress_decompress_us": 3499,
+              "compress_decompress_stddev_us": 26
+            },
+            "LZ4": {
+              "compressed_bytes": 16141,
+              "compression_ratio": 0.5087785657998424,
+              "compress_decompress_us": 1762,
+              "compress_decompress_stddev_us": 14
+            },
+            "Zstd": {
+              "compressed_bytes": 10533,
+              "compression_ratio": 0.3320094562647754,
+              "compress_decompress_us": 679,
+              "compress_decompress_stddev_us": 38
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 4212,
+          "overhead_pct": 13.469827586206899,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1565,
+              "compression_ratio": 0.37155745489078823,
+              "compress_decompress_us": 360,
+              "compress_decompress_stddev_us": 16
+            },
+            "LZ4": {
+              "compressed_bytes": 2391,
+              "compression_ratio": 0.5676638176638177,
+              "compress_decompress_us": 221,
+              "compress_decompress_stddev_us": 5
+            },
+            "Zstd": {
+              "compressed_bytes": 1640,
+              "compression_ratio": 0.38936372269705605,
+              "compress_decompress_us": 111,
+              "compress_decompress_stddev_us": 11
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 3933,
+          "overhead_pct": 5.953663793103448,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1555,
+              "compression_ratio": 0.3953724891939995,
+              "compress_decompress_us": 343,
+              "compress_decompress_stddev_us": 17
+            },
+            "LZ4": {
+              "compressed_bytes": 2189,
+              "compression_ratio": 0.5565725908975336,
+              "compress_decompress_us": 204,
+              "compress_decompress_stddev_us": 2
+            },
+            "Zstd": {
+              "compressed_bytes": 1611,
+              "compression_ratio": 0.4096109839816934,
+              "compress_decompress_us": 107,
+              "compress_decompress_stddev_us": 13
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 3800,
+          "overhead_pct": 2.3706896551724137,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1522,
+              "compression_ratio": 0.4005263157894737,
+              "compress_decompress_us": 332,
+              "compress_decompress_stddev_us": 8
+            },
+            "LZ4": {
+              "compressed_bytes": 2150,
+              "compression_ratio": 0.5657894736842105,
+              "compress_decompress_us": 188,
+              "compress_decompress_stddev_us": 3
+            },
+            "Zstd": {
+              "compressed_bytes": 1595,
+              "compression_ratio": 0.41973684210526313,
+              "compress_decompress_us": 105,
+              "compress_decompress_stddev_us": 15
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 3760,
+          "overhead_pct": 1.293103448275862,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1513,
+              "compression_ratio": 0.4023936170212766,
+              "compress_decompress_us": 330,
+              "compress_decompress_stddev_us": 13
+            },
+            "LZ4": {
+              "compressed_bytes": 2152,
+              "compression_ratio": 0.5723404255319149,
+              "compress_decompress_us": 181,
+              "compress_decompress_stddev_us": 3
+            },
+            "Zstd": {
+              "compressed_bytes": 1581,
+              "compression_ratio": 0.4204787234042553,
+              "compress_decompress_us": 101,
+              "compress_decompress_stddev_us": 4
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 4270,
+          "overhead_pct": 15.032327586206899,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1611,
+              "compression_ratio": 0.3772833723653396,
+              "compress_decompress_us": 373,
+              "compress_decompress_stddev_us": 12
+            },
+            "LZ4": {
+              "compressed_bytes": 2408,
+              "compression_ratio": 0.5639344262295082,
+              "compress_decompress_us": 237,
+              "compress_decompress_stddev_us": 6
+            },
+            "Zstd": {
+              "compressed_bytes": 1685,
+              "compression_ratio": 0.3946135831381733,
+              "compress_decompress_us": 130,
+              "compress_decompress_stddev_us": 26
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 10,
+      "raw_bytes": 28800,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 29227,
+          "overhead_pct": 1.4826388888888888,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9480,
+              "compression_ratio": 0.3243576145345058,
+              "compress_decompress_us": 3179,
+              "compress_decompress_stddev_us": 17
+            },
+            "LZ4": {
+              "compressed_bytes": 15147,
+              "compression_ratio": 0.5182536695521265,
+              "compress_decompress_us": 1638,
+              "compress_decompress_stddev_us": 8
+            },
+            "Zstd": {
+              "compressed_bytes": 9955,
+              "compression_ratio": 0.3406097101994731,
+              "compress_decompress_us": 622,
+              "compress_decompress_stddev_us": 13
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 29205,
+          "overhead_pct": 1.40625,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9613,
+              "compression_ratio": 0.32915596644410205,
+              "compress_decompress_us": 3199,
+              "compress_decompress_stddev_us": 9
+            },
+            "LZ4": {
+              "compressed_bytes": 15275,
+              "compression_ratio": 0.5230268789590824,
+              "compress_decompress_us": 1641,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 10127,
+              "compression_ratio": 0.3467556925184044,
+              "compress_decompress_us": 618,
+              "compress_decompress_stddev_us": 18
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 29987,
+          "overhead_pct": 4.121527777777779,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9521,
+              "compression_ratio": 0.31750425184246506,
+              "compress_decompress_us": 3257,
+              "compress_decompress_stddev_us": 20
+            },
+            "LZ4": {
+              "compressed_bytes": 15530,
+              "compression_ratio": 0.5178910861373262,
+              "compress_decompress_us": 1688,
+              "compress_decompress_stddev_us": 13
+            },
+            "Zstd": {
+              "compressed_bytes": 9998,
+              "compression_ratio": 0.3334111448294261,
+              "compress_decompress_us": 626,
+              "compress_decompress_stddev_us": 20
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 29243,
+          "overhead_pct": 1.5381944444444444,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9488,
+              "compression_ratio": 0.32445371541907464,
+              "compress_decompress_us": 3166,
+              "compress_decompress_stddev_us": 10
+            },
+            "LZ4": {
+              "compressed_bytes": 15146,
+              "compression_ratio": 0.5179359162876586,
+              "compress_decompress_us": 1658,
+              "compress_decompress_stddev_us": 20
+            },
+            "Zstd": {
+              "compressed_bytes": 9967,
+              "compression_ratio": 0.34083370379236055,
+              "compress_decompress_us": 618,
+              "compress_decompress_stddev_us": 21
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 28961,
+          "overhead_pct": 0.5590277777777777,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9456,
+              "compression_ratio": 0.3265080625669003,
+              "compress_decompress_us": 3170,
+              "compress_decompress_stddev_us": 6
+            },
+            "LZ4": {
+              "compressed_bytes": 15097,
+              "compression_ratio": 0.5212872483684956,
+              "compress_decompress_us": 1629,
+              "compress_decompress_stddev_us": 13
+            },
+            "Zstd": {
+              "compressed_bytes": 9950,
+              "compression_ratio": 0.3435654846172439,
+              "compress_decompress_us": 621,
+              "compress_decompress_stddev_us": 11
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 28900,
+          "overhead_pct": 0.3472222222222222,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9459,
+              "compression_ratio": 0.3273010380622837,
+              "compress_decompress_us": 3147,
+              "compress_decompress_stddev_us": 20
+            },
+            "LZ4": {
+              "compressed_bytes": 15093,
+              "compression_ratio": 0.5222491349480969,
+              "compress_decompress_us": 1635,
+              "compress_decompress_stddev_us": 16
+            },
+            "Zstd": {
+              "compressed_bytes": 9949,
+              "compression_ratio": 0.3442560553633218,
+              "compress_decompress_us": 618,
+              "compress_decompress_stddev_us": 14
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 29924,
+          "overhead_pct": 3.902777777777778,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 9556,
+              "compression_ratio": 0.31934233391257855,
+              "compress_decompress_us": 3218,
+              "compress_decompress_stddev_us": 20
+            },
+            "LZ4": {
+              "compressed_bytes": 15473,
+              "compression_ratio": 0.5170765940382301,
+              "compress_decompress_us": 1671,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 10058,
+              "compression_ratio": 0.3361181660205855,
+              "compress_decompress_us": 643,
+              "compress_decompress_stddev_us": 41
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 25,
+      "raw_bytes": 33687,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 34767,
+          "overhead_pct": 3.205984504408229,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11826,
+              "compression_ratio": 0.3401501423763914,
+              "compress_decompress_us": 3719,
+              "compress_decompress_stddev_us": 10
+            },
+            "LZ4": {
+              "compressed_bytes": 18311,
+              "compression_ratio": 0.5266775965714614,
+              "compress_decompress_us": 1958,
+              "compress_decompress_stddev_us": 9
+            },
+            "Zstd": {
+              "compressed_bytes": 12348,
+              "compression_ratio": 0.35516438001553197,
+              "compress_decompress_us": 730,
+              "compress_decompress_stddev_us": 17
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 34930,
+          "overhead_pct": 3.689850684240211,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 12329,
+              "compression_ratio": 0.35296306899513313,
+              "compress_decompress_us": 3748,
+              "compress_decompress_stddev_us": 7
+            },
+            "LZ4": {
+              "compressed_bytes": 19032,
+              "compression_ratio": 0.5448611508731749,
+              "compress_decompress_us": 1989,
+              "compress_decompress_stddev_us": 10
+            },
+            "Zstd": {
+              "compressed_bytes": 12806,
+              "compression_ratio": 0.3666189521900945,
+              "compress_decompress_us": 766,
+              "compress_decompress_stddev_us": 13
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 36354,
+          "overhead_pct": 7.917000623385875,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11906,
+              "compression_ratio": 0.3275017879738131,
+              "compress_decompress_us": 3921,
+              "compress_decompress_stddev_us": 129
+            },
+            "LZ4": {
+              "compressed_bytes": 19029,
+              "compression_ratio": 0.5234362105958079,
+              "compress_decompress_us": 2215,
+              "compress_decompress_stddev_us": 174
+            },
+            "Zstd": {
+              "compressed_bytes": 12457,
+              "compression_ratio": 0.3426583044506794,
+              "compress_decompress_us": 778,
+              "compress_decompress_stddev_us": 63
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 34808,
+          "overhead_pct": 3.3276931754089114,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11838,
+              "compression_ratio": 0.3400942312112158,
+              "compress_decompress_us": 3763,
+              "compress_decompress_stddev_us": 40
+            },
+            "LZ4": {
+              "compressed_bytes": 18315,
+              "compression_ratio": 0.5261721443346357,
+              "compress_decompress_us": 1953,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 12365,
+              "compression_ratio": 0.35523442886692713,
+              "compress_decompress_us": 744,
+              "compress_decompress_stddev_us": 22
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 34094,
+          "overhead_pct": 1.2081811974945824,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11862,
+              "compression_ratio": 0.3479204552120608,
+              "compress_decompress_us": 3661,
+              "compress_decompress_stddev_us": 15
+            },
+            "LZ4": {
+              "compressed_bytes": 18407,
+              "compression_ratio": 0.539889716665689,
+              "compress_decompress_us": 1929,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 12386,
+              "compression_ratio": 0.3632897283979586,
+              "compress_decompress_us": 753,
+              "compress_decompress_stddev_us": 26
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 33942,
+          "overhead_pct": 0.7569685635408318,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11815,
+              "compression_ratio": 0.34809380708267046,
+              "compress_decompress_us": 3684,
+              "compress_decompress_stddev_us": 12
+            },
+            "LZ4": {
+              "compressed_bytes": 18285,
+              "compression_ratio": 0.5387130988156267,
+              "compress_decompress_us": 1938,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 12383,
+              "compression_ratio": 0.36482823640327616,
+              "compress_decompress_us": 735,
+              "compress_decompress_stddev_us": 12
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 36525,
+          "overhead_pct": 8.424614836583846,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 11921,
+              "compression_ratio": 0.3263791923340178,
+              "compress_decompress_us": 3819,
+              "compress_decompress_stddev_us": 11
+            },
+            "LZ4": {
+              "compressed_bytes": 18957,
+              "compression_ratio": 0.5190143737166324,
+              "compress_decompress_us": 2008,
+              "compress_decompress_stddev_us": 15
+            },
+            "Zstd": {
+              "compressed_bytes": 12525,
+              "compression_ratio": 0.34291581108829566,
+              "compress_decompress_us": 760,
+              "compress_decompress_stddev_us": 35
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 50,
+      "raw_bytes": 40849,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 43007,
+          "overhead_pct": 5.282871061715097,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 14734,
+              "compression_ratio": 0.34259539144790385,
+              "compress_decompress_us": 4563,
+              "compress_decompress_stddev_us": 12
+            },
+            "LZ4": {
+              "compressed_bytes": 22532,
+              "compression_ratio": 0.5239147115585835,
+              "compress_decompress_us": 2393,
+              "compress_decompress_stddev_us": 7
+            },
+            "Zstd": {
+              "compressed_bytes": 15386,
+              "compression_ratio": 0.3577557141860627,
+              "compress_decompress_us": 901,
+              "compress_decompress_stddev_us": 11
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 43383,
+          "overhead_pct": 6.203334230948125,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 15632,
+              "compression_ratio": 0.36032547311158747,
+              "compress_decompress_us": 4583,
+              "compress_decompress_stddev_us": 17
+            },
+            "LZ4": {
+              "compressed_bytes": 23462,
+              "compression_ratio": 0.5408109167185303,
+              "compress_decompress_us": 2470,
+              "compress_decompress_stddev_us": 13
+            },
+            "Zstd": {
+              "compressed_bytes": 16112,
+              "compression_ratio": 0.3713897148652698,
+              "compress_decompress_us": 938,
+              "compress_decompress_stddev_us": 15
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 45981,
+          "overhead_pct": 12.563343043893363,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 14889,
+              "compression_ratio": 0.3238076596855223,
+              "compress_decompress_us": 4917,
+              "compress_decompress_stddev_us": 122
+            },
+            "LZ4": {
+              "compressed_bytes": 23639,
+              "compression_ratio": 0.5141036515082317,
+              "compress_decompress_us": 2703,
+              "compress_decompress_stddev_us": 375
+            },
+            "Zstd": {
+              "compressed_bytes": 15564,
+              "compression_ratio": 0.33848763619755984,
+              "compress_decompress_us": 934,
+              "compress_decompress_stddev_us": 29
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 43087,
+          "overhead_pct": 5.478714289211487,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 14760,
+              "compression_ratio": 0.3425627219346903,
+              "compress_decompress_us": 4588,
+              "compress_decompress_stddev_us": 25
+            },
+            "LZ4": {
+              "compressed_bytes": 22508,
+              "compression_ratio": 0.5223849420939031,
+              "compress_decompress_us": 2396,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 15407,
+              "compression_ratio": 0.35757885208995754,
+              "compress_decompress_us": 907,
+              "compress_decompress_stddev_us": 24
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 41642,
+          "overhead_pct": 1.9412959925579576,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 15146,
+              "compression_ratio": 0.3637193218385284,
+              "compress_decompress_us": 4441,
+              "compress_decompress_stddev_us": 13
+            },
+            "LZ4": {
+              "compressed_bytes": 22709,
+              "compression_ratio": 0.5453388405936315,
+              "compress_decompress_us": 2384,
+              "compress_decompress_stddev_us": 19
+            },
+            "Zstd": {
+              "compressed_bytes": 15587,
+              "compression_ratio": 0.3743095912780366,
+              "compress_decompress_us": 918,
+              "compress_decompress_stddev_us": 28
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 41352,
+          "overhead_pct": 1.2313642928835467,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 14728,
+              "compression_ratio": 0.3561617334107177,
+              "compress_decompress_us": 4484,
+              "compress_decompress_stddev_us": 8
+            },
+            "LZ4": {
+              "compressed_bytes": 22413,
+              "compression_ratio": 0.5420052234474754,
+              "compress_decompress_us": 2356,
+              "compress_decompress_stddev_us": 13
+            },
+            "Zstd": {
+              "compressed_bytes": 15430,
+              "compression_ratio": 0.3731379377055523,
+              "compress_decompress_us": 899,
+              "compress_decompress_stddev_us": 23
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 46506,
+          "overhead_pct": 13.848564224338416,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 14904,
+              "compression_ratio": 0.32047477744807124,
+              "compress_decompress_us": 4880,
+              "compress_decompress_stddev_us": 194
+            },
+            "LZ4": {
+              "compressed_bytes": 23533,
+              "compression_ratio": 0.5060207285081495,
+              "compress_decompress_us": 2772,
+              "compress_decompress_stddev_us": 7
+            },
+            "Zstd": {
+              "compressed_bytes": 15609,
+              "compression_ratio": 0.335634111727519,
+              "compress_decompress_us": 1038,
+              "compress_decompress_stddev_us": 40
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 100,
+      "raw_bytes": 55437,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 59765,
+          "overhead_pct": 7.807060266608944,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19354,
+              "compression_ratio": 0.32383502049694635,
+              "compress_decompress_us": 5988,
+              "compress_decompress_stddev_us": 29
+            },
+            "LZ4": {
+              "compressed_bytes": 29536,
+              "compression_ratio": 0.4942022923115536,
+              "compress_decompress_us": 3154,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 20282,
+              "compression_ratio": 0.3393625031372877,
+              "compress_decompress_us": 1188,
+              "compress_decompress_stddev_us": 27
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 60682,
+          "overhead_pct": 9.461190179843786,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 20838,
+              "compression_ratio": 0.3433967239049471,
+              "compress_decompress_us": 6287,
+              "compress_decompress_stddev_us": 11
+            },
+            "LZ4": {
+              "compressed_bytes": 31658,
+              "compression_ratio": 0.5217033057578854,
+              "compress_decompress_us": 3397,
+              "compress_decompress_stddev_us": 10
+            },
+            "Zstd": {
+              "compressed_bytes": 21636,
+              "compression_ratio": 0.3565472463003856,
+              "compress_decompress_us": 1251,
+              "compress_decompress_stddev_us": 20
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 65474,
+          "overhead_pct": 18.105236574850732,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19649,
+              "compression_ratio": 0.3001038580199774,
+              "compress_decompress_us": 6293,
+              "compress_decompress_stddev_us": 16
+            },
+            "LZ4": {
+              "compressed_bytes": 31454,
+              "compression_ratio": 0.48040443534838256,
+              "compress_decompress_us": 3356,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 20606,
+              "compression_ratio": 0.31472034700797263,
+              "compress_decompress_us": 1253,
+              "compress_decompress_stddev_us": 21
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 59920,
+          "overhead_pct": 8.086656925879828,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19376,
+              "compression_ratio": 0.3233644859813084,
+              "compress_decompress_us": 5954,
+              "compress_decompress_stddev_us": 16
+            },
+            "LZ4": {
+              "compressed_bytes": 29480,
+              "compression_ratio": 0.49198931909212285,
+              "compress_decompress_us": 3198,
+              "compress_decompress_stddev_us": 6
+            },
+            "Zstd": {
+              "compressed_bytes": 20310,
+              "compression_ratio": 0.33895193591455275,
+              "compress_decompress_us": 1384,
+              "compress_decompress_stddev_us": 234
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 57038,
+          "overhead_pct": 2.8879629128560347,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19842,
+              "compression_ratio": 0.34787334759283284,
+              "compress_decompress_us": 5936,
+              "compress_decompress_stddev_us": 9
+            },
+            "LZ4": {
+              "compressed_bytes": 30050,
+              "compression_ratio": 0.5268417546197272,
+              "compress_decompress_us": 3221,
+              "compress_decompress_stddev_us": 18
+            },
+            "Zstd": {
+              "compressed_bytes": 20559,
+              "compression_ratio": 0.3604439145832603,
+              "compress_decompress_us": 1192,
+              "compress_decompress_stddev_us": 13
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 56454,
+          "overhead_pct": 1.8345148546999295,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19384,
+              "compression_ratio": 0.34335919509689306,
+              "compress_decompress_us": 5816,
+              "compress_decompress_stddev_us": 11
+            },
+            "LZ4": {
+              "compressed_bytes": 29309,
+              "compression_ratio": 0.5191660466928827,
+              "compress_decompress_us": 3106,
+              "compress_decompress_stddev_us": 24
+            },
+            "Zstd": {
+              "compressed_bytes": 20410,
+              "compression_ratio": 0.3615332837354306,
+              "compress_decompress_us": 1174,
+              "compress_decompress_stddev_us": 21
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 66779,
+          "overhead_pct": 20.45926006097011,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 19636,
+              "compression_ratio": 0.2940445349585948,
+              "compress_decompress_us": 6215,
+              "compress_decompress_stddev_us": 14
+            },
+            "LZ4": {
+              "compressed_bytes": 30825,
+              "compression_ratio": 0.46159720870333487,
+              "compress_decompress_us": 2784,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 20625,
+              "compression_ratio": 0.308854580032645,
+              "compress_decompress_us": 1259,
+              "compress_decompress_stddev_us": 45
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 250,
+      "raw_bytes": 152822,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 163662,
+          "overhead_pct": 7.093219562628416,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 49842,
+              "compression_ratio": 0.3045422883748213,
+              "compress_decompress_us": 15354,
+              "compress_decompress_stddev_us": 11
+            },
+            "LZ4": {
+              "compressed_bytes": 73074,
+              "compression_ratio": 0.44649338270337646,
+              "compress_decompress_us": 6586,
+              "compress_decompress_stddev_us": 17
+            },
+            "Zstd": {
+              "compressed_bytes": 51549,
+              "compression_ratio": 0.31497232100304284,
+              "compress_decompress_us": 2993,
+              "compress_decompress_stddev_us": 77
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 173802,
+          "overhead_pct": 13.728389891507767,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 61972,
+              "compression_ratio": 0.35656666781740143,
+              "compress_decompress_us": 18129,
+              "compress_decompress_stddev_us": 11
+            },
+            "LZ4": {
+              "compressed_bytes": 91044,
+              "compression_ratio": 0.5238374702247385,
+              "compress_decompress_us": 7748,
+              "compress_decompress_stddev_us": 15
+            },
+            "Zstd": {
+              "compressed_bytes": 57879,
+              "compression_ratio": 0.33301688127869644,
+              "compress_decompress_us": 3260,
+              "compress_decompress_stddev_us": 60
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 179396,
+          "overhead_pct": 17.38885762521103,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 50535,
+              "compression_ratio": 0.28169524404111573,
+              "compress_decompress_us": 16551,
+              "compress_decompress_stddev_us": 12
+            },
+            "LZ4": {
+              "compressed_bytes": 77825,
+              "compression_ratio": 0.43381680750964347,
+              "compress_decompress_us": 6962,
+              "compress_decompress_stddev_us": 23
+            },
+            "Zstd": {
+              "compressed_bytes": 52257,
+              "compression_ratio": 0.29129412027024015,
+              "compress_decompress_us": 3120,
+              "compress_decompress_stddev_us": 67
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 164047,
+          "overhead_pct": 7.3451466411904045,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 49887,
+              "compression_ratio": 0.3041018732436436,
+              "compress_decompress_us": 15363,
+              "compress_decompress_stddev_us": 14
+            },
+            "LZ4": {
+              "compressed_bytes": 72991,
+              "compression_ratio": 0.44493956000414514,
+              "compress_decompress_us": 6590,
+              "compress_decompress_stddev_us": 19
+            },
+            "Zstd": {
+              "compressed_bytes": 51605,
+              "compression_ratio": 0.3145744817034143,
+              "compress_decompress_us": 2958,
+              "compress_decompress_stddev_us": 28
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 156810,
+          "overhead_pct": 2.6095719202732592,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 56007,
+              "compression_ratio": 0.3571647216376507,
+              "compress_decompress_us": 16395,
+              "compress_decompress_stddev_us": 18
+            },
+            "LZ4": {
+              "compressed_bytes": 81852,
+              "compression_ratio": 0.5219820164530323,
+              "compress_decompress_us": 7062,
+              "compress_decompress_stddev_us": 26
+            },
+            "Zstd": {
+              "compressed_bytes": 52732,
+              "compression_ratio": 0.3362795740067598,
+              "compress_decompress_us": 2957,
+              "compress_decompress_stddev_us": 22
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 155403,
+          "overhead_pct": 1.6888929604376335,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 49940,
+              "compression_ratio": 0.3213580175414889,
+              "compress_decompress_us": 15116,
+              "compress_decompress_stddev_us": 19
+            },
+            "LZ4": {
+              "compressed_bytes": 72932,
+              "compression_ratio": 0.4693088293018796,
+              "compress_decompress_us": 6462,
+              "compress_decompress_stddev_us": 20
+            },
+            "Zstd": {
+              "compressed_bytes": 51812,
+              "compression_ratio": 0.3334041170376376,
+              "compress_decompress_us": 2933,
+              "compress_decompress_stddev_us": 37
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 181323,
+          "overhead_pct": 18.649801730117392,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 50385,
+              "compression_ratio": 0.27787429063053226,
+              "compress_decompress_us": 16217,
+              "compress_decompress_stddev_us": 14
+            },
+            "LZ4": {
+              "compressed_bytes": 77259,
+              "compression_ratio": 0.42608494234046423,
+              "compress_decompress_us": 6892,
+              "compress_decompress_stddev_us": 35
+            },
+            "Zstd": {
+              "compressed_bytes": 52095,
+              "compression_ratio": 0.287304975099684,
+              "compress_decompress_us": 3136,
+              "compress_decompress_stddev_us": 116
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 500,
+      "raw_bytes": 259608,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 281280,
+          "overhead_pct": 8.3479707867246,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 81427,
+              "compression_ratio": 0.2894873435722412,
+              "compress_decompress_us": 27620,
+              "compress_decompress_stddev_us": 20
+            },
+            "LZ4": {
+              "compressed_bytes": 120625,
+              "compression_ratio": 0.42884314562002274,
+              "compress_decompress_us": 11121,
+              "compress_decompress_stddev_us": 21
+            },
+            "Zstd": {
+              "compressed_bytes": 73408,
+              "compression_ratio": 0.2609783845278726,
+              "compress_decompress_us": 4264,
+              "compress_decompress_stddev_us": 27
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 310543,
+          "overhead_pct": 19.619965486425688,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 103378,
+              "compression_ratio": 0.3328943173731174,
+              "compress_decompress_us": 31650,
+              "compress_decompress_stddev_us": 9
+            },
+            "LZ4": {
+              "compressed_bytes": 140218,
+              "compression_ratio": 0.4515252316104372,
+              "compress_decompress_us": 12165,
+              "compress_decompress_stddev_us": 20
+            },
+            "Zstd": {
+              "compressed_bytes": 77753,
+              "compression_ratio": 0.25037756445967224,
+              "compress_decompress_us": 4415,
+              "compress_decompress_stddev_us": 54
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 310659,
+          "overhead_pct": 19.664648238883238,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 83077,
+              "compression_ratio": 0.2674218355174001,
+              "compress_decompress_us": 29441,
+              "compress_decompress_stddev_us": 14
+            },
+            "LZ4": {
+              "compressed_bytes": 129837,
+              "compression_ratio": 0.4179405714947901,
+              "compress_decompress_us": 11800,
+              "compress_decompress_stddev_us": 106
+            },
+            "Zstd": {
+              "compressed_bytes": 74926,
+              "compression_ratio": 0.2411840635552165,
+              "compress_decompress_us": 4553,
+              "compress_decompress_stddev_us": 78
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 282049,
+          "overhead_pct": 8.644186619826815,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 81512,
+              "compression_ratio": 0.28899942917719973,
+              "compress_decompress_us": 27521,
+              "compress_decompress_stddev_us": 16
+            },
+            "LZ4": {
+              "compressed_bytes": 120514,
+              "compression_ratio": 0.42728036617750814,
+              "compress_decompress_us": 11101,
+              "compress_decompress_stddev_us": 20
+            },
+            "Zstd": {
+              "compressed_bytes": 73473,
+              "compression_ratio": 0.26049728947806944,
+              "compress_decompress_us": 4284,
+              "compress_decompress_stddev_us": 57
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 267579,
+          "overhead_pct": 3.0703984468891563,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 92767,
+              "compression_ratio": 0.3466901363709409,
+              "compress_decompress_us": 28685,
+              "compress_decompress_stddev_us": 16
+            },
+            "LZ4": {
+              "compressed_bytes": 125494,
+              "compression_ratio": 0.4689979407950549,
+              "compress_decompress_us": 10939,
+              "compress_decompress_stddev_us": 109
+            },
+            "Zstd": {
+              "compressed_bytes": 75800,
+              "compression_ratio": 0.28328082547584077,
+              "compress_decompress_us": 4261,
+              "compress_decompress_stddev_us": 9
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 264734,
+          "overhead_pct": 1.9745154232535207,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 81473,
+              "compression_ratio": 0.30775419855402025,
+              "compress_decompress_us": 26982,
+              "compress_decompress_stddev_us": 23
+            },
+            "LZ4": {
+              "compressed_bytes": 120338,
+              "compression_ratio": 0.4545619376430681,
+              "compress_decompress_us": 10890,
+              "compress_decompress_stddev_us": 19
+            },
+            "Zstd": {
+              "compressed_bytes": 73632,
+              "compression_ratio": 0.2781357891317322,
+              "compress_decompress_us": 4182,
+              "compress_decompress_stddev_us": 30
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 316240,
+          "overhead_pct": 21.81442790669009,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 82869,
+              "compression_ratio": 0.26204464963318996,
+              "compress_decompress_us": 29081,
+              "compress_decompress_stddev_us": 39
+            },
+            "LZ4": {
+              "compressed_bytes": 128754,
+              "compression_ratio": 0.40714014672400706,
+              "compress_decompress_us": 11727,
+              "compress_decompress_stddev_us": 114
+            },
+            "Zstd": {
+              "compressed_bytes": 74664,
+              "compression_ratio": 0.2360991651909942,
+              "compress_decompress_us": 4537,
+              "compress_decompress_stddev_us": 64
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 1000,
+      "raw_bytes": 522830,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 566175,
+          "overhead_pct": 8.29045770135608,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 171334,
+              "compression_ratio": 0.30261668212125226,
+              "compress_decompress_us": 57560,
+              "compress_decompress_stddev_us": 92
+            },
+            "LZ4": {
+              "compressed_bytes": 252531,
+              "compression_ratio": 0.446029937740098,
+              "compress_decompress_us": 22938,
+              "compress_decompress_stddev_us": 34
+            },
+            "Zstd": {
+              "compressed_bytes": 138057,
+              "compression_ratio": 0.24384156841965823,
+              "compress_decompress_us": 8137,
+              "compress_decompress_stddev_us": 39
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 652646,
+          "overhead_pct": 24.829485683683032,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 225312,
+              "compression_ratio": 0.3452285005960352,
+              "compress_decompress_us": 70427,
+              "compress_decompress_stddev_us": 13
+            },
+            "LZ4": {
+              "compressed_bytes": 320041,
+              "compression_ratio": 0.4903745675297175,
+              "compress_decompress_us": 27276,
+              "compress_decompress_stddev_us": 25
+            },
+            "Zstd": {
+              "compressed_bytes": 148584,
+              "compression_ratio": 0.22766400161802877,
+              "compress_decompress_us": 8552,
+              "compress_decompress_stddev_us": 106
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 626285,
+          "overhead_pct": 19.787502629917945,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 174883,
+              "compression_ratio": 0.2792386852630991,
+              "compress_decompress_us": 61178,
+              "compress_decompress_stddev_us": 61
+            },
+            "LZ4": {
+              "compressed_bytes": 270573,
+              "compression_ratio": 0.4320285493026338,
+              "compress_decompress_us": 24182,
+              "compress_decompress_stddev_us": 11
+            },
+            "Zstd": {
+              "compressed_bytes": 141607,
+              "compression_ratio": 0.2261063253949879,
+              "compress_decompress_us": 8747,
+              "compress_decompress_stddev_us": 124
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 567709,
+          "overhead_pct": 8.58386091081231,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 171503,
+              "compression_ratio": 0.30209667276721,
+              "compress_decompress_us": 58190,
+              "compress_decompress_stddev_us": 1076
+            },
+            "LZ4": {
+              "compressed_bytes": 252563,
+              "compression_ratio": 0.44488109224972655,
+              "compress_decompress_us": 23161,
+              "compress_decompress_stddev_us": 232
+            },
+            "Zstd": {
+              "compressed_bytes": 138085,
+              "compression_ratio": 0.24323200794773378,
+              "compress_decompress_us": 8135,
+              "compress_decompress_stddev_us": 48
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 538761,
+          "overhead_pct": 3.047070749574431,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 193685,
+              "compression_ratio": 0.359500780494505,
+              "compress_decompress_us": 60198,
+              "compress_decompress_stddev_us": 115
+            },
+            "LZ4": {
+              "compressed_bytes": 276590,
+              "compression_ratio": 0.5133816293310021,
+              "compress_decompress_us": 23534,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 144503,
+              "compression_ratio": 0.2682135492361177,
+              "compress_decompress_us": 8241,
+              "compress_decompress_stddev_us": 51
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 533092,
+          "overhead_pct": 1.9627794885526844,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 171582,
+              "compression_ratio": 0.3218618925063591,
+              "compress_decompress_us": 56876,
+              "compress_decompress_stddev_us": 13
+            },
+            "LZ4": {
+              "compressed_bytes": 251663,
+              "compression_ratio": 0.4720817419882497,
+              "compress_decompress_us": 22566,
+              "compress_decompress_stddev_us": 140
+            },
+            "Zstd": {
+              "compressed_bytes": 138696,
+              "compression_ratio": 0.26017272815949216,
+              "compress_decompress_us": 8008,
+              "compress_decompress_stddev_us": 59
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 636285,
+          "overhead_pct": 21.700170227416177,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 174205,
+              "compression_ratio": 0.2737845462332131,
+              "compress_decompress_us": 60398,
+              "compress_decompress_stddev_us": 45
+            },
+            "LZ4": {
+              "compressed_bytes": 268555,
+              "compression_ratio": 0.422067155441351,
+              "compress_decompress_us": 23913,
+              "compress_decompress_stddev_us": 12
+            },
+            "Zstd": {
+              "compressed_bytes": 140952,
+              "compression_ratio": 0.22152337395978217,
+              "compress_decompress_us": 8681,
+              "compress_decompress_stddev_us": 223
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 2500,
+      "raw_bytes": 1289606,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 1397995,
+          "overhead_pct": 8.404815114073601,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 422812,
+              "compression_ratio": 0.3024417111649183,
+              "compress_decompress_us": 143635,
+              "compress_decompress_stddev_us": 639
+            },
+            "LZ4": {
+              "compressed_bytes": 624196,
+              "compression_ratio": 0.44649372851834235,
+              "compress_decompress_us": 56359,
+              "compress_decompress_stddev_us": 194
+            },
+            "Zstd": {
+              "compressed_bytes": 180113,
+              "compression_ratio": 0.1288366553528446,
+              "compress_decompress_us": 10885,
+              "compress_decompress_stddev_us": 270
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 1616620,
+          "overhead_pct": 25.357667380579805,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 546928,
+              "compression_ratio": 0.33831574519676855,
+              "compress_decompress_us": 172773,
+              "compress_decompress_stddev_us": 223
+            },
+            "LZ4": {
+              "compressed_bytes": 784314,
+              "compression_ratio": 0.4851566849352352,
+              "compress_decompress_us": 67134,
+              "compress_decompress_stddev_us": 383
+            },
+            "Zstd": {
+              "compressed_bytes": 201808,
+              "compression_ratio": 0.12483329415694473,
+              "compress_decompress_us": 11807,
+              "compress_decompress_stddev_us": 445
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 1548958,
+          "overhead_pct": 20.110948615313514,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 432819,
+              "compression_ratio": 0.27942591083812474,
+              "compress_decompress_us": 152939,
+              "compress_decompress_stddev_us": 267
+            },
+            "LZ4": {
+              "compressed_bytes": 669105,
+              "compression_ratio": 0.43197104117735924,
+              "compress_decompress_us": 59258,
+              "compress_decompress_stddev_us": 37
+            },
+            "Zstd": {
+              "compressed_bytes": 191738,
+              "compression_ratio": 0.12378515104993164,
+              "compress_decompress_us": 12487,
+              "compress_decompress_stddev_us": 307
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 1401825,
+          "overhead_pct": 8.701805047433092,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 423285,
+              "compression_ratio": 0.3019528115135627,
+              "compress_decompress_us": 143482,
+              "compress_decompress_stddev_us": 442
+            },
+            "LZ4": {
+              "compressed_bytes": 623920,
+              "compression_ratio": 0.44507695325736096,
+              "compress_decompress_us": 56296,
+              "compress_decompress_stddev_us": 128
+            },
+            "Zstd": {
+              "compressed_bytes": 180032,
+              "compression_ratio": 0.12842687211313822,
+              "compress_decompress_us": 10820,
+              "compress_decompress_stddev_us": 311
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 1329429,
+          "overhead_pct": 3.0879974193668454,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 465898,
+              "compression_ratio": 0.3504497043467534,
+              "compress_decompress_us": 143484,
+              "compress_decompress_stddev_us": 182
+            },
+            "LZ4": {
+              "compressed_bytes": 665174,
+              "compression_ratio": 0.5003456371118729,
+              "compress_decompress_us": 56361,
+              "compress_decompress_stddev_us": 63
+            },
+            "Zstd": {
+              "compressed_bytes": 193600,
+              "compression_ratio": 0.14562643059539096,
+              "compress_decompress_us": 11157,
+              "compress_decompress_stddev_us": 435
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 1315293,
+          "overhead_pct": 1.9918486731606395,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 423357,
+              "compression_ratio": 0.3218727690332116,
+              "compress_decompress_us": 143162,
+              "compress_decompress_stddev_us": 1523
+            },
+            "LZ4": {
+              "compressed_bytes": 621803,
+              "compression_ratio": 0.47274865752345674,
+              "compress_decompress_us": 55222,
+              "compress_decompress_stddev_us": 27
+            },
+            "Zstd": {
+              "compressed_bytes": 180513,
+              "compression_ratio": 0.13724166402466978,
+              "compress_decompress_us": 10645,
+              "compress_decompress_stddev_us": 450
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 1573263,
+          "overhead_pct": 21.99563277466141,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 431221,
+              "compression_ratio": 0.27409339697177143,
+              "compress_decompress_us": 150953,
+              "compress_decompress_stddev_us": 437
+            },
+            "LZ4": {
+              "compressed_bytes": 663934,
+              "compression_ratio": 0.42201081446649413,
+              "compress_decompress_us": 58660,
+              "compress_decompress_stddev_us": 54
+            },
+            "Zstd": {
+              "compressed_bytes": 191165,
+              "compression_ratio": 0.12150860981285393,
+              "compress_decompress_us": 12427,
+              "compress_decompress_stddev_us": 407
+            }
+          }
+        }
+      }
+    },
+    {
+      "num_operations": 5000,
+      "raw_bytes": 2542741,
+      "formats": {
+        "CBOR": {
+          "uncompressed_bytes": 2759496,
+          "overhead_pct": 8.524462381343598,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 828607,
+              "compression_ratio": 0.30027476031855094,
+              "compress_decompress_us": 284815,
+              "compress_decompress_stddev_us": 426
+            },
+            "LZ4": {
+              "compressed_bytes": 1222401,
+              "compression_ratio": 0.442979805007871,
+              "compress_decompress_us": 110660,
+              "compress_decompress_stddev_us": 267
+            },
+            "Zstd": {
+              "compressed_bytes": 245740,
+              "compression_ratio": 0.08905249364376683,
+              "compress_decompress_us": 15377,
+              "compress_decompress_stddev_us": 724
+            }
+          }
+        },
+        "Changeset": {
+          "uncompressed_bytes": 3202993,
+          "overhead_pct": 25.96615227425837,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 1081241,
+              "compression_ratio": 0.33757207711662185,
+              "compress_decompress_us": 343735,
+              "compress_decompress_stddev_us": 1407
+            },
+            "LZ4": {
+              "compressed_bytes": 1499372,
+              "compression_ratio": 0.46811591533294017,
+              "compress_decompress_us": 128281,
+              "compress_decompress_stddev_us": 681
+            },
+            "Zstd": {
+              "compressed_bytes": 290293,
+              "compression_ratio": 0.09063179345068816,
+              "compress_decompress_us": 17097,
+              "compress_decompress_stddev_us": 388
+            }
+          }
+        },
+        "JSON": {
+          "uncompressed_bytes": 3059753,
+          "overhead_pct": 20.332861270573762,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 846264,
+              "compression_ratio": 0.2765791879279144,
+              "compress_decompress_us": 302571,
+              "compress_decompress_stddev_us": 365
+            },
+            "LZ4": {
+              "compressed_bytes": 1312618,
+              "compression_ratio": 0.42899475872725673,
+              "compress_decompress_us": 116994,
+              "compress_decompress_stddev_us": 871
+            },
+            "Zstd": {
+              "compressed_bytes": 271205,
+              "compression_ratio": 0.08863623959188863,
+              "compress_decompress_us": 18371,
+              "compress_decompress_stddev_us": 210
+            }
+          }
+        },
+        "MsgPack": {
+          "uncompressed_bytes": 2767159,
+          "overhead_pct": 8.82583007864348,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 829427,
+              "compression_ratio": 0.29973955237122263,
+              "compress_decompress_us": 284628,
+              "compress_decompress_stddev_us": 493
+            },
+            "LZ4": {
+              "compressed_bytes": 1222355,
+              "compression_ratio": 0.4417364524409331,
+              "compress_decompress_us": 110498,
+              "compress_decompress_stddev_us": 74
+            },
+            "Zstd": {
+              "compressed_bytes": 245414,
+              "compression_ratio": 0.08868807321877782,
+              "compress_decompress_us": 15107,
+              "compress_decompress_stddev_us": 231
+            }
+          }
+        },
+        "Patchset": {
+          "uncompressed_bytes": 2622353,
+          "overhead_pct": 3.1309519923578533,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 924647,
+              "compression_ratio": 0.3526020333646919,
+              "compress_decompress_us": 287370,
+              "compress_decompress_stddev_us": 151
+            },
+            "LZ4": {
+              "compressed_bytes": 1311993,
+              "compression_ratio": 0.5003113615901444,
+              "compress_decompress_us": 111688,
+              "compress_decompress_stddev_us": 303
+            },
+            "Zstd": {
+              "compressed_bytes": 269586,
+              "compression_ratio": 0.10280309325251025,
+              "compress_decompress_us": 16995,
+              "compress_decompress_stddev_us": 291
+            }
+          }
+        },
+        "Protobuf": {
+          "uncompressed_bytes": 2594082,
+          "overhead_pct": 2.0191203115063625,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 830830,
+              "compression_ratio": 0.3202790042874512,
+              "compress_decompress_us": 281969,
+              "compress_decompress_stddev_us": 687
+            },
+            "LZ4": {
+              "compressed_bytes": 1219561,
+              "compression_ratio": 0.4701320158730526,
+              "compress_decompress_us": 108554,
+              "compress_decompress_stddev_us": 30
+            },
+            "Zstd": {
+              "compressed_bytes": 245632,
+              "compression_ratio": 0.0946893737360654,
+              "compress_decompress_us": 14590,
+              "compress_decompress_stddev_us": 286
+            }
+          }
+        },
+        "SQL": {
+          "uncompressed_bytes": 3110005,
+          "overhead_pct": 22.309153783259873,
+          "compression": {
+            "DEFLATE": {
+              "compressed_bytes": 843199,
+              "compression_ratio": 0.2711246444941407,
+              "compress_decompress_us": 299901,
+              "compress_decompress_stddev_us": 1782
+            },
+            "LZ4": {
+              "compressed_bytes": 1302541,
+              "compression_ratio": 0.41882279932025834,
+              "compress_decompress_us": 115394,
+              "compress_decompress_stddev_us": 141
+            },
+            "Zstd": {
+              "compressed_bytes": 269024,
+              "compression_ratio": 0.08650275481872216,
+              "compress_decompress_us": 19824,
+              "compress_decompress_stddev_us": 271
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,270 @@
+//! Regression tests from fuzzing crashes.
+//!
+//! These tests ensure that bugs found by fuzzing don't regress.
+//!
+//! Each fuzz harness has a corresponding crash-input directory under
+//! `tests/crash_inputs/<harness>/`. The directory-based tests auto-copy new
+//! files from `fuzz/artifacts/<harness>/` and replay every file through
+//! the same shared helper the harness uses.
+//!
+//! | Harness              | Input type                       | Crash directory                          |
+//! |----------------------|----------------------------------|------------------------------------------|
+//! | `roundtrip`          | `&[u8]`                          | `tests/crash_inputs/roundtrip/`          |
+//! | `reverse_idempotent` | `&[u8]`                          | `tests/crash_inputs/reverse_idempotent/` |
+//! | `apply_roundtrip`    | `(FuzzSchemas, Vec<u8>)`         | `tests/crash_inputs/apply_roundtrip/`    |
+//! | `sql_roundtrip`      | `(FuzzSchemas, String)`          | `tests/crash_inputs/sql_roundtrip/`      |
+//! | `differential`       | `(FuzzSchemas, String)`          | `tests/crash_inputs/differential/`       |
+//!
+//! Structured-input harnesses (`apply_roundtrip`, `sql_roundtrip`, `differential`)
+//! store crash files as raw `arbitrary`-encoded bytes. The regression
+//! tests deserialize them via [`arbitrary::Unstructured`] before calling the
+//! shared test function. If deserialization fails the file is silently skipped
+//! (it may be a legacy file from before the structured-input migration).
+#![cfg(feature = "testing")]
+
+use sqlite_diff_rs::testing::{
+    FuzzSchemas, SqlType, TypedSimpleTable, run_crash_dir_regression, test_apply_roundtrip,
+    test_differential, test_reverse_idempotent, test_roundtrip, test_sql_roundtrip,
+};
+use std::time::Duration;
+
+/// Maximum time allowed for a single crash input before we flag it as a
+/// timeout-class bug, with room for debug-mode overhead while still catching
+/// algorithmic slowness.
+const PER_INPUT_TIME_LIMIT: Duration = Duration::from_secs(2);
+
+/// Crash 1: Empty patchset vs empty changeset equality.
+///
+/// Input: Patchset marker 'P' (0x50) with minimal table header.
+/// Bug: Empty patchset serializes to [], which parses as empty changeset.
+/// Fix: `ParsedDiffSet::eq` treats all empty builders as equal.
+#[test]
+fn fuzz_regression_empty_patchset_changeset_equality() {
+    // P, 1 col, pk_flags, name ";", null term, ...
+    let input = [0x50, 0x01, 0x01, 0x3b, 0x01, 0x3d, 0x00];
+    test_roundtrip(&input);
+}
+
+/// Crash 2: NaN in FLOAT value becomes NULL after roundtrip.
+///
+/// Input: Changeset with FLOAT containing NaN bit pattern.
+/// Bug: `decode_value` returned Real(NaN), but `encode_value` converts NaN to NULL.
+/// Fix: `decode_value` now normalizes NaN to Null (matching `SQLite` behavior).
+#[test]
+fn fuzz_regression_nan_normalized_to_null() {
+    // T, 4 cols, pk_flags, name "\x11", operations with NaN float
+    let input = [
+        0x54, 0x04, 0x2d, 0x93, 0xf8, 0xff, 0x11, 0x00, 0x09, 0x08, 0x00, 0x02, 0x7f, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00,
+    ];
+    test_roundtrip(&input);
+}
+
+/// Crash 3: Latest crash - needs investigation.
+#[test]
+/// Crash 3: `PatchDelete` + Insert with Undefined values.
+///
+/// Bug: `PatchDelete` + Insert calls `update.set()` with Undefined values which errors.
+/// Fix: Skip Undefined values in the combination loop.
+fn fuzz_regression_crash_3() {
+    let input = [
+        0x50, 0x01, 0x00, 0x02, 0x02, 0x2d, 0x35, 0x31, 0x38, 0x50, 0x02, 0x00, 0x09, 0x09, 0x09,
+        0x00, 0x12, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01, 0x03, 0x20, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+    test_roundtrip(&input);
+}
+
+/// Crash 4: a FLOAT value of `-0.0` round-trips with its sign.
+///
+/// Input: a changeset DELETE carrying a FLOAT `-0.0`, which SQLite records
+/// for an untyped column.
+#[test]
+fn fuzz_regression_crash_4() {
+    let input = [
+        0x54, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    test_roundtrip(&input);
+}
+
+/// Crash 5: Patchset UPDATE losing PK values during serialization.
+///
+/// Original bug: patchset UPDATE serialization wrote Undefined for ALL old
+/// values, including PK columns. When re-parsed, `extract_pk` got all
+/// Undefined and the roundtrip lost the PK.
+/// Original fix: serialize PK values from the `HashMap` key into the
+/// `old_values` PK positions.
+///
+/// The original synthesized input no longer decodes cleanly after the
+/// patchset UPDATE wire layout was tightened to match SQLite (PK-only old
+/// side, non-PK-only new side). The bytes below are the real
+/// `Session::patchset_strm` output for
+/// `UPDATE orders SET status = 'shipped' WHERE id = 5` against a
+/// pre-existing row on
+/// `CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER, status TEXT)`.
+/// If the PK value (`INTEGER 5`) is lost anywhere along parse → serialize,
+/// the roundtrip mismatches on byte 14 (the type tag of the old-side PK
+/// slot). See `tests/session_output_parser_roundtrip.rs` for the full
+/// coverage matrix.
+#[test]
+fn fuzz_regression_crash_5() {
+    let input: [u8; 33] = [
+        0x50, 0x03, 0x01, 0x00, 0x00, b'o', b'r', b'd', b'e', b'r', b's', 0x00, 0x17, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x03, 0x07, b's', b'h', b'i', b'p',
+        b'p', b'e', b'd',
+    ];
+    test_roundtrip(&input);
+}
+
+/// Crash 6: `ChangeDelete` + Insert with Undefined values.
+///
+/// Bug: `ChangeDelete` + Insert calls update.set(old, new) with Undefined values.
+/// Fix: Skip columns where either old or new is Undefined.
+#[test]
+fn fuzz_regression_crash_6() {
+    let input = [
+        0x54, 0x05, 0x48, 0x00, 0x00, 0xf5, 0x00, 0x00, 0x09, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x12, 0xf8, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+    test_roundtrip(&input);
+}
+
+/// Crash 7: numbers written into a TEXT column, from the `differential` target.
+///
+/// SQLite stores the text of each number, which `digest_sql` must record too.
+#[test]
+fn fuzz_regression_crash_7() {
+    let t0 = TypedSimpleTable::new(
+        "t0",
+        &[("c0", SqlType::Integer), ("c1", SqlType::Text)],
+        &[0],
+    );
+    test_differential(
+        &[t0],
+        "INSERT INTO t0 VALUES(5555555555555550000,000000896943928585055)",
+    );
+}
+
+/// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.
+///
+/// This test also copies any new crash files from the fuzz artifacts.
+///
+/// Each input is timed against [`PER_INPUT_TIME_LIMIT`] to catch timeout-class
+/// bugs that a fuzzer timeout would kill but `cargo test` would silently pass.
+#[test]
+fn fuzz_regression_roundtrip_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/crash_inputs/roundtrip"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/roundtrip"),
+        PER_INPUT_TIME_LIMIT,
+        test_roundtrip,
+    );
+}
+
+/// Automatically test all `reverse_idempotent` crash files.
+///
+/// Raw `&[u8]` input, same simple pattern as the roundtrip test.
+#[test]
+fn fuzz_regression_reverse_idempotent_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/reverse_idempotent"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/artifacts/reverse_idempotent"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        test_reverse_idempotent,
+    );
+}
+
+/// Automatically test all `apply_roundtrip` crash files.
+///
+/// Since these crash files are raw bytes (not structured `(FuzzSchemas, Vec<u8>)`
+/// tuples), we parse the changeset first to extract table schemas via
+/// [`TypedSimpleTable::from_table_schema`], then apply against all tables at once.
+#[test]
+fn fuzz_regression_apply_roundtrip_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/apply_roundtrip"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fuzz/artifacts/apply_roundtrip"
+        ),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            // Always do a roundtrip check
+            test_roundtrip(data);
+
+            // If it parses, try to apply against synthesized schemas
+            let Ok(parsed) = sqlite_diff_rs::ParsedDiffSet::try_from(data) else {
+                return;
+            };
+
+            let schemas: Vec<TypedSimpleTable> = parsed
+                .table_schemas()
+                .into_iter()
+                .map(TypedSimpleTable::from_table_schema)
+                .collect();
+
+            let serialized: Vec<u8> = parsed.into();
+            test_apply_roundtrip(&schemas, &serialized);
+        },
+    );
+}
+
+/// Automatically test all `sql_roundtrip` crash files.
+///
+/// Crash files contain `arbitrary`-encoded `(FuzzSchemas, String)` tuples.
+/// Files that fail to deserialize are skipped (legacy or corrupt inputs).
+#[test]
+fn fuzz_regression_sql_roundtrip_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/sql_roundtrip"
+        ),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/sql_roundtrip"),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            let Ok((schemas, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(FuzzSchemas, String)>()
+            else {
+                return;
+            };
+            test_sql_roundtrip(&schemas, &sql);
+        },
+    );
+}
+
+/// Automatically test all differential crash files.
+///
+/// Crash files contain `arbitrary`-encoded `(FuzzSchemas, String)` tuples.
+/// Files that fail to deserialize are skipped (legacy or corrupt inputs).
+#[test]
+fn fuzz_regression_differential_crash_inputs_dir() {
+    run_crash_dir_regression(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/crash_inputs/differential"
+        ),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/artifacts/differential"),
+        PER_INPUT_TIME_LIMIT,
+        |data| {
+            let Ok((schemas, sql)) =
+                arbitrary::Unstructured::new(data).arbitrary::<(FuzzSchemas, String)>()
+            else {
+                return;
+            };
+            test_differential(&schemas, &sql);
+        },
+    );
+}
