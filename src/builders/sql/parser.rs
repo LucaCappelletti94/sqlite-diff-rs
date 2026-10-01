@@ -870,6 +870,46 @@ mod tests {
         assert!(matches!(err, ParseError::UnexpectedToken { .. }), "{err:?}");
         assert!(builder.is_empty());
     }
+    #[test]
+    fn test_digest_update_and_delete_reject_bare_trailing_block_comment() {
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
+        for sql in [
+            "UPDATE t SET v = 3 WHERE id = 1 /*",
+            "DELETE FROM t WHERE id = 1 /*",
+        ] {
+            let mut builder = make_builder(core::slice::from_ref(&t));
+            builder.digest_sql("INSERT INTO t VALUES (5, 6)").unwrap();
+            let before = builder.build();
+            let err = builder.digest_sql(sql).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ParseError::Lexer(super::super::lexer::LexerError::UnexpectedChar {
+                        char: '/',
+                        pos
+                    }) if pos == sql.len() - 2
+                ),
+                "{sql}: {err:?}"
+            );
+            assert_eq!(builder.build(), before, "{sql}");
+        }
+    }
+
+    #[test]
+    fn test_digest_bare_trailing_block_comment_rolls_back_batch() {
+        let t = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
+        let mut builder = make_builder(&[t]);
+        builder.digest_sql("INSERT INTO t VALUES (5, 6)").unwrap();
+        let before = builder.build();
+        let sql = "INSERT INTO t VALUES (1, 2); INSERT INTO t VALUES (3, 4)/*";
+        assert!(matches!(
+            builder.digest_sql(sql),
+            Err(ParseError::Lexer(
+                super::super::lexer::LexerError::UnexpectedChar { char: '/', .. }
+            ))
+        ));
+        assert_eq!(builder.build(), before);
+    }
 
     #[test]
     fn test_digest_statements_need_a_separator() {

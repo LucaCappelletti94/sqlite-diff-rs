@@ -217,8 +217,8 @@ impl<'input> Lexer<'input> {
                 while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
                     self.pos += 1;
                 }
-            } else if b == b'/' && self.pos + 1 < bytes.len() && bytes[self.pos + 1] == b'*' {
-                // Block comment, which like SQLite's runs to the end of input when unterminated
+            } else if b == b'/' && self.pos + 2 < bytes.len() && bytes[self.pos + 1] == b'*' {
+                // SQLite rejects a bare `/*` at the end of input.
                 self.pos += 2;
                 while self.pos + 1 < bytes.len()
                     && !(bytes[self.pos] == b'*' && bytes[self.pos + 1] == b'/')

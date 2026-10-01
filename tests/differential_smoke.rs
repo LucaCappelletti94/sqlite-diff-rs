@@ -53,6 +53,22 @@ fn differential_runs_every_statement_of_a_multi_statement_string() {
 }
 
 #[test]
+fn differential_accepts_complete_statement_with_valid_eof_comments() {
+    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
+    let create = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
+    for sql in [
+        "INSERT INTO users VALUES (1, 'a') /* text",
+        "INSERT INTO users VALUES (1, 'a') /**/",
+        "INSERT INTO users VALUES (1, 'a') --",
+    ] {
+        assert!(
+            run_differential_test(std::slice::from_ref(&users), &[create], &[sql]),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn differential_skips_statements_without_a_counterpart_row() {
     let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
     let create = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
