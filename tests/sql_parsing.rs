@@ -108,6 +108,24 @@ fn test_invalid_sql_error() {
     let result = ps.digest_sql("THIS IS NOT VALID SQL");
     assert!(result.is_err());
 }
+#[test]
+fn test_bare_trailing_block_comment_is_rejected_by_sqlite_and_digest_sql() {
+    let table = SimpleTable::with_rowid_alias("t", &[("id", "INTEGER"), ("v", "INTEGER")], 0);
+    let mut ps = patchset_with(&[table]);
+    ps.digest_sql("INSERT INTO t VALUES (10, 20)").unwrap();
+    let before = ps.build();
+    let sql = "INSERT\r\r\r\r\r\r\rINTO\tt\r\x0c\x0cVALUES(1, 2)               \x0c/*";
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    assert!(conn.execute_batch(sql).is_err());
+    assert!(matches!(
+        ps.digest_sql(sql),
+        Err(sqlite_diff_rs::builders::sql::ParseError::Lexer(_))
+    ));
+    assert_eq!(ps.build(), before);
+}
 
 #[test]
 fn test_create_table_rejected() {
