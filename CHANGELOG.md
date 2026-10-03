@@ -30,6 +30,8 @@ An unterminated block comment with text after `/*` in `digest_sql` input runs to
 
 `digest_sql` rejects a bare `/*` at the end of input because SQLite rejects that syntax.
 
+`digest_sql` input ends at its first NUL byte, as SQLite's does. A comment, string, quoted identifier or blob that a NUL cuts short is read the way SQLite reads it, and text after the NUL is ignored.
+
 `digest_sql` converts every literal by its column's affinity before recording it, as SQLite does, so an integer written into a `TEXT` column is recorded as text and numeric text written into an `INTEGER` column as an integer. `WHERE` literals are converted the same way, and a `WHERE` no row can satisfy records nothing. Real literals are read with SQLite's own decimal rounding.
 
 ## 0.15.0

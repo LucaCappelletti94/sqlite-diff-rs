@@ -178,11 +178,12 @@ pub struct Lexer<'input> {
 }
 
 impl<'input> Lexer<'input> {
-    /// Create a new lexer for the given input.
+    /// Create a new lexer for the given input, which ends at its first NUL
+    /// byte as SQLite's does.
     #[must_use]
     pub(super) fn new(input: &'input str) -> Self {
         Self {
-            input,
+            input: input.split_once('\0').map_or(input, |(head, _)| head),
             pos: 0,
             peeked: None,
         }
