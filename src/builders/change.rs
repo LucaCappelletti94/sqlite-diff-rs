@@ -385,6 +385,16 @@ pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
     pub(crate) tables: TableMap<F, T, S, B>,
 }
 
+/// Compare nonempty tables in order using each row container's equality.
+fn nonempty_tables_equal<'a, T: PartialEq + 'a, R: PartialEq + 'a>(
+    left: impl Iterator<Item = (&'a T, &'a R)>,
+    right: impl Iterator<Item = (&'a T, &'a R)>,
+    is_empty: impl Fn(&R) -> bool + Copy,
+) -> bool {
+    left.filter(|(_, rows)| !is_empty(rows))
+        .eq(right.filter(|(_, rows)| !is_empty(rows)))
+}
+
 /// Custom `PartialEq` that ignores tables with empty operations.
 ///
 /// Tables with no operations are not serialized (skipped in `build()`), so after
@@ -403,12 +413,7 @@ where
     F::DeleteData: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        // Filter out tables with empty operations, then compare element by element.
-        // IndexMap preserves insertion order, so this also checks table ordering.
-        self.tables
-            .iter()
-            .filter(|(_, ops)| !ops.is_empty())
-            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
+        nonempty_tables_equal(self.tables.iter(), other.tables.iter(), IndexMap::is_empty)
     }
 }
 
@@ -528,6 +533,26 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
         self.tables.values().map(IndexMap::len).sum()
     }
 
+    fn insert_operation(mut self, insert: Insert<T, S, B>) -> Self
+    where
+        S: Clone,
+        B: Clone,
+        Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
+    {
+        let pk = insert.extract_pk();
+        let table = insert.as_ref().clone();
+        let indirect = insert.indirect;
+        self.add_operation(
+            &table,
+            pk,
+            Operation::Insert {
+                values: insert.into_values(),
+                indirect,
+            },
+        );
+        self
+    }
+
     /// Add any operation, consolidating with existing operations on the same row.
     ///
     /// The table schema is passed separately, operations are schema-less.
@@ -645,19 +670,8 @@ impl<
     type Format = ChangesetFormat;
     type DeleteArg = ChangeDelete<T, S, B>;
 
-    fn insert(mut self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.extract_pk();
-        let table = insert.as_ref().clone();
-        let indirect = insert.indirect;
-        self.add_operation(
-            &table,
-            pk,
-            Operation::Insert {
-                values: insert.into_values(),
-                indirect,
-            },
-        );
-        self
+    fn insert(self, insert: Insert<T, S, B>) -> Self {
+        self.insert_operation(insert)
     }
 
     fn delete(mut self, delete: ChangeDelete<T, S, B>) -> Self {
@@ -698,19 +712,8 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     type Format = PatchsetFormat;
     type DeleteArg = PatchDelete<T, S, B>;
 
-    fn insert(mut self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.extract_pk();
-        let table = insert.as_ref().clone();
-        let indirect = insert.indirect;
-        self.add_operation(
-            &table,
-            pk,
-            Operation::Insert {
-                values: insert.into_values(),
-                indirect,
-            },
-        );
-        self
+    fn insert(self, insert: Insert<T, S, B>) -> Self {
+        self.insert_operation(insert)
     }
 
     /// Delete by primary key.
@@ -934,23 +937,8 @@ impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u
     /// time.
     pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(_pk, op)| match op {
-                Operation::Insert { values, indirect } => ChangesetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => ChangesetOp::Update {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { data, indirect } => ChangesetOp::Delete {
-                    table,
-                    old_values: data.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(_pk, op)| ChangesetOp::from_operation(table, op))
         })
     }
 }
@@ -967,24 +955,8 @@ impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
     /// via [`RunQueryDsl`](diesel::RunQueryDsl).
     pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(pk, op)| match op {
-                Operation::Insert { values, indirect } => PatchsetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => PatchsetOp::Update {
-                    table,
-                    pk: pk.as_slice(),
-                    entries: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
-                    table,
-                    pk: pk.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(pk, op)| PatchsetOp::from_operation(table, pk, op))
         })
     }
 }
@@ -1094,10 +1066,11 @@ where
     F::DeleteData: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.tables
-            .iter()
-            .filter(|(_, ops)| !ops.is_empty())
-            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
+        nonempty_tables_equal(
+            self.tables.iter().map(|(table, rows)| (table, rows)),
+            other.tables.iter().map(|(table, rows)| (table, rows)),
+            Vec::is_empty,
+        )
     }
 }
 
@@ -1161,23 +1134,8 @@ impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u
     /// iterator is invalidated when the `DiffSet` is dropped or mutated.
     pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(_pk, op)| match op {
-                Operation::Insert { values, indirect } => ChangesetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => ChangesetOp::Update {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { data, indirect } => ChangesetOp::Delete {
-                    table,
-                    old_values: data.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(_pk, op)| ChangesetOp::from_operation(table, op))
         })
     }
 }
@@ -1193,24 +1151,8 @@ impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
     /// does not carry full old-row values).
     pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(pk, op)| match op {
-                Operation::Insert { values, indirect } => PatchsetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => PatchsetOp::Update {
-                    table,
-                    pk: pk.as_slice(),
-                    entries: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
-                    table,
-                    pk: pk.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(pk, op)| PatchsetOp::from_operation(table, pk, op))
         })
     }
 }
@@ -2810,5 +2752,23 @@ mod tests {
 
         let names: Vec<&str> = frozen.tables().map(crate::DynTable::name).collect();
         assert_eq!(names, ["t1"]);
+    }
+
+    #[test]
+    fn row_order_affects_frozen_equality_only() {
+        let table = TestTable::new("t", 1, 0);
+        let build = |ids: [i64; 2]| {
+            ids.into_iter()
+                .fold(ChangesetBuilder::new(), |builder, id| {
+                    builder.insert(Insert::from(table.clone()).set(0, id).unwrap())
+                })
+        };
+        let first = build([1, 2]);
+        let second = build([2, 1]);
+        assert_eq!(first, second);
+
+        let first: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = first.into();
+        let second: DiffSet<ChangesetFormat, TestTable, String, Vec<u8>> = second.into();
+        assert_ne!(first, second);
     }
 }

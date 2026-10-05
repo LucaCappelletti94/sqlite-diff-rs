@@ -16,6 +16,7 @@
 
 use alloc::vec::Vec;
 
+use super::{ChangesetFormat, Operation, PatchsetFormat};
 use crate::encoding::Value;
 use crate::schema::SchemaWithPK;
 
@@ -94,6 +95,34 @@ pub enum ChangesetOp<'a, T, S, B> {
 }
 
 impl<'a, T, S, B> ChangesetOp<'a, T, S, B> {
+    /// Borrow a changeset operation without copying row data.
+    pub(super) fn from_operation(
+        table: &'a T,
+        operation: &'a Operation<ChangesetFormat, S, B>,
+    ) -> Self
+    where
+        S: Clone + core::fmt::Debug + AsRef<str>,
+        B: Clone + core::fmt::Debug + AsRef<[u8]>,
+    {
+        match operation {
+            Operation::Insert { values, indirect } => Self::Insert {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Update { values, indirect } => Self::Update {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Delete { data, indirect } => Self::Delete {
+                table,
+                old_values: data.as_slice(),
+                indirect: *indirect,
+            },
+        }
+    }
+
     /// Returns the schema of the table this operation applies to.
     #[must_use]
     pub fn table(&self) -> &'a T {
@@ -199,6 +228,32 @@ pub enum PatchsetOp<'a, T, S, B> {
 }
 
 impl<'a, T, S, B> PatchsetOp<'a, T, S, B> {
+    /// Borrow a patchset operation and its stored primary key.
+    pub(super) fn from_operation(
+        table: &'a T,
+        pk: &'a [Value<S, B>],
+        operation: &'a Operation<PatchsetFormat, S, B>,
+    ) -> Self {
+        match operation {
+            Operation::Insert { values, indirect } => Self::Insert {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Update { values, indirect } => Self::Update {
+                table,
+                pk,
+                entries: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Delete { indirect, .. } => Self::Delete {
+                table,
+                pk,
+                indirect: *indirect,
+            },
+        }
+    }
+
     /// Returns the schema of the table this operation applies to.
     #[must_use]
     pub fn table(&self) -> &'a T {
