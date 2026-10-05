@@ -1,0 +1,45 @@
+name: Dejadoc
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Dejadoc ${{ matrix.cwd }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write # Post duplicate findings as pull request reviews.
+    strategy:
+      fail-fast: false
+      matrix:
+        cwd:
+          - .
+          - fuzz
+          - integration-tests/diesel-e2e
+          - integration-tests/schema-aware-roundtrip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Select Rust stable
+        run: rustup default stable
+
+      - name: Scan for duplicates
+        uses: LucaCappelletti94/cargo-dejadoc@5825404aa68b6ff7dc1a745ca79343fcdf47221d # v1.7.0
+        with:
+          cwd: ${{ matrix.cwd }}
+          pr-number: ${{ github.event.pull_request.number }}
+          functions: true
+          all-targets: true
+          dry-run: ${{ github.event_name == 'workflow_dispatch' }}
