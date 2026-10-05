@@ -16,8 +16,8 @@ use sqlite_diff_rs::testing::{
     session_changeset_and_patchset, session_changeset_and_patchset_with_setup,
 };
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, PatchDelete, PatchSet,
-    PatchsetFormat, SimpleTable, Update, Value,
+    ChangeDelete, ChangeSet, ChangesetFormat, DiffOps, Insert, ParsedDiffSet, PatchDelete,
+    PatchSet, PatchsetFormat, SimpleTable, Update, Value,
 };
 
 // =============================================================================
@@ -279,6 +279,330 @@ fn bit_parity_composite_pk() {
             "INSERT INTO order_items (order_id, item_id, quantity) VALUES (1, 100, 5)",
             "INSERT INTO order_items (order_id, item_id, quantity) VALUES (1, 101, 3)",
         ],
+    );
+}
+
+fn assert_hash_order_rebuild_parity(bytes: &[u8]) {
+    let rebuilt = match ParsedDiffSet::try_from(bytes).unwrap() {
+        ParsedDiffSet::Changeset(set) => ChangeSet::from(set).build(),
+        ParsedDiffSet::Patchset(set) => PatchSet::from(set).build(),
+    };
+    assert_eq!(
+        bytes,
+        rebuilt,
+        "{}",
+        byte_diff_report("rebuilt", bytes, &rebuilt)
+    );
+}
+
+fn assert_hash_order_insert_parity(
+    schema: &SimpleTable,
+    ddl: &str,
+    rows: &[Vec<Value<String, Vec<u8>>>],
+) {
+    let mut changeset = ChangeSet::<_, String, Vec<u8>>::new();
+    let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    let mut statements = vec![ddl.to_owned()];
+    for row in rows {
+        let mut insert = Insert::from(schema.clone());
+        for (column, value) in row.iter().enumerate() {
+            insert = insert.set(column, value.clone()).unwrap();
+        }
+        changeset = changeset.insert(insert.clone());
+        patchset = patchset.insert(insert);
+        let literals = row.iter().map(ToString::to_string).collect::<Vec<_>>();
+        statements.push(format!("INSERT INTO t VALUES ({})", literals.join(", ")));
+    }
+    let sql = statements.iter().map(String::as_str).collect::<Vec<_>>();
+    assert_bit_parity(&sql, &changeset.build(), &patchset.build());
+    assert_patchset_sql_parity(core::slice::from_ref(schema), &sql);
+}
+
+#[test]
+fn bit_parity_hash_order_reversed_integer_key() {
+    let schema = SimpleTable::new("t", &[("a", "INTEGER"), ("b", "INTEGER")], &[1, 0]);
+    assert_hash_order_insert_parity(
+        &schema,
+        "CREATE TABLE t(a INTEGER, b INTEGER, PRIMARY KEY(b, a))",
+        &[
+            vec![Value::Integer(0), Value::Integer(0)],
+            vec![Value::Integer(1), Value::Integer(0)],
+        ],
+    );
+}
+
+#[test]
+fn bit_parity_hash_order_mixed_key_permutations() {
+    let columns = [
+        ("prefix", "TEXT"),
+        ("a", "INTEGER"),
+        ("payload", "TEXT"),
+        ("b", "TEXT"),
+        ("c", "REAL"),
+        ("d", "BLOB"),
+    ];
+    let rows = (0_u8..16)
+        .map(|i| {
+            vec![
+                Value::Text("prefix".to_owned()),
+                Value::Integer(i64::from(i)),
+                Value::Text("payload".to_owned()),
+                Value::Text(format!("k{}", i % 3)),
+                Value::Real(f64::from(i) + 0.5),
+                Value::Blob(vec![i, 0xff]),
+            ]
+        })
+        .collect::<Vec<_>>();
+    for a in [1, 3, 4, 5] {
+        for b in [1, 3, 4, 5].into_iter().filter(|&b| b != a) {
+            for c in [1, 3, 4, 5].into_iter().filter(|&c| c != a && c != b) {
+                let d = [1, 3, 4, 5]
+                    .into_iter()
+                    .find(|&d| d != a && d != b && d != c)
+                    .unwrap();
+                let key = [a, b, c, d];
+                let schema = SimpleTable::new("t", &columns, &key);
+                let names = key.map(|column| columns[column].0).join(", ");
+                let ddl = format!(
+                    "CREATE TABLE t(prefix TEXT, a INTEGER, payload TEXT, b TEXT, c REAL, d BLOB, PRIMARY KEY({names}))"
+                );
+                assert_hash_order_insert_parity(&schema, &ddl, &rows);
+            }
+        }
+    }
+}
+
+fn hash_order_growth_parity(count: u16) {
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("payload", "TEXT")],
+        &[1, 0],
+    );
+    let rows = (0..count)
+        .map(|i| {
+            vec![
+                Value::Integer(i64::from(i) * 256),
+                Value::Integer(i64::from(i % 7)),
+                Value::Text(format!("row{i}")),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_hash_order_insert_parity(
+        &schema,
+        "CREATE TABLE t(a INTEGER, b INTEGER, payload TEXT, PRIMARY KEY(b, a))",
+        &rows,
+    );
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_before_first_growth() {
+    hash_order_growth_parity(127);
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_at_first_growth() {
+    hash_order_growth_parity(128);
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_after_first_growth() {
+    hash_order_growth_parity(129);
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_before_second_growth() {
+    hash_order_growth_parity(255);
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_at_second_growth() {
+    hash_order_growth_parity(256);
+}
+
+#[test]
+fn bit_parity_hash_order_collisions_after_second_growth() {
+    hash_order_growth_parity(257);
+}
+
+#[test]
+fn bit_parity_hash_order_standalone_updates() {
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "INTEGER"), ("payload", "TEXT"), ("b", "INTEGER")],
+        &[2, 0],
+    );
+    let setup = [
+        "CREATE TABLE t(a INTEGER, payload TEXT, b INTEGER, PRIMARY KEY(b, a))",
+        "INSERT INTO t VALUES(0, 'before', 0), (1, 'before', 0)",
+    ];
+    let tracked = [
+        "UPDATE t SET payload = 'after' WHERE a = 0 AND b = 0",
+        "UPDATE t SET payload = 'after' WHERE a = 1 AND b = 0",
+    ];
+    let (expected_changeset, expected_patchset) =
+        session_changeset_and_patchset_with_setup(&setup, &tracked);
+    assert_hash_order_rebuild_parity(&expected_changeset);
+    assert_hash_order_rebuild_parity(&expected_patchset);
+    let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    patchset.add_table(&schema);
+    patchset.digest_sql(&tracked.join(";")).unwrap();
+    assert_eq!(expected_patchset, patchset.build());
+}
+
+#[test]
+fn bit_parity_hash_order_standalone_deletes() {
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "INTEGER"), ("payload", "TEXT"), ("b", "INTEGER")],
+        &[2, 0],
+    );
+    let mut changeset = ChangeSet::<_, String, Vec<u8>>::new();
+    let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    for a in [0_i64, 1] {
+        changeset = changeset.delete(
+            ChangeDelete::from(schema.clone())
+                .set(0, a)
+                .unwrap()
+                .set(1, "before")
+                .unwrap()
+                .set(2, 0_i64)
+                .unwrap(),
+        );
+        patchset = patchset.delete(PatchDelete::new(
+            schema.clone(),
+            vec![Value::Integer(0), Value::Integer(a)],
+        ));
+    }
+    let setup = [
+        "CREATE TABLE t(a INTEGER, payload TEXT, b INTEGER, PRIMARY KEY(b, a))",
+        "INSERT INTO t VALUES(0, 'before', 0), (1, 'before', 0)",
+    ];
+    let tracked = [
+        "DELETE FROM t WHERE a = 0 AND b = 0",
+        "DELETE FROM t WHERE a = 1 AND b = 0",
+    ];
+    let (expected_changeset, expected_patchset) =
+        session_changeset_and_patchset_with_setup(&setup, &tracked);
+    assert_eq!(expected_changeset, changeset.build());
+    assert_eq!(expected_patchset, patchset.build());
+    assert_hash_order_rebuild_parity(&expected_changeset);
+    assert_hash_order_rebuild_parity(&expected_patchset);
+    let mut digested = PatchSet::<_, String, Vec<u8>>::new();
+    digested.add_table(&schema);
+    digested.digest_sql(&tracked.join(";")).unwrap();
+    assert_eq!(expected_patchset, digested.build());
+}
+
+#[test]
+fn bit_parity_hash_order_consolidated_inserts() {
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "INTEGER"), ("b", "INTEGER"), ("payload", "TEXT")],
+        &[1, 0],
+    );
+    let mut changeset = ChangeSet::<_, String, Vec<u8>>::new();
+    let mut patchset = PatchSet::<_, String, Vec<u8>>::new();
+    for a in [0_i64, 1] {
+        let insert = Insert::from(schema.clone())
+            .set(0, a)
+            .unwrap()
+            .set(1, 0_i64)
+            .unwrap()
+            .set(2, "before")
+            .unwrap();
+        changeset = changeset.insert(insert.clone());
+        patchset = patchset.insert(insert);
+        for (old, new) in [("before", "middle"), ("middle", "after")] {
+            changeset = changeset.update(
+                Update::<_, ChangesetFormat, String, Vec<u8>>::from(schema.clone())
+                    .set(0, a, a)
+                    .unwrap()
+                    .set(1, 0_i64, 0_i64)
+                    .unwrap()
+                    .set(2, old, new)
+                    .unwrap(),
+            );
+            patchset = patchset.update(
+                Update::<_, PatchsetFormat, String, Vec<u8>>::from(schema.clone())
+                    .set(0, a)
+                    .unwrap()
+                    .set(1, 0_i64)
+                    .unwrap()
+                    .set(2, new)
+                    .unwrap(),
+            );
+        }
+    }
+    changeset = changeset.delete(
+        ChangeDelete::from(schema.clone())
+            .set(0, 1_i64)
+            .unwrap()
+            .set(1, 0_i64)
+            .unwrap()
+            .set(2, "after")
+            .unwrap(),
+    );
+    patchset = patchset.delete(PatchDelete::new(
+        schema.clone(),
+        vec![Value::Integer(0), Value::Integer(1)],
+    ));
+    let insert = Insert::from(schema.clone())
+        .set(0, 1_i64)
+        .unwrap()
+        .set(1, 0_i64)
+        .unwrap()
+        .set(2, "reinserted")
+        .unwrap();
+    changeset = changeset.insert(insert.clone());
+    patchset = patchset.insert(insert);
+    let sql = [
+        "CREATE TABLE t(a INTEGER, b INTEGER, payload TEXT, PRIMARY KEY(b, a))",
+        "INSERT INTO t VALUES(0, 0, 'before')",
+        "UPDATE t SET payload = 'middle' WHERE a = 0 AND b = 0",
+        "UPDATE t SET payload = 'after' WHERE a = 0 AND b = 0",
+        "INSERT INTO t VALUES(1, 0, 'before')",
+        "UPDATE t SET payload = 'middle' WHERE a = 1 AND b = 0",
+        "UPDATE t SET payload = 'after' WHERE a = 1 AND b = 0",
+        "DELETE FROM t WHERE a = 1 AND b = 0",
+        "INSERT INTO t VALUES(1, 0, 'reinserted')",
+    ];
+    assert_bit_parity(&sql, &changeset.build(), &patchset.build());
+    assert_patchset_sql_parity(&[schema], &sql);
+}
+
+#[test]
+fn bit_parity_hash_order_borrowed_text_and_blob_keys() {
+    let schema = SimpleTable::new(
+        "t",
+        &[("a", "TEXT"), ("payload", "TEXT"), ("b", "BLOB")],
+        &[2, 0],
+    );
+    let mut changeset = ChangeSet::<_, &str, &[u8]>::new();
+    let mut patchset = PatchSet::<_, &str, &[u8]>::new();
+    for (text, blob) in [
+        ("a", b"\x00".as_slice()),
+        ("b", b"\x01".as_slice()),
+        ("c", b"\x02".as_slice()),
+    ] {
+        let insert = Insert::<_, &str, &[u8]>::from(schema.clone())
+            .set(0, Value::Text(text))
+            .unwrap()
+            .set(1, Value::Text("payload"))
+            .unwrap()
+            .set(2, Value::Blob(blob))
+            .unwrap();
+        changeset = changeset.insert(insert.clone());
+        patchset = patchset.insert(insert);
+    }
+    assert_bit_parity(
+        &[
+            "CREATE TABLE t(a TEXT, payload TEXT, b BLOB, PRIMARY KEY(b, a))",
+            "INSERT INTO t VALUES('a', 'payload', X'00')",
+            "INSERT INTO t VALUES('b', 'payload', X'01')",
+            "INSERT INTO t VALUES('c', 'payload', X'02')",
+        ],
+        &changeset.build(),
+        &patchset.build(),
     );
 }
 

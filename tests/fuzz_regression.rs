@@ -148,6 +148,26 @@ fn fuzz_regression_crash_7() {
     );
 }
 
+#[test]
+fn fuzz_regression_composite_key_hash_order() {
+    let input =
+        include_bytes!("crash_inputs/differential/crash-bf90f90c92587a128a71a878619a1f18b03d5aff");
+    let (schemas, sql) = arbitrary::Unstructured::new(input)
+        .arbitrary::<(FuzzSchemas, String)>()
+        .unwrap();
+    let ddl = schemas.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let ddl_refs = ddl.iter().map(String::as_str).collect::<Vec<_>>();
+    let tables = schemas
+        .iter()
+        .map(|table| (**table).clone())
+        .collect::<Vec<_>>();
+    assert!(sqlite_diff_rs::differential_testing::run_differential_test(
+        &tables,
+        &ddl_refs,
+        &[&sql],
+    ));
+}
+
 /// Automatically test all roundtrip crash files in the `crash_inputs/roundtrip` directory.
 ///
 /// This test also copies any new crash files from the fuzz artifacts.

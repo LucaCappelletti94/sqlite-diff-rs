@@ -20,6 +20,8 @@ A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and
 
 ### Fixed
 
+Changeset and patchset row ordering hashes composite primary keys in table-column order while key accessors retain primary-key ordinal order.
+
 A table header whose varint column count lies near `usize::MAX` returns `ParseError::UnexpectedEof` instead of panicking, which it did on the overflowing bounds check in debug builds and on the wrapped slice range in release builds.
 
 `digest_sql` records a negated real literal such as `-5.0` or `-0.0` as a real, and a negated integer literal past `i64::MIN` such as `-9223372036854775809` as a real, as SQLite does. Only `-9223372036854775808` becomes the integer `i64::MIN`.

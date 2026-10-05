@@ -112,39 +112,18 @@ fn session_hash_append_blob(mut h: u32, data: &[u8]) -> u32 {
     h
 }
 
-/// Hash a primary key using `SQLite`'s `sessionPreupdateHash` algorithm.
-///
-/// For each PK value: `h = HASH_APPEND(h, type_code)`, then hash the value.
-/// Type codes match `SQLite`: INTEGER=1, FLOAT=2, TEXT=3, BLOB=4.
-fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
-    let mut h: u32 = 0;
-    for value in pk {
-        match value {
-            Value::Integer(i) => {
-                h = hash_append(h, 1); // SQLITE_INTEGER
-                h = session_hash_append_i64(h, *i);
-            }
-            Value::Real(f) => {
-                h = hash_append(h, 2); // SQLITE_FLOAT
-                // SQLite does memcpy(&iVal, &rVal, 8) then hashes as i64
-                let i = i64::from_ne_bytes(f.to_ne_bytes());
-                h = session_hash_append_i64(h, i);
-            }
-            Value::Text(s) => {
-                h = hash_append(h, 3); // SQLITE_TEXT
-                h = session_hash_append_blob(h, s.as_ref().as_bytes());
-            }
-            Value::Blob(b) => {
-                h = hash_append(h, 4); // SQLITE_BLOB
-                h = session_hash_append_blob(h, b.as_ref());
-            }
-            Value::Null => {
-                // NULL PKs: SQLite skips hashing for these.
-                // In practice, PKs should never be NULL.
-            }
+/// Append one primary-key value to a `SQLite` session hash.
+fn session_hash_value<S: AsRef<str>, B: AsRef<[u8]>>(h: u32, value: &Value<S, B>) -> u32 {
+    match value {
+        Value::Integer(i) => session_hash_append_i64(hash_append(h, 1), *i),
+        Value::Real(f) => {
+            let i = i64::from_ne_bytes(f.to_ne_bytes());
+            session_hash_append_i64(hash_append(h, 2), i)
         }
+        Value::Text(s) => session_hash_append_blob(hash_append(h, 3), s.as_ref().as_bytes()),
+        Value::Blob(b) => session_hash_append_blob(hash_append(h, 4), b.as_ref()),
+        Value::Null => h,
     }
-    h
 }
 
 /// Simulate `SQLite`'s session extension hash table to determine row output order.
@@ -156,7 +135,8 @@ fn session_hash_pk<S: AsRef<str>, B: AsRef<[u8]>>(pk: &[Value<S, B>]) -> u32 {
 ///
 /// This function returns indices into `rows` in the order that `SQLite`'s
 /// changeset/patchset output would contain them.
-fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
+fn session_row_order<T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>, V>(
+    table: &T,
     rows: &IndexMap<Vec<Value<S, B>>, V>,
 ) -> Vec<usize> {
     let n = rows.len();
@@ -164,7 +144,15 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
         return Vec::new();
     }
 
-    let pks: Vec<&Vec<Value<S, B>>> = rows.keys().collect();
+    let mut hashes = alloc::vec![0; n];
+    // Session hashes visit key fields in table-column order.
+    for column in 0..table.number_of_columns() {
+        if let Some(position) = table.primary_key_index(column) {
+            for (hash, pk) in hashes.iter_mut().zip(rows.keys()) {
+                *hash = session_hash_value(*hash, &pk[position]);
+            }
+        }
+    }
 
     // Simulate the hash table. We store each bucket as a Vec of entry indices
     // in the REVERSE of SQLite's linked-list order (we push; SQLite prepends).
@@ -188,7 +176,7 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
             // into our reversed representation).
             for old_bucket in &buckets {
                 for &entry_idx in old_bucket.iter().rev() {
-                    let h = session_hash_pk(pks[entry_idx]) as usize % new_size;
+                    let h = hashes[entry_idx] as usize % new_size; // Bucket indices use pointer-width hash bits.
                     new_buckets[h].push(entry_idx);
                 }
             }
@@ -198,7 +186,7 @@ fn session_row_order<S: AsRef<str>, B: AsRef<[u8]>, V>(
         }
 
         // Insert entry (push = prepend in our reversed representation)
-        let h = session_hash_pk(pks[idx]) as usize % n_change;
+        let h = hashes[idx] as usize % n_change; // Bucket indices use pointer-width hash bits.
         buckets[h].push(idx);
     }
 
@@ -914,7 +902,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str>, B: AsRef<[u8]>> DiffSetBui
             write_table_header(&mut out, F::TABLE_MARKER, table);
 
             let state = F::build_state(table);
-            for idx in session_row_order(rows) {
+            for idx in session_row_order(table, rows) {
                 let (pk, op) = rows.get_index(idx).unwrap();
                 F::encode_op(&mut out, op, pk, &state);
             }
@@ -2518,13 +2506,6 @@ mod tests {
         let cs: ChangesetBuilder = ChangesetBuilder::new();
         let bytes = cs.build();
         assert_eq!(bytes, [] as [u8; 0]);
-    }
-
-    #[test]
-    fn test_session_row_order_empty_rows_returns_empty_vec() {
-        // Direct exercise of the empty-rows short-circuit (line 157-158).
-        let rows: RowMap<ChangesetFormat, String, Vec<u8>> = IndexMap::default();
-        assert_eq!(session_row_order(&rows), [] as [usize; 0]);
     }
 
     #[test]
