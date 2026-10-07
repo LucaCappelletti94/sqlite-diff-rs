@@ -20,12 +20,19 @@ pub const POSTGRES_PORT: u16 = 5432;
 
 /// Boot a Postgres container preloaded with the `wal2json` output
 /// plugin. Uses `bfontaine/postgres-wal2json` (PG 15).
+///
+/// The image's temporary bootstrap server logs its own
+/// `database system is ready to accept connections` line to stdout,
+/// so `message_on_stderr` already picks out only the real server's
+/// matching line by stream, unlike `start_mysql` where both land on
+/// the same stream. `wait_for_postgres_connection` below still
+/// verifies a real handshake, since the log line can precede the
+/// listener accepting real traffic.
 pub async fn start_postgres() -> (ContainerAsync<GenericImage>, u16) {
     let image = GenericImage::new("bfontaine/postgres-wal2json", "15-bookworm")
         .with_wait_for(WaitFor::message_on_stderr(
             "database system is ready to accept connections",
         ))
-        .with_wait_for(WaitFor::seconds(2))
         .with_env_var("POSTGRES_USER", "test")
         .with_env_var("POSTGRES_PASSWORD", "test")
         .with_env_var("POSTGRES_DB", "testdb")
@@ -48,9 +55,34 @@ pub async fn start_postgres() -> (ContainerAsync<GenericImage>, u16) {
         .await
         .expect("Failed to get host port");
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    wait_for_postgres_connection(host_port).await;
 
     (container, host_port)
+}
+
+/// Poll until Postgres actually completes a client handshake, not just
+/// until its log line says so, for the same reason
+/// `wait_for_mysql_connection` does: the ready-for-connections log can
+/// precede the real server accepting real traffic.
+async fn wait_for_postgres_connection(host_port: u16) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let conn_str = format!("host=127.0.0.1 port={host_port} user=test password=test dbname=testdb");
+    loop {
+        if let Ok(Ok((_client, connection))) = tokio::time::timeout(
+            Duration::from_secs(1),
+            tokio_postgres::connect(&conn_str, NoTls),
+        )
+        .await
+        {
+            drop(connection);
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "PostgreSQL never completed a client handshake within 30s"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 /// Connect a `tokio_postgres` client to a running container.
