@@ -9,9 +9,10 @@
 use std::time::Duration;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
+    core::{IntoContainerPort, WaitFor, wait::LogWaitStrategy},
     runners::AsyncRunner,
 };
+use tokio::io::AsyncReadExt;
 use tokio_postgres::{Client, NoTls};
 
 /// PostgreSQL port inside the container.
@@ -246,12 +247,15 @@ pub const MYSQL_PORT: u16 = 3306;
 
 /// Boot a MySQL 8.0 container with row-based binlog enabled.
 ///
-/// Returns the container and the host-mapped port for the MySQL service.
-/// Binlog settings required by Maxwell are passed as command arguments.
+/// Waits for the second `ready for connections` message: MySQL's
+/// entrypoint logs it once for a temporary bootstrap server (`port: 0`)
+/// and once for the real server, and waiting for the first races the
+/// real server's startup under load.
 pub async fn start_mysql() -> (ContainerAsync<GenericImage>, u16) {
     let image = GenericImage::new("mysql", "8.0")
-        .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
-        .with_wait_for(WaitFor::seconds(2))
+        .with_wait_for(WaitFor::log(
+            LogWaitStrategy::stderr("ready for connections").with_times(2),
+        ))
         .with_env_var("MYSQL_ROOT_PASSWORD", "test")
         .with_env_var("MYSQL_DATABASE", "testdb")
         .with_cmd(vec![
@@ -271,9 +275,33 @@ pub async fn start_mysql() -> (ContainerAsync<GenericImage>, u16) {
         .await
         .expect("Failed to get MySQL host port");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_mysql_connection(host_port).await;
 
     (container, host_port)
+}
+
+/// Poll until MySQL actually serves a client, not just until its log line
+/// says so: the ready-for-connections log can precede the listener
+/// accepting real traffic by several seconds under load, where a
+/// connection is accepted and then closed with no handshake bytes sent.
+async fn wait_for_mysql_connection(host_port: u16) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(mut socket) = tokio::net::TcpStream::connect(("127.0.0.1", host_port)).await {
+            let mut buf = [0u8; 1];
+            if let Ok(Ok(n)) =
+                tokio::time::timeout(Duration::from_secs(1), socket.read(&mut buf)).await
+                && n > 0
+            {
+                return;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "MySQL never accepted a real connection within 30s"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 /// Boot a Maxwell container that connects to MySQL at the given host port.

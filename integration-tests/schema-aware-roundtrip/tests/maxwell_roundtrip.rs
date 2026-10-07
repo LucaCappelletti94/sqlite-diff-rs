@@ -122,10 +122,13 @@ async fn maxwell_insert_roundtrip_e2e() {
         let mut line = String::new();
         loop {
             line.clear();
-            stdout
+            let n = stdout
                 .read_line(&mut line)
                 .await
                 .expect("Failed to read from Maxwell stdout");
+            // EOF resolves immediately on every call without yielding Pending,
+            // which would spin this loop past the timeout below instead of hitting it.
+            assert_ne!(n, 0, "Maxwell container's stdout closed unexpectedly");
             let trimmed = line.trim();
             if trimmed.starts_with('{')
                 && trimmed.contains("\"type\":\"insert\"")
