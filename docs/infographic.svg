@@ -81,7 +81,7 @@
   <text x="450" y="32" text-anchor="middle" class="title">SQLite Changeset &amp; Patchset Format</text>
   <text x="450" y="52" text-anchor="middle" class="subtitle">Binary wire format for database change synchronization</text>
   <text x="450" y="72" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.8)">Format specification: SQLite 3.9.0 (October 2015)</text>
-  <text x="450" y="88" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.6)">sqlite-diff-rs: Pure Rust implementation (February 2026), github.com/LucaCappelletti94/sqlite-diff-rs</text>
+  <text x="450" y="88" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.6)">sqlite-diff-rs: Pure Rust implementation (February 2026), github.com/connetto-rs/sqlite-diff-rs</text>
 
   <!-- Overview Section -->
   <g transform="translate(32, 118)">
@@ -820,6 +820,6 @@
     <line x1="0" y1="0" x2="836" y2="0" stroke="#e2e8f0"/>
     <text x="0" y="18" class="tiny" fill="#94a3b8">sqlite-diff-rs</text>
     <text x="418" y="18" text-anchor="middle" class="tiny" fill="#94a3b8">Pure Rust implementation of SQLite changeset/patchset format</text>
-    <text x="836" y="18" text-anchor="end" class="tiny" fill="#64748b">github.com/LucaCappelletti94/sqlite-diff-rs</text>
+    <text x="836" y="18" text-anchor="end" class="tiny" fill="#64748b">github.com/connetto-rs/sqlite-diff-rs</text>
   </g>
 </svg>

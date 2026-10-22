@@ -2,10 +2,10 @@
 
 [![Crates.io](https://img.shields.io/crates/v/sqlite-diff-rs.svg)](https://crates.io/crates/sqlite-diff-rs)
 [![Documentation](https://docs.rs/sqlite-diff-rs/badge.svg)](https://docs.rs/sqlite-diff-rs)
-[![CI](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/ci.yml)
-[![AddressSanitizer](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/asan.yml/badge.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/actions/workflows/asan.yml)
-[![Codecov](https://codecov.io/gh/LucaCappelletti94/sqlite-diff-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/LucaCappelletti94/sqlite-diff-rs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE)
+[![CI](https://github.com/connetto-rs/sqlite-diff-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/connetto-rs/sqlite-diff-rs/actions/workflows/ci.yml)
+[![AddressSanitizer](https://github.com/connetto-rs/sqlite-diff-rs/actions/workflows/asan.yml/badge.svg)](https://github.com/connetto-rs/sqlite-diff-rs/actions/workflows/asan.yml)
+[![Codecov](https://codecov.io/gh/connetto-rs/sqlite-diff-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/connetto-rs/sqlite-diff-rs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/connetto-rs/sqlite-diff-rs/blob/main/LICENSE)
 
 A Rust library for building SQLite [changeset and patchset](https://www.sqlite.org/sessionintro.html) binary formats programmatically.
 
@@ -214,4 +214,4 @@ This crate is `no_std` compatible (requires `alloc`). It can be used in embedded
 
 ## License
 
-MIT License, see [LICENSE](https://github.com/LucaCappelletti94/sqlite-diff-rs/blob/main/LICENSE) for details.
+MIT License, see [LICENSE](https://github.com/connetto-rs/sqlite-diff-rs/blob/main/LICENSE) for details.

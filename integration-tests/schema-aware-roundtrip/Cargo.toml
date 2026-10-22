@@ -27,7 +27,7 @@ sqlite-diff-rs = { path = "../..", default-features = false, features = [
 	"maxwell",
 ] }
 diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite", "mysql"] }
-diesel-sqlite-session = { git = "https://github.com/LucaCappelletti94/diesel-sqlite-session" }
+diesel-sqlite-session = { git = "https://github.com/connetto-rs/diesel-sqlite-session" }
 testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"

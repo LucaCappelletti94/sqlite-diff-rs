@@ -111,7 +111,7 @@ format, enabling:
 
 **Crate name**: `sqlite-diff-rs` (on crates.io)
 **Edition**: 2024, **License**: MIT
-**Repository**: <https://github.com/LucaCappelletti94/sqlite-diff-rs>
+**Repository**: <https://github.com/connetto-rs/sqlite-diff-rs>
 
 ### Key Design Decisions
 

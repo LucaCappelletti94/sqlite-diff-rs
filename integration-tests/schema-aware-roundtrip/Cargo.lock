@@ -535,7 +535,7 @@ dependencies = [
 [[package]]
 name = "diesel-sqlite-session"
 version = "0.1.0"
-source = "git+https://github.com/LucaCappelletti94/diesel-sqlite-session#398c5e8399ca16e3a0c31fb3919907ece317e58b"
+source = "git+https://github.com/connetto-rs/diesel-sqlite-session#3a2e7f728e14339ee60dc4cca3e8edc741449feb"
 dependencies = [
  "diesel",
  "libsqlite3-sys",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "sqlite-diff-rs"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
