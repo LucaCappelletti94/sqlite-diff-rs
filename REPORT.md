@@ -12,7 +12,7 @@ The downsides are limited compressibility (the binary encoding leaves little red
 
 ## Binary Format Overview
 
-![Changeset vs Patchset binary wire format](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/docs/format_illustration.svg)
+![Changeset vs Patchset binary wire format](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/docs/format_illustration.svg)
 
 Both formats share the same container structure: one or more table sections, each with a header followed by change records.
 
@@ -42,7 +42,7 @@ Both formats share the same container structure: one or more table sections, eac
 
 Comparison of seven serialization formats for identical database operations on a realistic chat schema with UUID primary keys.
 
-![Payload Size vs Operation Count](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/ops_scaling.svg)
+![Payload Size vs Operation Count](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/ops_scaling.svg)
 
 ### Single Operations (bytes)
 
@@ -81,13 +81,13 @@ Protobuf wins on single operations because field numbers take 1 to 2 bytes inste
 
 ### Compression Behavior
 
-![Deflate compression](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/deflate.svg)
+![Deflate compression](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/deflate.svg)
 
-![LZ4 compression](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/lz4.svg)
+![LZ4 compression](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/lz4.svg)
 
-![Zstd compression](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/zstd.svg)
+![Zstd compression](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/zstd.svg)
 
-![Compressor comparison for patchset](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/compressor_comparison_patchset.svg)
+![Compressor comparison for patchset](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/payload-size-bench/plots/compressor_comparison_patchset.svg)
 
 The binary format's compact encoding leaves limited redundancy for compressors. Text-based formats compress more dramatically but still end up larger than uncompressed patchsets. For bandwidth-constrained scenarios, patchsets offer a good balance without compression overhead.
 
@@ -101,7 +101,7 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 #### Integer Primary Key
 
-![Method comparison int_pk](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/method_int_pk.svg)
+![Method comparison int_pk](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/method_int_pk.svg)
 
 | Method | Median | Speedup vs SQL |
 |--------|-------:|---------------:|
@@ -112,7 +112,7 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 #### UUID Primary Key
 
-![Method comparison uuid_pk](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/method_uuid_pk.svg)
+![Method comparison uuid_pk](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/method_uuid_pk.svg)
 
 | Method | Median | Speedup vs SQL |
 |--------|-------:|---------------:|
@@ -125,19 +125,19 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 #### Integer PK
 
-![Scaling int_pk empty](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_int_pk_empty.svg)
-![Scaling int_pk populated](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_int_pk_populated.svg)
+![Scaling int_pk empty](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_int_pk_empty.svg)
+![Scaling int_pk populated](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_int_pk_populated.svg)
 
 #### UUID PK
 
-![Scaling uuid_pk empty](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_uuid_pk_empty.svg)
-![Scaling uuid_pk populated](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_uuid_pk_populated.svg)
+![Scaling uuid_pk empty](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_uuid_pk_empty.svg)
+![Scaling uuid_pk populated](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/scaling_uuid_pk_populated.svg)
 
 ### Configuration Impact (indexes, triggers, foreign keys)
 
 #### Integer PK
 
-![Config variants int_pk](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/config_int_pk.svg)
+![Config variants int_pk](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/config_int_pk.svg)
 
 | Config | SQL overhead | Patchset overhead |
 |--------|-------------:|------------------:|
@@ -148,11 +148,11 @@ Benchmarks comparing four methods for applying changes to SQLite databases.
 
 #### UUID PK
 
-![Config variants uuid_pk](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/config_uuid_pk.svg)
+![Config variants uuid_pk](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/config_uuid_pk.svg)
 
 ### Primary Key Type Impact
 
-![PK comparison](https://raw.githubusercontent.com/LucaCappelletti94/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/pk_comparison.svg)
+![PK comparison](https://raw.githubusercontent.com/connetto-rs/sqlite-diff-rs/main/integration-tests/apply-bench-report/plots/pk_comparison.svg)
 
 | Method | int_pk | uuid_pk | Overhead |
 |--------|-------:|--------:|---------:|
