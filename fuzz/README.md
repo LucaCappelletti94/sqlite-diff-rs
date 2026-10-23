@@ -4,7 +4,7 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
 
 ## What is Fuzzing?
 
-[Fuzzing](https://rust-fuzz.github.io/book/) is an automated testing technique that feeds random, invalid, or unexpected inputs into your program to find bugs, crashes, or security vulnerabilities. We use [libFuzzer](https://llvm.org/docs/LibFuzzer.html) through [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), and [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs the same targets on every pull request and daily on `main`.
+[Fuzzing](https://rust-fuzz.github.io/book/) is an automated testing technique that feeds random, invalid, or unexpected inputs into your program to find bugs, crashes, or security vulnerabilities. We use [libFuzzer](https://llvm.org/docs/LibFuzzer.html) through [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), and [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs the same targets weekly on `main`.
 
 ## Getting Started
 
