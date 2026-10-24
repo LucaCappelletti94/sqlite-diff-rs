@@ -373,6 +373,16 @@ pub struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
     pub(crate) tables: TableMap<F, T, S, B>,
 }
 
+/// Whether two table sequences agree once tables without rows are skipped.
+fn same_nonempty_tables<'a, T: PartialEq + 'a, R: PartialEq + 'a>(
+    lhs: impl Iterator<Item = (&'a T, &'a R)>,
+    rhs: impl Iterator<Item = (&'a T, &'a R)>,
+    is_empty: impl Fn(&R) -> bool,
+) -> bool {
+    lhs.filter(|(_, rows)| !is_empty(rows))
+        .eq(rhs.filter(|(_, rows)| !is_empty(rows)))
+}
+
 /// Custom `PartialEq` that ignores tables with empty operations.
 ///
 /// Tables with no operations are not serialized (skipped in `build()`), so after
@@ -391,12 +401,12 @@ where
     F::DeleteData: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        // Filter out tables with empty operations, then compare element by element.
         // IndexMap preserves insertion order, so this also checks table ordering.
-        self.tables
-            .iter()
-            .filter(|(_, ops)| !ops.is_empty())
-            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
+        same_nonempty_tables(
+            self.tables.iter(),
+            other.tables.iter(),
+            RowMap::<F, S, B>::is_empty,
+        )
     }
 }
 
@@ -1054,10 +1064,11 @@ where
     F::DeleteData: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.tables
-            .iter()
-            .filter(|(_, ops)| !ops.is_empty())
-            .eq(other.tables.iter().filter(|(_, ops)| !ops.is_empty()))
+        same_nonempty_tables(
+            self.tables.iter().map(|(table, rows)| (table, rows)),
+            other.tables.iter().map(|(table, rows)| (table, rows)),
+            RowVec::<F, S, B>::is_empty,
+        )
     }
 }
 
