@@ -653,6 +653,7 @@ pub trait DiffOps<T: SchemaWithPK, S, B>: Sized {
 }
 
 /// The DELETE argument of a builder in format `F`.
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 pub(crate) type DeleteArg<F, T, S, B> = <DiffSetBuilder<F, T, S, B> as DiffOps<T, S, B>>::DeleteArg;
 
 // -- DiffOps for DiffSetBuilder<ChangesetFormat> ------------------------------
