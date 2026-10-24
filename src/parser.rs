@@ -216,10 +216,7 @@ impl<N: AsRef<str> + Clone + core::hash::Hash + Eq + core::fmt::Debug> SchemaWit
     }
 }
 
-/// A parsed changeset or patchset.
-///
-/// This represents a frozen (immutable) diffset produced by the binary parser.
-/// To modify it, convert it to a [`DiffSetBuilder`] using `Into::into`.
+/// A parsed changeset or patchset whose operations retain their stored order.
 #[derive(Debug, Clone, Eq)]
 pub enum ParsedDiffSet {
     /// A parsed changeset.
@@ -325,6 +322,14 @@ impl ParsedDiffSet {
                 .filter(|(_, ops)| !ops.is_empty())
                 .map(|(schema, _)| schema)
                 .collect(),
+        }
+    }
+
+    /// Stably reorder table sections by `key`, preserving each schema and its operations.
+    pub fn sort_tables_by_key<K: Ord>(&mut self, mut key: impl FnMut(&TableSchema<String>) -> K) {
+        match self {
+            ParsedDiffSet::Changeset(d) => d.tables.sort_by_key(|(schema, _)| key(schema)),
+            ParsedDiffSet::Patchset(d) => d.tables.sort_by_key(|(schema, _)| key(schema)),
         }
     }
 
