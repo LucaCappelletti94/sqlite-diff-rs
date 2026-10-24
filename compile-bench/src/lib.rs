@@ -357,6 +357,38 @@ pub mod builder_approach {
         builder
     }
 
+    /// Apply a batch of `(old_row, new_row)` updates against one table.
+    fn apply_changeset_updates(
+        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+        table: &Schema,
+        updates: &[(&[Val], &[Val])],
+    ) -> ChangeSet<Schema, String, Vec<u8>> {
+        for (old, new) in updates {
+            let mut update = ChangeUpdate::from(table.clone());
+            for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
+                update = update.set(i, o.clone(), n.clone()).unwrap();
+            }
+            builder = builder.update(update);
+        }
+        builder
+    }
+
+    /// Apply a batch of `(column, new_value)` updates against one table.
+    fn apply_patchset_updates(
+        mut builder: PatchSet<Schema, String, Vec<u8>>,
+        table: &Schema,
+        updates: &[&[(usize, Val)]],
+    ) -> PatchSet<Schema, String, Vec<u8>> {
+        for cols in updates {
+            let mut update = PatchUpdate::from(table.clone());
+            for (i, val) in *cols {
+                update = update.set(*i, val.clone()).unwrap();
+            }
+            builder = builder.update(update);
+        }
+        builder
+    }
+
     fn add_changeset_updates(
         mut builder: ChangeSet<Schema, String, Vec<u8>>,
         users: &Schema,
@@ -404,13 +436,7 @@ pub mod builder_approach {
                 ],
             ),
         ];
-        for (old, new) in user_updates {
-            let mut update = ChangeUpdate::from(users.clone());
-            for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-                update = update.set(i, o.clone(), n.clone()).unwrap();
-            }
-            builder = builder.update(update);
-        }
+        builder = apply_changeset_updates(builder, users, user_updates);
 
         let post_updates: &[(&[Val], &[Val])] = &[
             (
@@ -480,13 +506,7 @@ pub mod builder_approach {
                 ],
             ),
         ];
-        for (old, new) in post_updates {
-            let mut update = ChangeUpdate::from(posts.clone());
-            for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-                update = update.set(i, o.clone(), n.clone()).unwrap();
-            }
-            builder = builder.update(update);
-        }
+        builder = apply_changeset_updates(builder, posts, post_updates);
         builder
     }
 
@@ -560,13 +580,7 @@ pub mod builder_approach {
             &[(0, 1i64.into()), (4, 1002000i64.into())],
             &[(0, 2i64.into()), (4, 1002100i64.into())],
         ];
-        for cols in user_updates {
-            let mut update = PatchUpdate::from(users.clone());
-            for (i, val) in *cols {
-                update = update.set(*i, val.clone()).unwrap();
-            }
-            builder = builder.update(update);
-        }
+        builder = apply_patchset_updates(builder, users, user_updates);
 
         let post_updates: &[&[(usize, Val)]] = &[
             &[(0, 1i64.into()), (6, 10i64.into())],
@@ -577,13 +591,7 @@ pub mod builder_approach {
                 (5, 1002200i64.into()),
             ],
         ];
-        for cols in post_updates {
-            let mut update = PatchUpdate::from(posts.clone());
-            for (i, val) in *cols {
-                update = update.set(*i, val.clone()).unwrap();
-            }
-            builder = builder.update(update);
-        }
+        builder = apply_patchset_updates(builder, posts, post_updates);
         builder
     }
 

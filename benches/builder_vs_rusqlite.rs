@@ -569,6 +569,23 @@ where
     builder
 }
 
+/// Apply a batch of `(old_row, new_row)` updates against one table.
+fn apply_changeset_updates<'a>(
+    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    table: &TableSchema<&'a str>,
+    updates: &[(&[Val], &[Val])],
+) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+    for (old, new) in updates {
+        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
+            ChangeUpdate::from(table.clone());
+        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
+            update = update.set(i, *o, *n).unwrap();
+        }
+        builder = builder.update(update);
+    }
+    builder
+}
+
 /// Add update operations to the changeset builder
 fn add_updates_to_changeset<'a>(
     mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
@@ -576,24 +593,10 @@ fn add_updates_to_changeset<'a>(
     posts: &TableSchema<&'a str>,
 ) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
-    for (old, new) in USER_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
-            ChangeUpdate::from(users.clone());
-        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-            update = update.set(i, *o, *n).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_changeset_updates(builder, users, USER_UPDATES);
 
     // Post updates
-    for (old, new) in POST_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
-            ChangeUpdate::from(posts.clone());
-        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-            update = update.set(i, *o, *n).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_changeset_updates(builder, posts, POST_UPDATES);
 
     builder
 }
@@ -643,6 +646,22 @@ fn builder_changeset() -> Vec<u8> {
     builder.build()
 }
 
+/// Apply a batch of `(column, new_value)` updates against one table.
+fn apply_patchset_updates<'a>(
+    mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    table: &TableSchema<&'a str>,
+    updates: &[&[(usize, Val)]],
+) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
+    for cols in updates {
+        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(table.clone());
+        for (i, val) in *cols {
+            update = update.set(*i, *val).unwrap();
+        }
+        builder = builder.update(update);
+    }
+    builder
+}
+
 /// Add update operations to the patchset builder
 fn add_updates_to_patchset<'a>(
     mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
@@ -650,22 +669,10 @@ fn add_updates_to_patchset<'a>(
     posts: &TableSchema<&'a str>,
 ) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
-    for cols in PATCH_USER_UPDATES {
-        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(users.clone());
-        for (i, val) in *cols {
-            update = update.set(*i, *val).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_patchset_updates(builder, users, PATCH_USER_UPDATES);
 
     // Post updates
-    for cols in PATCH_POST_UPDATES {
-        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(posts.clone());
-        for (i, val) in *cols {
-            update = update.set(*i, *val).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_patchset_updates(builder, posts, PATCH_POST_UPDATES);
 
     builder
 }
