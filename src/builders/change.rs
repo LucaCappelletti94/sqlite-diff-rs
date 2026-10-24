@@ -564,6 +564,26 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
 
         self
     }
+
+    /// Add an INSERT, which every format stores the same way.
+    pub(crate) fn add_insert(&mut self, insert: Insert<T, S, B>) -> &mut Self
+    where
+        S: Clone,
+        B: Clone,
+        Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
+    {
+        let pk = insert.extract_pk();
+        let table = insert.as_ref().clone();
+        let indirect = insert.indirect;
+        self.add_operation(
+            &table,
+            pk,
+            Operation::Insert {
+                values: insert.into_values(),
+                indirect,
+            },
+        )
+    }
 }
 
 // Unified digest entry point for wire events (0.2.0+).
@@ -634,17 +654,7 @@ impl<
     type DeleteArg = ChangeDelete<T, S, B>;
 
     fn insert(mut self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.extract_pk();
-        let table = insert.as_ref().clone();
-        let indirect = insert.indirect;
-        self.add_operation(
-            &table,
-            pk,
-            Operation::Insert {
-                values: insert.into_values(),
-                indirect,
-            },
-        );
+        self.add_insert(insert);
         self
     }
 
@@ -687,17 +697,7 @@ impl<T: SchemaWithPK, S: Clone + Hash + Eq + AsRef<str>, B: Clone + Hash + Eq + 
     type DeleteArg = PatchDelete<T, S, B>;
 
     fn insert(mut self, insert: Insert<T, S, B>) -> Self {
-        let pk = insert.extract_pk();
-        let table = insert.as_ref().clone();
-        let indirect = insert.indirect;
-        self.add_operation(
-            &table,
-            pk,
-            Operation::Insert {
-                values: insert.into_values(),
-                indirect,
-            },
-        );
+        self.add_insert(insert);
         self
     }
 
@@ -922,23 +922,8 @@ impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u
     /// time.
     pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(_pk, op)| match op {
-                Operation::Insert { values, indirect } => ChangesetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => ChangesetOp::Update {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { data, indirect } => ChangesetOp::Delete {
-                    table,
-                    old_values: data.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(_pk, op)| ChangesetOp::of_stored(table, op))
         })
     }
 }
@@ -955,24 +940,8 @@ impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
     /// via [`RunQueryDsl`](diesel::RunQueryDsl).
     pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(pk, op)| match op {
-                Operation::Insert { values, indirect } => PatchsetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => PatchsetOp::Update {
-                    table,
-                    pk: pk.as_slice(),
-                    entries: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
-                    table,
-                    pk: pk.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(pk, op)| PatchsetOp::of_stored(table, pk, op))
         })
     }
 }
@@ -1149,23 +1118,8 @@ impl<T: SchemaWithPK, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u
     /// iterator is invalidated when the `DiffSet` is dropped or mutated.
     pub fn iter(&self) -> impl Iterator<Item = ChangesetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(_pk, op)| match op {
-                Operation::Insert { values, indirect } => ChangesetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => ChangesetOp::Update {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { data, indirect } => ChangesetOp::Delete {
-                    table,
-                    old_values: data.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(_pk, op)| ChangesetOp::of_stored(table, op))
         })
     }
 }
@@ -1181,24 +1135,8 @@ impl<T: SchemaWithPK, S: Clone + AsRef<str>, B: Clone + AsRef<[u8]>>
     /// does not carry full old-row values).
     pub fn iter(&self) -> impl Iterator<Item = PatchsetOp<'_, T, S, B>> {
         self.tables.iter().flat_map(|(table, rows)| {
-            rows.iter().map(move |(pk, op)| match op {
-                Operation::Insert { values, indirect } => PatchsetOp::Insert {
-                    table,
-                    values: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Update { values, indirect } => PatchsetOp::Update {
-                    table,
-                    pk: pk.as_slice(),
-                    entries: values.as_slice(),
-                    indirect: *indirect,
-                },
-                Operation::Delete { indirect, .. } => PatchsetOp::Delete {
-                    table,
-                    pk: pk.as_slice(),
-                    indirect: *indirect,
-                },
-            })
+            rows.iter()
+                .map(move |(pk, op)| PatchsetOp::of_stored(table, pk, op))
         })
     }
 }
