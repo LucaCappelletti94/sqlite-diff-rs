@@ -642,6 +642,9 @@ pub trait DiffOps<T: SchemaWithPK, S, B>: Sized {
     -> DiffSetBuilder<Self::Format, T, S, B>;
 }
 
+/// The DELETE argument of a builder in format `F`.
+pub(crate) type DeleteArg<F, T, S, B> = <DiffSetBuilder<F, T, S, B> as DiffOps<T, S, B>>::DeleteArg;
+
 // -- DiffOps for DiffSetBuilder<ChangesetFormat> ------------------------------
 
 impl<
