@@ -135,8 +135,8 @@ CREATE TABLE post_tags (
 #[cfg(feature = "builder")]
 pub mod builder_approach {
     use sqlite_diff_rs::{
-        ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate,
-        TableSchema, Value,
+        ChangeDelete, ChangeSet, ChangeUpdate, DiffFormat, DiffOps, DiffSetBuilder, Insert,
+        PatchDelete, PatchSet, PatchUpdate, TableSchema, Value,
     };
 
     // Type aliases for cleaner code
@@ -327,14 +327,18 @@ pub mod builder_approach {
         ]
     }
 
-    fn add_inserts(
-        mut builder: ChangeSet<Schema, String, Vec<u8>>,
+    fn add_inserts<F>(
+        mut builder: DiffSetBuilder<F, Schema, String, Vec<u8>>,
         users: &Schema,
         posts: &Schema,
         comments: &Schema,
         tags: &Schema,
         post_tags: &Schema,
-    ) -> ChangeSet<Schema, String, Vec<u8>> {
+    ) -> DiffSetBuilder<F, Schema, String, Vec<u8>>
+    where
+        F: DiffFormat<String, Vec<u8>>,
+        DiffSetBuilder<F, Schema, String, Vec<u8>>: DiffOps<Schema, String, Vec<u8>, Format = F>,
+    {
         for (schema, rows) in [
             (users, get_user_rows()),
             (posts, get_post_rows()),
@@ -547,32 +551,6 @@ pub mod builder_approach {
         builder.build()
     }
 
-    fn add_patchset_inserts(
-        mut builder: PatchSet<Schema, String, Vec<u8>>,
-        users: &Schema,
-        posts: &Schema,
-        comments: &Schema,
-        tags: &Schema,
-        post_tags: &Schema,
-    ) -> PatchSet<Schema, String, Vec<u8>> {
-        for (schema, rows) in [
-            (users, get_user_rows()),
-            (posts, get_post_rows()),
-            (tags, get_tag_rows()),
-            (post_tags, get_post_tag_rows()),
-            (comments, get_comment_rows()),
-        ] {
-            for row in rows {
-                let mut insert = Insert::from(schema.clone());
-                for (i, val) in row.iter().enumerate() {
-                    insert = insert.set(i, val.clone()).unwrap();
-                }
-                builder = builder.insert(insert);
-            }
-        }
-        builder
-    }
-
     fn add_patchset_updates(
         mut builder: PatchSet<Schema, String, Vec<u8>>,
         users: &Schema,
@@ -628,7 +606,7 @@ pub mod builder_approach {
     pub fn patchset() -> Vec<u8> {
         let (users, posts, comments, tags, post_tags) = create_schemas();
         let builder = PatchSet::new();
-        let builder = add_patchset_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
+        let builder = add_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
         let builder = add_patchset_updates(builder, &users, &posts);
         let builder = add_patchset_deletes(builder, &users, &comments, &post_tags);
         builder.build()
