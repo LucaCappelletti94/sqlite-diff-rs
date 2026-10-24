@@ -18,6 +18,8 @@ A `-0.0` real keeps its sign when a changeset or patchset is built or parsed and
 
 `Affinity`, SQLite's column type affinity, with `Affinity::from_declared_type` for SQLite's declared-type rules and `Affinity::apply` for the conversion SQLite applies to a value stored in a column of that affinity, including SQLite's own text rendering of reals.
 
+`ParsedDiffSet::sort_tables_by_key` stably orders table sections by a caller-provided key while preserving each section's schema and operations.
+
 ### Fixed
 
 Changeset and patchset row ordering hashes composite primary keys in table-column order while key accessors retain primary-key ordinal order.
